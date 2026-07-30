@@ -73,6 +73,7 @@ TR = {
     "Dikte: ready": "Dikte: hazır",
     "Dikte: recording": "Dikte: kaydediyor",
     "Dikte: working": "Dikte: işleniyor",
+    "Dikte — click for Settings": "Dikte — Ayarlar için tıkla",
 
     # --- overlay / pipeline -------------------------------------------
     "Transcribing…": "Yazıya çevriliyor…",

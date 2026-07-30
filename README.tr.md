@@ -49,6 +49,10 @@ izni, ilk otomatik yapıştırmada Erişilebilirlik/Otomasyon izni sorulur. Otom
 açılmazsa **Sistem Ayarları → Gizlilik ve Güvenlik → Erişilebilirlik** altında
 Dikte'yi etkinleştir.
 
+Dikte macOS menü çubuğunda ayırt edilebilir **D** simgesiyle çalışır. Simgeye
+tıklayınca menüsü açılır; **Ayarlar…** ilk sıradadır ve Dikte boştayken simgenin
+doğrudan tetiklenmesi Ayarlar penceresini açar.
+
 Uygulama yerel/ad-hoc imzalıdır. Apple Developer hesabıyla noterlenmemiş,
 internetten indirilmiş bir derlemede ilk açılışta **Control-tık → Aç** gerekebilir.
 Ayarlar ve geçmiş `~/Library/Application Support/Dikte` altında tutulur.

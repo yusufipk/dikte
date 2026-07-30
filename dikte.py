@@ -146,6 +146,16 @@ class Dikte:
         # Keep menu and actions on self: PyQt does not take ownership when they
         # are only passed to addAction(), and garbage collection eats them.
         self.menu = QMenu()
+
+        # The menu-bar icon is the permanent way back into an LSUIElement app:
+        # there is deliberately no Dock icon. Keep Settings first and bold so
+        # the route back to the window is unmistakable.
+        self.settings_action = QAction(t("Settings…"), self.menu)
+        self.settings_action.triggered.connect(self.open_settings)
+        self.menu.addAction(self.settings_action)
+        self.menu.setDefaultAction(self.settings_action)
+        self.menu.addSeparator()
+
         self.toggle_action = QAction(t("Start recording"), self.menu)
         self.toggle_action.triggered.connect(self._toggle)
         self.menu.addAction(self.toggle_action)
@@ -180,10 +190,6 @@ class Dikte:
         self.menu.addAction(self.meeting_cancel_action)
         self.menu.addSeparator()
 
-        self.settings_action = QAction(t("Settings…"), self.menu)
-        self.settings_action.triggered.connect(self.open_settings)
-        self.menu.addAction(self.settings_action)
-
         self.restart_action = QAction(t("Restart"), self.menu)
         self.restart_action.triggered.connect(self.restart)
         self.menu.addAction(self.restart_action)
@@ -194,12 +200,15 @@ class Dikte:
         self.menu.addAction(self.quit_action)
 
         self.tray.setContextMenu(self.menu)
-        self.tray.setToolTip(t("Dikte: ready"))
+        self.tray.setToolTip(t("Dikte — click for Settings"))
         self.tray.activated.connect(self._tray_clicked)
         self._set_icon("audio-input-microphone")
 
     def _tray_clicked(self, reason):
         if reason != QSystemTrayIcon.ActivationReason.Trigger:
+            return
+        if sys.platform == "darwin" and not self.recording:
+            self.open_settings()
             return
         # The icon ends whatever is being recorded rather than only a dictation.
         # The two shortcuts are each tied to their own mode, on purpose, but the
@@ -211,13 +220,21 @@ class Dikte:
             self._toggle()
 
     def _set_icon(self, name):
-        icon = QIcon.fromTheme(name)
-        if icon.isNull():
-            path = os.path.join(
-                getattr(sys, "_MEIPASS", os.path.dirname(os.path.realpath(__file__))),
-                "assets", "dikteTemplate.svg",
-            )
-            icon = QIcon(path)
+        root = getattr(
+            sys, "_MEIPASS", os.path.dirname(os.path.realpath(__file__))
+        )
+        if sys.platform == "darwin":
+            # A filename ending in Template makes AppKit recolour the alpha mask
+            # automatically for light/dark menu bars.
+            icon = QIcon(os.path.join(
+                root, "assets", "dikte-menubarTemplate.svg"
+            ))
+        else:
+            icon = QIcon.fromTheme(name)
+            if icon.isNull():
+                icon = QIcon(os.path.join(
+                    root, "assets", "dikteTemplate.svg"
+                ))
         self.tray.setIcon(icon)
 
     # ---- state ----------------------------------------------------------
