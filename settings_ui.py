@@ -2,6 +2,7 @@
 
 import os
 import shutil
+import sys
 import threading
 
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal
@@ -23,6 +24,7 @@ import meeting
 from filetranscribe import FileTranscriber
 from i18n import t
 
+IS_MACOS = sys.platform == "darwin"
 UI_LANGUAGES = [("Automatic (system)", "auto"), ("Turkish", "tr"), ("English", "en")]
 LANGUAGES = [
     ("Detect automatically", "auto"), ("Turkish", "tr"), ("English", "en"),
@@ -89,16 +91,26 @@ REASONING_LEVELS = [
     ("Low", "low"), ("Medium", "medium"), ("High", "high"),
     ("Very high", "xhigh"), ("Maximum", "max"),
 ]
-PASTE_SHORTCUTS = ["ctrl+v", "ctrl+shift+v", "shift+insert"]
+PASTE_SHORTCUTS = (["cmd+v"] if IS_MACOS
+                   else ["ctrl+v", "ctrl+shift+v", "shift+insert"])
 # Offered for all three global shortcuts, which keeps them one kind of field
 # rather than three. The boxes stay editable: this is a shortlist of
 # combinations that are usually free, not the set of ones that work.
-SHORTCUTS = [
-    "Ctrl+Space", "Ctrl+Alt+Space", "Ctrl+Shift+Space", "Meta+Space",
-    "Ctrl+Alt+A", "Ctrl+Alt+D", "Ctrl+Alt+M", "Ctrl+Alt+Q",
-    "Meta+A", "Meta+D", "Meta+M",
-    "Ctrl+Alt+F1", "Ctrl+Alt+F2", "Ctrl+Alt+F3",
-]
+SHORTCUTS = (
+    [
+        "Ctrl+Space", "Ctrl+Option+Space", "Ctrl+Shift+Space",
+        "Cmd+Option+Space", "Cmd+Shift+Space",
+        "Ctrl+Option+A", "Ctrl+Option+D", "Ctrl+Option+M",
+        "Cmd+Option+A", "Cmd+Option+D", "Cmd+Option+M",
+    ]
+    if IS_MACOS else
+    [
+        "Ctrl+Space", "Ctrl+Alt+Space", "Ctrl+Shift+Space", "Meta+Space",
+        "Ctrl+Alt+A", "Ctrl+Alt+D", "Ctrl+Alt+M", "Ctrl+Alt+Q",
+        "Meta+A", "Meta+D", "Meta+M",
+        "Ctrl+Alt+F1", "Ctrl+Alt+F2", "Ctrl+Alt+F3",
+    ]
+)
 AUDIO_FILTER = ("*.mp3 *.wav *.m4a *.ogg *.opus *.flac *.aac *.wma "
                 "*.mp4 *.mkv *.webm *.mov *.avi")
 
@@ -192,9 +204,11 @@ class SettingsWindow(QDialog):
 
         self.paste_shortcut = QComboBox()
         self.paste_shortcut.addItems(PASTE_SHORTCUTS)
-        self.paste_shortcut.setToolTip(
-            t("Terminals usually want ctrl+shift+v. Change this if pasting does nothing.")
-        )
+        self.paste_shortcut.setToolTip(t(
+            "macOS needs Accessibility permission to send Cmd+V."
+            if IS_MACOS else
+            "Terminals usually want ctrl+shift+v. Change this if pasting does nothing."
+        ))
         form.addRow(t("Paste key"), self.paste_shortcut)
 
         self.restore_clipboard = QCheckBox(t("Restore the previous clipboard after pasting"))
@@ -232,7 +246,9 @@ class SettingsWindow(QDialog):
         )
         form.addRow("", self.filter_hallucinations)
 
-        self.keep_audio = QCheckBox(t("Keep audio files (~/.local/share/dikte/recordings)"))
+        self.keep_audio = QCheckBox(t(
+            "Keep audio files ({path})", path=str(cfg.RECORDINGS_DIR)
+        ))
         form.addRow("", self.keep_audio)
         return page
 
@@ -368,7 +384,9 @@ class SettingsWindow(QDialog):
         how = QGroupBox(t("How it runs"))
         how_form = QFormLayout(how)
         self.assistant_shortcut = self._shortcut_box(t("none"))
-        install = QPushButton(t("Install as a KDE shortcut"))
+        install = QPushButton(t(
+            "Activate macOS shortcut" if IS_MACOS else "Install as a KDE shortcut"
+        ))
         install.clicked.connect(self._install_ask_shortcut)
         remove = QPushButton(t("Remove"))
         remove.clicked.connect(self._remove_ask_shortcut)
@@ -555,6 +573,14 @@ class SettingsWindow(QDialog):
             self.meeting_system.addItem(desc, name)
         sources_form.addRow(t("The other participants"), self.meeting_system)
 
+        if IS_MACOS:
+            mac_note = QLabel(t(
+                "macOS meeting capture needs a virtual audio input such as "
+                "BlackHole or Loopback. Select it here after installation."
+            ))
+            mac_note.setWordWrap(True)
+            sources_form.addRow(mac_note)
+
         note = QLabel(t(
             "Wear headphones if you can. Through speakers your microphone hears "
             "the other side as well, and although a line that lands on both "
@@ -630,7 +656,9 @@ class SettingsWindow(QDialog):
         recording_form.addRow("", self.meeting_keep_audio)
 
         self.meeting_shortcut = self._shortcut_box(t("none"))
-        install = QPushButton(t("Install as a KDE shortcut"))
+        install = QPushButton(t(
+            "Activate macOS shortcut" if IS_MACOS else "Install as a KDE shortcut"
+        ))
         install.clicked.connect(self._install_meeting_shortcut)
         remove = QPushButton(t("Remove"))
         remove.clicked.connect(self._remove_meeting_shortcut)
@@ -784,7 +812,9 @@ class SettingsWindow(QDialog):
         form.addRow(t("Shortcut"), self.shortcut)
         layout.addLayout(form)
 
-        install = QPushButton(t("Install as a KDE shortcut"))
+        install = QPushButton(t(
+            "Activate macOS shortcut" if IS_MACOS else "Install as a KDE shortcut"
+        ))
         install.clicked.connect(self._install_shortcut)
         remove = QPushButton(t("Remove"))
         remove.clicked.connect(self._remove_shortcut)
@@ -799,16 +829,22 @@ class SettingsWindow(QDialog):
         layout.addWidget(self.shortcut_status)
 
         self.evdev_enabled = QCheckBox(t(
+            "Enable global shortcuts on this Mac" if IS_MACOS else
             "Use the built-in listener (/dev/input), for when the KDE shortcut is "
             "not active yet"
         ))
         self.evdev_enabled.setToolTip(t(
+            "Uses macOS's native global hotkey service."
+            if IS_MACOS else
             "Works immediately, no session restart. The only difference: the key "
             "combination also reaches the focused application."
         ))
         layout.addWidget(self.evdev_enabled)
 
         note = QLabel(t(
+            "Automatic paste asks for Accessibility permission the first time. "
+            "Enable Dikte under System Settings → Privacy & Security → Accessibility."
+            if IS_MACOS else
             "KWin only reads shortcut settings at startup. After 'Install' the "
             "shortcut shows up under System Settings → Shortcuts, but it will not "
             "fire until you log out and back in. Until then, use the built-in listener."
@@ -1293,18 +1329,31 @@ class SettingsWindow(QDialog):
         QMessageBox.information(self, t("Shortcut"), message)
         if ok:
             self.conf["shortcut"] = combo
+            if IS_MACOS:
+                self.conf["evdev_hotkey"] = True
+                self.evdev_enabled.setChecked(True)
             self.conf.save()
+            if IS_MACOS:
+                self.applied.emit()
         self._refresh_shortcut_status()
 
     def _remove_shortcut(self):
         hotkey.remove_kde_shortcut()
+        if IS_MACOS:
+            self.conf["evdev_hotkey"] = False
+            self.evdev_enabled.setChecked(False)
+            self.conf.save()
+            self.applied.emit()
         self._refresh_shortcut_status()
 
     def _refresh_shortcut_status(self):
         current = hotkey.kde_shortcut_status()
         self.shortcut_status.setText(
-            t("Registered in KDE: {shortcut}", shortcut=current) if current
-            else t("No KDE shortcut installed.")
+            (t("Active on macOS: {shortcut}", shortcut=current)
+             if IS_MACOS and current else
+             t("No macOS shortcut active.") if IS_MACOS else
+             t("Registered in KDE: {shortcut}", shortcut=current) if current
+             else t("No KDE shortcut installed."))
         )
 
     def _install_meeting_shortcut(self):
@@ -1329,18 +1378,30 @@ class SettingsWindow(QDialog):
         QMessageBox.information(self, t("Shortcut"), message)
         if ok:
             self.conf["meeting_shortcut"] = combo
+            if IS_MACOS:
+                self.conf["evdev_hotkey"] = True
             self.conf.save()
+            if IS_MACOS:
+                self.applied.emit()
         self._refresh_meeting_shortcut_status()
 
     def _remove_meeting_shortcut(self):
         hotkey.remove_kde_shortcut(hotkey.MEETING_DESKTOP_ID)
+        if IS_MACOS:
+            self.conf["meeting_shortcut"] = ""
+            self.conf.save()
+            self.applied.emit()
         self._refresh_meeting_shortcut_status()
 
     def _refresh_meeting_shortcut_status(self):
         current = hotkey.kde_shortcut_status(hotkey.MEETING_DESKTOP_ID)
         self.meeting_shortcut_status.setText(
-            t("Registered in KDE: {shortcut}", shortcut=current) if current
-            else t("No KDE shortcut installed. The tray menu starts a meeting too.")
+            (t("Active on macOS: {shortcut}", shortcut=current)
+             if IS_MACOS and current else
+             t("No macOS meeting shortcut active. The menu can start one too.")
+             if IS_MACOS else
+             t("Registered in KDE: {shortcut}", shortcut=current) if current
+             else t("No KDE shortcut installed. The tray menu starts a meeting too."))
         )
 
     # ---- Claude ----------------------------------------------------------
@@ -1367,18 +1428,30 @@ class SettingsWindow(QDialog):
         QMessageBox.information(self, t("Shortcut"), message)
         if ok:
             self.conf["assistant_shortcut"] = combo
+            if IS_MACOS:
+                self.conf["evdev_hotkey"] = True
             self.conf.save()
+            if IS_MACOS:
+                self.applied.emit()
         self._refresh_ask_shortcut_status()
 
     def _remove_ask_shortcut(self):
         hotkey.remove_kde_shortcut(hotkey.ASK_DESKTOP_ID)
+        if IS_MACOS:
+            self.conf["assistant_shortcut"] = ""
+            self.conf.save()
+            self.applied.emit()
         self._refresh_ask_shortcut_status()
 
     def _refresh_ask_shortcut_status(self):
         current = hotkey.kde_shortcut_status(hotkey.ASK_DESKTOP_ID)
         self.assistant_shortcut_status.setText(
-            t("Registered in KDE: {shortcut}", shortcut=current) if current
-            else t("No KDE shortcut installed. The tray menu asks it too.")
+            (t("Active on macOS: {shortcut}", shortcut=current)
+             if IS_MACOS and current else
+             t("No macOS agent shortcut active. The menu can start one too.")
+             if IS_MACOS else
+             t("Registered in KDE: {shortcut}", shortcut=current) if current
+             else t("No KDE shortcut installed. The tray menu asks it too."))
         )
 
     def _assistant_provider_changed(self):

@@ -1,0 +1,28 @@
+name: macOS build
+
+on:
+  push:
+    branches: [master, macos-support]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ffmpeg
+        run: brew install ffmpeg
+      - name: Compile check
+        run: python -m compileall -q .
+      - name: Build app
+        run: ./build-macos.sh
+      - name: Run tests
+        run: .venv-build/bin/python -m unittest discover -s tests -v
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Dikte-macOS
+          path: dist/Dikte-macOS.zip

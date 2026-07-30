@@ -4,7 +4,10 @@ Source strings are English; Turkish translations live in the TR table below.
 No gettext, no .mo files; the string table is small enough to keep in code.
 """
 
+import locale
 import os
+import subprocess
+import sys
 
 _lang = "en"
 
@@ -15,6 +18,16 @@ def resolve(code):
         return code
     env = (os.environ.get("LC_ALL") or os.environ.get("LC_MESSAGES")
            or os.environ.get("LANG") or "")
+    if not env:
+        env = locale.getlocale()[0] or ""
+    if not env and sys.platform == "darwin":
+        try:
+            env = subprocess.run(
+                ["defaults", "read", "-g", "AppleLocale"],
+                capture_output=True, text=True, timeout=2, check=False,
+            ).stdout.strip()
+        except (subprocess.SubprocessError, OSError):
+            pass
     return "tr" if env.lower().startswith("tr") else "en"
 
 
@@ -86,6 +99,7 @@ TR = {
     "Discarded a stock phrase: “{text}”": "Kalıp cümle atıldı: “{text}”",
     "Discard stock phrases models invent for near-silent audio":
         "Sessize yakın seste modelin uydurduğu kalıp cümleleri at",
+    "Keep audio files ({path})": "Ses kayıtlarını sakla ({path})",
     "Whisper answers silence with things like “Thanks for watching”.":
         "Whisper sessizliğe “Altyazı M.K.” gibi şeylerle karşılık verir.",
     "Speech also has to rise {margin} dB above the recording's own noise "
@@ -100,6 +114,8 @@ TR = {
     # --- audio / paste errors -----------------------------------------
     "pw-record not found. Is pipewire-audio installed?":
         "pw-record bulunamadı. pipewire-audio kurulu mu?",
+    "ffmpeg not found. Install it with: brew install ffmpeg":
+        "ffmpeg bulunamadı. Şununla kur: brew install ffmpeg",
     "Could not start recording: {error}": "Kayıt başlatılamadı: {error}",
     "wl-copy not found. Install wl-clipboard.":
         "wl-copy bulunamadı. wl-clipboard paketini kur.",
@@ -108,6 +124,10 @@ TR = {
     "ydotool not found, cannot paste automatically.":
         "ydotool bulunamadı, otomatik yapıştırma yapılamıyor.",
     "Unknown key: {key}": "Bilinmeyen tuş: {key}",
+    "osascript not found, cannot paste automatically.":
+        "osascript bulunamadı, otomatik yapıştırma yapılamıyor.",
+    "Could not paste automatically: {error}":
+        "Otomatik yapıştırma yapılamadı: {error}",
     "Could not run ydotool: {error}": "ydotool çalıştırılamadı: {error}",
     "ydotool failed: {error}\nIs ydotoold running? (systemctl --user status ydotool)":
         "ydotool hatası: {error}\nydotoold çalışıyor mu? (systemctl --user status ydotool)",
@@ -127,6 +147,29 @@ TR = {
     "Cleanup rules": "Temizleme kuralları",
     "Audio file": "Ses dosyası",
     "Shortcut": "Kısayol",
+    "Activate macOS shortcut": "macOS kısayolunu etkinleştir",
+    "Enable global shortcuts on this Mac":
+        "Bu Mac'te genel kısayolları etkinleştir",
+    "Uses macOS's native global hotkey service.":
+        "macOS'in yerleşik genel kısayol hizmetini kullanır.",
+    "macOS needs Accessibility permission to send Cmd+V.":
+        "macOS'in Cmd+V gönderebilmesi için Erişilebilirlik izni gerekir.",
+    "Automatic paste asks for Accessibility permission the first time. "
+    "Enable Dikte under System Settings → Privacy & Security → Accessibility.":
+        "Otomatik yapıştırma ilk seferde Erişilebilirlik izni ister. Sistem "
+        "Ayarları → Gizlilik ve Güvenlik → Erişilebilirlik altında Dikte'yi aç.",
+    "Shortcut saved: {shortcut}\nSave the settings to activate it on macOS.":
+        "Kısayol kaydedildi: {shortcut}\nmacOS'te etkinleştirmek için ayarları kaydet.",
+    "Active on macOS: {shortcut}": "macOS'te etkin: {shortcut}",
+    "No macOS shortcut active.": "Etkin bir macOS kısayolu yok.",
+    "No macOS meeting shortcut active. The menu can start one too.":
+        "Etkin bir macOS toplantı kısayolu yok. Menüden de başlatılabilir.",
+    "No macOS agent shortcut active. The menu can start one too.":
+        "Etkin bir macOS aracı kısayolu yok. Menüden de başlatılabilir.",
+    "macOS meeting capture needs a virtual audio input such as "
+    "BlackHole or Loopback. Select it here after installation.":
+        "macOS toplantı kaydı BlackHole veya Loopback gibi bir sanal ses "
+        "girişi gerektirir. Kurduktan sonra burada seç.",
     "History": "Geçmiş",
     "Save": "Kaydet",
     "Saved successfully.": "Başarıyla kaydedildi.",

@@ -1,0 +1,2 @@
+PyQt6>=6.7,<7
+pyinstaller>=6.11,<7

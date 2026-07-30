@@ -1,9 +1,10 @@
-"""Settings storage in ~/.config/dikte/config.json"""
+"""Platform-appropriate settings and data storage."""
 
 import hashlib
 import json
 import os
 import pathlib
+import sys
 
 import api
 import i18n
@@ -13,9 +14,14 @@ def _xdg(var, default):
     return pathlib.Path(os.environ.get(var) or os.path.expanduser(default))
 
 
-CONFIG_DIR = _xdg("XDG_CONFIG_HOME", "~/.config") / "dikte"
+IS_MACOS = sys.platform == "darwin"
+if IS_MACOS:
+    CONFIG_DIR = pathlib.Path.home() / "Library/Application Support/Dikte"
+    DATA_DIR = CONFIG_DIR
+else:
+    CONFIG_DIR = _xdg("XDG_CONFIG_HOME", "~/.config") / "dikte"
+    DATA_DIR = _xdg("XDG_DATA_HOME", "~/.local/share") / "dikte"
 CONFIG_FILE = CONFIG_DIR / "config.json"
-DATA_DIR = _xdg("XDG_DATA_HOME", "~/.local/share") / "dikte"
 HISTORY_FILE = DATA_DIR / "history.jsonl"
 RECORDINGS_DIR = DATA_DIR / "recordings"
 MEETINGS_DIR = DATA_DIR / "meetings"
@@ -375,7 +381,7 @@ DEFAULTS = {
     "cleanup_reasoning": "",        # empty -> whatever the model does by default
     "cleanup_prompt": "",           # empty -> language-specific default
     "auto_paste": True,
-    "paste_shortcut": "ctrl+v",
+    "paste_shortcut": "cmd+v" if IS_MACOS else "ctrl+v",
     "restore_clipboard": False,
     "mic_target": "",
     "max_seconds": 300,
@@ -385,7 +391,7 @@ DEFAULTS = {
     "min_voiced_seconds": 0.3,
     "filter_hallucinations": True,
     "shortcut": "Ctrl+Space",
-    "evdev_hotkey": False,
+    "evdev_hotkey": IS_MACOS,
     "overlay_corner": "bottom-left",
     "keep_audio": False,
     "history_limit": 200,

@@ -1,19 +1,20 @@
 """Raw PCM capture with a live level meter.
 
-Dictation records one source through pw-record. A meeting records two of them at
-once, the microphone and what comes out of the speakers, and for that it goes
-through ffmpeg instead: one process reading both devices and merging them into
-the two channels of a single stream, which is the only way the two stay aligned
-with each other over an hour.
+Dictation records one source through PipeWire on Linux or FFmpeg/AVFoundation
+on macOS. A meeting records two sources at once and merges them into the two
+channels of a single stream, which is the only way they stay aligned over an
+hour.
 """
 
 import array
 import json
 import math
 import os
+import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import wave
@@ -28,10 +29,11 @@ SAMPLE_WIDTH = 2  # s16
 CHUNK_FRAMES = 1024
 CHUNK_BYTES = CHUNK_FRAMES * SAMPLE_WIDTH * CHANNELS
 MIN_FRAMES = int(RATE * 0.25)
+IS_MACOS = sys.platform == "darwin"
 
 
 class Recorder(QObject):
-    """Runs pw-record as a child process and reads raw PCM from its stdout."""
+    """Runs the platform recorder and reads raw PCM from its stdout."""
 
     level = pyqtSignal(float)              # 0.0 - 1.0, for the waveform
     stopped = pyqtSignal(str, float, object)  # wav path, duration (s), per-chunk RMS
@@ -53,20 +55,32 @@ class Recorder(QObject):
     def start(self, target="", max_seconds=300):
         if self.active:
             return
-        if not shutil.which("pw-record"):
-            self.failed.emit(t("pw-record not found. Is pipewire-audio installed?"))
-            return
-
-        cmd = [
-            "pw-record",
-            "--raw",
-            f"--rate={RATE}",
-            f"--channels={CHANNELS}",
-            "--format=s16",
-        ]
-        if target:
-            cmd.append(f"--target={target}")
-        cmd.append("-")
+        if IS_MACOS:
+            if not shutil.which("ffmpeg"):
+                self.failed.emit(
+                    t("ffmpeg not found. Install it with: brew install ffmpeg")
+                )
+                return
+            cmd = [
+                "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error",
+                "-f", "avfoundation", "-i", f":{target or 'default'}",
+                "-vn", "-ac", str(CHANNELS), "-ar", str(RATE),
+                "-acodec", "pcm_s16le", "-f", "s16le", "-",
+            ]
+        else:
+            if not shutil.which("pw-record"):
+                self.failed.emit(t("pw-record not found. Is pipewire-audio installed?"))
+                return
+            cmd = [
+                "pw-record",
+                "--raw",
+                f"--rate={RATE}",
+                f"--channels={CHANNELS}",
+                "--format=s16",
+            ]
+            if target:
+                cmd.append(f"--target={target}")
+            cmd.append("-")
 
         try:
             self._proc = subprocess.Popen(
@@ -210,13 +224,25 @@ class MeetingRecorder(QObject):
             "[1:a]aresample={rate}:async=1,aformat=sample_fmts=s16:channel_layouts=mono[s];"
             "[m][s]amerge=inputs=2[out]"
         ).format(rate=RATE)
-        cmd = [
-            "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error",
-            "-f", "pulse", "-thread_queue_size", "4096", "-i", mic_target or "default",
-            "-f", "pulse", "-thread_queue_size", "4096", "-i", system_target,
-            "-filter_complex", merge, "-map", "[out]",
-            "-f", "s16le", "-ar", str(RATE), "-",
-        ]
+        if IS_MACOS:
+            cmd = [
+                "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error",
+                "-thread_queue_size", "4096", "-f", "avfoundation",
+                "-i", f":{mic_target or 'default'}",
+                "-thread_queue_size", "4096", "-f", "avfoundation",
+                "-i", f":{system_target}",
+                "-filter_complex", merge, "-map", "[out]",
+                "-f", "s16le", "-ar", str(RATE), "-",
+            ]
+        else:
+            cmd = [
+                "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error",
+                "-f", "pulse", "-thread_queue_size", "4096",
+                "-i", mic_target or "default",
+                "-f", "pulse", "-thread_queue_size", "4096", "-i", system_target,
+                "-filter_complex", merge, "-map", "[out]",
+                "-f", "s16le", "-ar", str(RATE), "-",
+            ]
 
         try:
             os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -394,6 +420,8 @@ def _peak(samples):
 
 
 def _sources():
+    if IS_MACOS:
+        return _mac_audio_devices()
     if not shutil.which("pactl"):
         return []
     try:
@@ -408,6 +436,8 @@ def _sources():
 
 def list_sources():
     """[(name, description)] for every real input source."""
+    if IS_MACOS:
+        return _mac_audio_devices()
     return [
         (src.get("name", ""), src.get("description") or src.get("name", ""))
         for src in _sources()
@@ -421,6 +451,14 @@ def list_monitors():
     Recording a monitor is recording whatever is being played, which in a
     meeting is the other participants and nothing of your own microphone.
     """
+    if IS_MACOS:
+        devices = _mac_audio_devices()
+        virtual = [
+            item for item in devices
+            if any(word in item[1].lower()
+                   for word in ("blackhole", "loopback", "soundflower"))
+        ]
+        return virtual or devices
     return [
         (src.get("name", ""), src.get("description") or src.get("name", ""))
         for src in _sources()
@@ -430,6 +468,13 @@ def list_monitors():
 
 def default_monitor():
     """The monitor of the output sound is currently going to, or ''."""
+    if IS_MACOS:
+        monitors = list_monitors()
+        for name, description in monitors:
+            if any(word in description.lower()
+                   for word in ("blackhole", "loopback", "soundflower")):
+                return name
+        return ""
     if not shutil.which("pactl"):
         return ""
     try:
@@ -444,3 +489,30 @@ def default_monitor():
     monitor = f"{sink}.monitor"
     names = {name for name, _ in list_monitors()}
     return monitor if not names or monitor in names else ""
+
+
+def _mac_audio_devices():
+    """[(AVFoundation index, description)] for macOS audio capture devices."""
+    if not shutil.which("ffmpeg"):
+        return []
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-f", "avfoundation",
+             "-list_devices", "true", "-i", ""],
+            capture_output=True, text=True, timeout=8, check=False,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return []
+
+    devices = []
+    in_audio = False
+    for line in result.stderr.splitlines():
+        if "AVFoundation audio devices:" in line:
+            in_audio = True
+            continue
+        if not in_audio:
+            continue
+        match = re.search(r"\[(\d+)\]\s+(.+)$", line)
+        if match:
+            devices.append((match.group(1), match.group(2).strip()))
+    return devices

@@ -5,8 +5,9 @@ yazıya çevrilir, OpenRouter'daki bir model transkripti temizler (ıı'lar,
 tekrarlar, eksik noktalama), sonuç panoya kopyalanır ve o an yazdığın pencereye
 yapıştırılır.
 
-KDE Plasma 6 / Wayland için yazıldı. Sistem paketleri dışında bağımlılığı yok:
-sadece Python standart kütüphanesi ve PyQt6.
+KDE Plasma 6 / Wayland ve macOS 13 veya üstünde çalışır. macOS portu ses için
+AVFoundation, genel kısayol için yerleşik Carbon API'si ve sistem panosunu
+kullanır.
 
 *[English README](README.md)*
 
@@ -19,7 +20,7 @@ sadece Python standart kütüphanesi ve PyQt6.
 | <img src="docs/settings-api.webp" width="410" alt="API ve modeller"> | <img src="docs/settings-cleanup.webp" width="410" alt="Temizleme kuralları"> |
 | <img src="docs/settings-audio-file.webp" width="410" alt="Ses dosyası"> | <img src="docs/settings-history.webp" width="410" alt="Geçmiş"> |
 
-## Kurulum
+## Linux kurulumu
 
 ```sh
 sudo pacman -S --needed pipewire-audio wl-clipboard ydotool ffmpeg python-pyqt6
@@ -32,12 +33,36 @@ dikte                        # ilk açılışta ayarlar penceresi gelir
 `install.sh` `dikte` komutunu, menü girdisini, oturum açılışında otomatik
 başlatmayı ve KDE kısayolunu kurar.
 
+## macOS kurulumu
+
+macOS derlemesi Apple Silicon ve Intel Mac'leri destekler:
+
+```sh
+brew install python ffmpeg
+chmod +x build-macos.sh
+./build-macos.sh
+open dist
+```
+
+`Dikte-macOS.zip` dosyasını açıp `Dikte.app` dosyasını `/Applications`
+klasörüne sürükle. İlk kayıtta Mikrofon
+izni, ilk otomatik yapıştırmada Erişilebilirlik/Otomasyon izni sorulur. Otomatik
+açılmazsa **Sistem Ayarları → Gizlilik ve Güvenlik → Erişilebilirlik** altında
+Dikte'yi etkinleştir.
+
+Uygulama yerel/ad-hoc imzalıdır. Apple Developer hesabıyla noterlenmemiş,
+internetten indirilmiş bir derlemede ilk açılışta **Control-tık → Aç** gerekebilir.
+Ayarlar ve geçmiş `~/Library/Application Support/Dikte` altında tutulur.
+GitHub Actions her push ve pull request'te `Dikte-macOS.zip` üretir.
+
 Ayarlar penceresinde iki anahtar istenir: **OpenAI** ve **OpenRouter**. Sesi
 yazıya çevirme ikisinden birinde çalışır (varsayılan `gpt-4o-transcribe`),
 temizleme her zaman OpenRouter'da (`google/gemini-3.5-flash-lite`), yani tek bir
 OpenRouter anahtarı ikisine de yeter. Boş bırakırsan `OPENAI_API_KEY` ve
-`OPENROUTER_API_KEY` kullanılır; anahtarlar `~/.config/dikte/config.json`
-içinde, izinler 600. Temizlemeyi tamamen kapatabilirsin, o zaman ham transkript
+`OPENROUTER_API_KEY` kullanılır; anahtarlar Linux'ta
+`~/.config/dikte/config.json`, macOS'te
+`~/Library/Application Support/Dikte/config.json` içinde, izinler 600.
+Temizlemeyi tamamen kapatabilirsin, o zaman ham transkript
 yapıştırılır; modelin yanındaki kutudan düşünme seviyesini de seçebilirsin.
 
 ## Kullanım
@@ -100,7 +125,10 @@ birden ekrandayken ikincisi birincinin üstüne yerleşir.
   talimatıyla bunu tutanağa çevirir: kararlar, aksiyonlar, açık sorular. Sonuç
   `~/.local/share/dikte/meetings` altına ve Ayarlar → Tutanaklar sekmesine
   düşer. Yarıda kalan bir işlem ses kaydını saklar, yeniden denemede parası
-  ödenmiş transkriptin üstünden devam eder.
+  ödenmiş transkriptin üstünden devam eder. macOS'te sistem çıkışını giriş
+  aygıtı olarak göstermek için BlackHole, Loopback veya Soundflower gerekir;
+  sonra Ayarlar → Toplantı'dan seçilir. Normal dikte için sanal ses aygıtı
+  gerekmez.
 - **Ses ve video dosyaları** Ayarlar → Ses dosyası sekmesinde aynı modellerden
   geçer; istersen `[dd:ss]` zaman damgalarıyla, uzun dosyalar ffmpeg ile
   parçalanarak, sonuç `.txt` ya da `.srt` altyazı olarak kaydedilerek; temizleme
@@ -110,9 +138,13 @@ birden ekrandayken ikincisi birincinin üstüne yerleşir.
   silebilirsin.
 - **Türkçe ve İngilizce arayüz**, varsayılan olarak sistem dilini izler.
 
-## Global kısayol için bir kez oturum kapatmak gerekir
+## Global kısayollar
 
-KWin `kglobalshortcutsrc` dosyasını yalnızca açılışta okur, yani `install.sh`'ın
+macOS'te yerleşik dinleyici sistemin Carbon genel kısayol API'sini kullanır ve
+ayarlar kaydedildiği anda çalışır. Otomatik yapıştırma ayrıca yukarıda anlatılan
+Erişilebilirlik iznini ister.
+
+Linux'ta KWin `kglobalshortcutsrc` dosyasını yalnızca açılışta okur, yani `install.sh`'ın
 yazdığı kısayol oturumu yeniden açana kadar tetiklenmez. O zamana kadar Ayarlar →
 Kısayol → **yerleşik dinleyici** `/dev/input` üzerinden kombinasyonu kendisi
 yakalar. Tek farkı: tuşu yutmaz, yani `Ctrl+Space` odaktaki uygulamaya da iletilir
@@ -123,7 +155,7 @@ grubunda olmasını gerektirir: `sudo usermod -aG input $USER`.
 
 ```
 dikte.py          giriş noktası, tepsi simgesi, durum makinesi, IPC
-audio.py          PCM kaydı: diktede pw-record, toplantıda ffmpeg
+audio.py          PCM kaydı: Linux'ta PipeWire, macOS'te AVFoundation
 meeting.py        kanal ayırma, konuşmacı etiketi, temizleme, tutanak
 assistant.py      dikteyi Claude Code, Codex ya da OpenRouter'dan geçirme
 api.py            iki sağlayıcıda transkript + OpenRouter temizleme (yalnız stdlib)
@@ -132,13 +164,14 @@ vad.py            kayıtta gerçekten konuşma var mı kararı
 filetranscribe.py dosyadan transkript: ffmpeg, parçalama, zaman damgaları
 overlay.py        köşedeki gösterge
 settings_ui.py    ayarlar penceresi
-hotkey.py         KDE kısayol kurulumu ve evdev dinleyici
-paste.py          wl-clipboard ve ydotool sarmalayıcıları
+hotkey.py         KDE/evdev ve yerleşik macOS genel kısayolları
+paste.py          Wayland ve macOS pano/yapıştırma sarmalayıcıları
 i18n.py           metin tablosu
 ```
 
-Gösterge XWayland üzerinden çizilir; Wayland'da bir pencereyi belirli bir köşeye
-yerleştirmenin yolu yok, `dikte.py` bu yüzden `QT_QPA_PLATFORM=xcb` ayarlar.
+Linux'ta gösterge XWayland üzerinden çizilir; Wayland'da bir pencereyi belirli
+bir köşeye yerleştirmenin yolu yok, `dikte.py` bu yüzden
+`QT_QPA_PLATFORM=xcb` ayarlar. macOS yerleşik yüzen araç penceresini kullanır.
 
 ## Lisans
 

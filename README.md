@@ -5,8 +5,8 @@ for transcription, a model on OpenRouter cleans it up (dropping the *uh*s, the
 restarts, the missing punctuation), and the result lands in your clipboard and
 is pasted into whatever window you were typing in.
 
-Built for KDE Plasma 6 on Wayland. No dependencies beyond system packages:
-just the Python standard library and PyQt6.
+Runs on KDE Plasma 6 / Wayland and macOS 13 or newer. The macOS port uses
+AVFoundation for audio, native Carbon global hotkeys, and the system clipboard.
 
 *[Türkçe README](README.tr.md)*
 
@@ -19,7 +19,7 @@ just the Python standard library and PyQt6.
 | <img src="docs/settings-api.webp" width="410" alt="API and models"> | <img src="docs/settings-cleanup.webp" width="410" alt="Cleanup rules"> |
 | <img src="docs/settings-audio-file.webp" width="410" alt="Audio file"> | <img src="docs/settings-history.webp" width="410" alt="History"> |
 
-## Install
+## Install on Linux
 
 ```sh
 sudo pacman -S --needed pipewire-audio wl-clipboard ydotool ffmpeg python-pyqt6
@@ -32,11 +32,36 @@ dikte                        # the settings window opens on first run
 `install.sh` adds the `dikte` command, a menu entry, an autostart entry and the
 KDE shortcut.
 
+## Install on macOS
+
+The macOS build supports Apple Silicon and Intel Macs. Install the one runtime
+dependency, build the app, then move it to Applications:
+
+```sh
+brew install python ffmpeg
+chmod +x build-macos.sh
+./build-macos.sh
+open dist
+```
+
+Unzip `Dikte-macOS.zip`, then drag `Dikte.app` into `/Applications`. The first recording asks for Microphone
+permission. The first automatic paste asks for Accessibility/Automation
+permission; if it is not enabled automatically, add Dikte under **System
+Settings → Privacy & Security → Accessibility**.
+
+The app is locally/ad-hoc signed. A downloaded build may need **Control-click →
+Open** on its first launch unless a release has been notarized by an Apple
+Developer account. Settings and history live in
+`~/Library/Application Support/Dikte`.
+
+GitHub Actions also builds `Dikte-macOS.zip` on every pull request and push.
+
 Two keys go in the settings window: **OpenAI** and **OpenRouter**. Speech to text
 runs on either one (`gpt-4o-transcribe` by default), cleanup always on
 OpenRouter (`google/gemini-3.5-flash-lite`), so a single OpenRouter key can
 cover both. They fall back to `OPENAI_API_KEY` and `OPENROUTER_API_KEY`, and are
-stored in `~/.config/dikte/config.json`, mode 600. Cleanup can be switched off,
+stored in `~/.config/dikte/config.json` on Linux or
+`~/Library/Application Support/Dikte/config.json` on macOS, mode 600. Cleanup can be switched off,
 in which case the raw transcript is pasted, and a thinking model's effort can be
 set next to it.
 
@@ -103,7 +128,10 @@ second one stacks above the first while both are up.
   minutes: decisions, action items, open questions. They land in
   `~/.local/share/dikte/meetings` and in Settings → Minutes. A run that fails
   keeps its recording, and a retry resumes from the transcript it already paid
-  for.
+  for. On macOS, system output must be exposed as an input device with
+  [BlackHole](https://github.com/ExistentialAudio/BlackHole), Loopback, or
+  Soundflower, then selected under Settings → Meeting. Normal dictation does
+  not need a virtual audio device.
 - **Audio and video files** run through the same models under Settings → Audio
   file, optionally with `[mm:ss]` timestamps, chunked through ffmpeg when long,
   and saved as `.txt` or as `.srt` subtitles; their cleanup follows its own rules,
@@ -112,9 +140,13 @@ second one stacks above the first while both are up.
   right-click to delete.
 - **Turkish and English interface**, following the system locale by default.
 
-## The global shortcut needs one logout
+## Global shortcuts
 
-KWin only reads `kglobalshortcutsrc` at startup, so the shortcut `install.sh`
+On macOS, the built-in listener uses the native Carbon global-hotkey API and
+works as soon as settings are saved. Automatic paste is separate and needs the
+Accessibility permission described above.
+
+On Linux, KWin only reads `kglobalshortcutsrc` at startup, so the shortcut `install.sh`
 writes will not fire until you log out and back in. Until then, Settings →
 Shortcut → **built-in listener** reads `/dev/input` and catches the combination
 itself. The difference: it does not swallow the key, so `Ctrl+Space` also reaches
@@ -125,7 +157,7 @@ needs your user in the `input` group: `sudo usermod -aG input $USER`.
 
 ```
 dikte.py          entry point, tray icon, state machine, IPC
-audio.py          PCM capture: pw-record for dictation, ffmpeg for a meeting
+audio.py          PCM capture: PipeWire on Linux, AVFoundation on macOS
 meeting.py        channel split, speaker labelling, cleanup, minutes
 assistant.py      running a dictation through Claude Code, Codex or OpenRouter
 api.py            transcription on either provider, OpenRouter cleanup (stdlib only)
@@ -134,13 +166,14 @@ vad.py            deciding whether a recording holds speech at all
 filetranscribe.py file transcription: ffmpeg, chunking, timestamps
 overlay.py        the corner indicator
 settings_ui.py    settings window
-hotkey.py         KDE shortcut installation and the evdev listener
-paste.py          wl-clipboard and ydotool wrappers
+hotkey.py         KDE/evdev and native macOS global shortcuts
+paste.py          Wayland and macOS clipboard/paste wrappers
 i18n.py           the string table
 ```
 
-The indicator is drawn through XWayland, because a Wayland client cannot place a
-window in a screen corner; `dikte.py` sets `QT_QPA_PLATFORM=xcb` for that.
+On Linux the indicator is drawn through XWayland, because a Wayland client
+cannot place a window in a screen corner; `dikte.py` sets
+`QT_QPA_PLATFORM=xcb` for that. macOS uses its native floating tool window.
 
 ## License
 

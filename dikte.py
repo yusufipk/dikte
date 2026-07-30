@@ -18,6 +18,16 @@ Usage:
 import os
 import sys
 
+# Finder-launched apps do not inherit the shell PATH. Dikte relies on ffmpeg
+# for macOS microphone capture and file conversion, so include Homebrew's two
+# standard prefixes before any dependency checks run.
+if sys.platform == "darwin":
+    os.environ["PATH"] = os.pathsep.join(
+        path for path in (
+            "/opt/homebrew/bin", "/usr/local/bin", os.environ.get("PATH", "")
+        ) if path
+    )
+
 # A Wayland client cannot place a window in a screen corner, so the indicator
 # is drawn through XWayland.
 if os.environ.get("XDG_SESSION_TYPE") == "wayland" and os.environ.get("DISPLAY"):
@@ -196,7 +206,11 @@ class Dikte:
     def _set_icon(self, name):
         icon = QIcon.fromTheme(name)
         if icon.isNull():
-            icon = QIcon.fromTheme("audio-input-microphone")
+            path = os.path.join(
+                getattr(sys, "_MEIPASS", os.path.dirname(os.path.realpath(__file__))),
+                "assets", "dikteTemplate.svg",
+            )
+            icon = QIcon(path)
         self.tray.setIcon(icon)
 
     # ---- state ----------------------------------------------------------
@@ -308,7 +322,8 @@ class Dikte:
         # that the shortcut is live, which leaves the listener with nothing to
         # do but double every press.
         timer = self.last_evdev.get(name)
-        if self.evdev.running and timer is not None and timer.elapsed() < ECHO_MS:
+        if (sys.platform != "darwin" and self.evdev.running
+                and timer is not None and timer.elapsed() < ECHO_MS):
             self._retire_listener()
             return
         handler()
@@ -322,6 +337,8 @@ class Dikte:
         handlers.get(name, self._toggle)()
 
     def _retire_listener(self):
+        if sys.platform == "darwin":
+            return
         self.evdev.stop()
         self.conf["evdev_hotkey"] = False
         self.conf.save()
