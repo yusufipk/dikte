@@ -17,6 +17,8 @@ Usage:
 
 import os
 import sys
+from datetime import datetime
+from math import cos, pi, sin
 
 # Finder-launched apps do not inherit the shell PATH. Dikte relies on ffmpeg
 # for macOS microphone capture and file conversion, so include Homebrew's two
@@ -40,8 +42,8 @@ if sys.platform == "darwin":
 if os.environ.get("XDG_SESSION_TYPE") == "wayland" and os.environ.get("DISPLAY"):
     os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
 
-from PyQt6.QtCore import Qt, QTimer, QElapsedTimer  # noqa: E402
-from PyQt6.QtGui import QAction, QFont, QIcon, QPainter, QPixmap  # noqa: E402
+from PyQt6.QtCore import QPointF, Qt, QTimer, QElapsedTimer  # noqa: E402
+from PyQt6.QtGui import QAction, QFont, QIcon, QPainter, QPen, QPixmap  # noqa: E402
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon  # noqa: E402
 
@@ -138,6 +140,9 @@ class Dikte:
         self.meeting_ticker = QTimer()
         self.meeting_ticker.setInterval(500)
         self.meeting_ticker.timeout.connect(self._meeting_tick)
+        self.menubar_clock = QTimer()
+        self.menubar_clock.setInterval(30000)
+        self.menubar_clock.timeout.connect(self._refresh_menubar_clock)
 
         self.tray = QSystemTrayIcon()
         # Connect once. _apply_settings() rebuilds the actions after every Save;
@@ -148,6 +153,7 @@ class Dikte:
         self.updater.restart_requested.connect(self.app.quit)
         self._apply_settings()
         self.tray.show()
+        self.menubar_clock.start()
 
         self.update_timer = QTimer()
         self.update_timer.setInterval(6 * 60 * 60 * 1000)
@@ -259,6 +265,8 @@ class Dikte:
             if selection == cfg.SYSTEM_MENUBAR_ICON:
                 icon = QIcon(os.path.join(root, "assets", "dikteTemplate.svg"))
                 icon.setIsMask(True)
+            elif selection == cfg.ANALOG_CLOCK_MENUBAR_ICON:
+                icon = _analog_clock_icon()
             else:
                 # Draw this at runtime so any emoji entered in Settings can be
                 # used. A regular QPixmap keeps colour emoji in colour.
@@ -274,6 +282,14 @@ class Dikte:
                     root, "assets", "dikteTemplate.svg"
                 ))
         self.tray.setIcon(icon)
+
+    def _refresh_menubar_clock(self):
+        """Keep the optional analog status icon in sync with the current time."""
+        if (
+            sys.platform == "darwin"
+            and self.conf["menubar_emoji"] == cfg.ANALOG_CLOCK_MENUBAR_ICON
+        ):
+            self._set_icon("")
 
     # ---- state ----------------------------------------------------------
 
@@ -841,6 +857,67 @@ def _emoji_icon(value):
     painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, emoji)
     painter.end()
     return QIcon(pixmap)
+
+
+def _clock_hand_angles(hour, minute):
+    """Return clockwise hand angles in radians, measured from 12 o'clock."""
+    return (
+        2 * pi * ((hour % 12) + minute / 60) / 12,
+        2 * pi * minute / 60,
+    )
+
+
+def _analog_clock_icon(now=None):
+    """Draw a crisp, monochrome analog clock showing the current local time."""
+    now = now or datetime.now()
+    pixmap = QPixmap(128, 128)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+    centre = QPointF(64, 64)
+    colour = Qt.GlobalColor.black
+    painter.setPen(QPen(
+        colour, 7, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap
+    ))
+    painter.setBrush(Qt.BrushStyle.NoBrush)
+    painter.drawEllipse(centre, 50, 50)
+
+    for mark in range(12):
+        angle = 2 * pi * mark / 12
+        inner = 40 if mark % 3 == 0 else 43
+        painter.setPen(QPen(
+            colour, 6 if mark % 3 == 0 else 4,
+            Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
+        ))
+        painter.drawLine(
+            QPointF(64 + inner * sin(angle), 64 - inner * cos(angle)),
+            QPointF(64 + 47 * sin(angle), 64 - 47 * cos(angle)),
+        )
+
+    hour_angle, minute_angle = _clock_hand_angles(now.hour, now.minute)
+    painter.setPen(QPen(
+        colour, 9, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap
+    ))
+    painter.drawLine(
+        centre,
+        QPointF(64 + 25 * sin(hour_angle), 64 - 25 * cos(hour_angle)),
+    )
+    painter.setPen(QPen(
+        colour, 6, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap
+    ))
+    painter.drawLine(
+        centre,
+        QPointF(64 + 36 * sin(minute_angle), 64 - 36 * cos(minute_angle)),
+    )
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(colour)
+    painter.drawEllipse(centre, 5, 5)
+    painter.end()
+
+    icon = QIcon(pixmap)
+    icon.setIsMask(True)
+    return icon
 
 
 def _clock(seconds):

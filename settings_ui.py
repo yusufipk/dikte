@@ -30,6 +30,7 @@ IS_MACOS = sys.platform == "darwin"
 UI_LANGUAGES = [("Automatic (system)", "auto"), ("Turkish", "tr"), ("English", "en")]
 MENUBAR_ICONS = [
     ("System microphone (monochrome)", cfg.SYSTEM_MENUBAR_ICON),
+    ("Analog clock (current time)", cfg.ANALOG_CLOCK_MENUBAR_ICON),
     *[(emoji, emoji) for emoji in
       ["🎙️", "✍️", "🗣️", "🎤", "📝", "🪄", "🧠", "💬"]],
 ]

@@ -16,6 +16,7 @@ def _xdg(var, default):
 
 IS_MACOS = sys.platform == "darwin"
 SYSTEM_MENUBAR_ICON = "__system_microphone__"
+ANALOG_CLOCK_MENUBAR_ICON = "__analog_clock__"
 if IS_MACOS:
     CONFIG_DIR = pathlib.Path.home() / "Library/Application Support/Dikte"
     DATA_DIR = CONFIG_DIR

@@ -50,9 +50,10 @@ Settings → Privacy & Security → Accessibility**.
 
 Dikte runs as the **🎙️** icon in the macOS menu bar. Choose another one from
 **Settings → General → Menu bar emoji**, including a monochrome system-style
-microphone, or type any emoji you like; it changes as soon as the settings are
-saved. **Start Dikte when I log in** is enabled by default and can be turned off
-on the same page. Dikte also checks GitHub Releases every six hours and
+microphone or a live analog clock, or type any emoji you like; it changes as
+soon as the settings are saved. **Start Dikte when I log in** is enabled by
+default and can be turned off on the same page. Dikte also checks GitHub
+Releases every six hours and
 automatically installs newer verified macOS builds. Turn this off, see the
 installed version, or run a manual check under **Settings → General → Updates**.
 Every download must match GitHub's declared size and SHA-256 digest, bundle ID,

@@ -3,6 +3,7 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from math import pi
 from pathlib import Path
 
 import assistant
@@ -34,6 +35,19 @@ class TrayMenuPolicyTests(unittest.TestCase):
 
     def test_linux_keeps_the_native_context_menu(self):
         self.assertTrue(dikte._uses_native_tray_context_menu("linux"))
+
+
+class AnalogClockTests(unittest.TestCase):
+    def test_hand_angles_show_half_past_twelve(self):
+        hour, minute = dikte._clock_hand_angles(12, 30)
+        self.assertAlmostEqual(hour, pi / 12)
+        self.assertAlmostEqual(minute, pi)
+
+    def test_hand_angles_wrap_after_noon(self):
+        self.assertEqual(
+            dikte._clock_hand_angles(15, 0),
+            dikte._clock_hand_angles(3, 0),
+        )
 
 
 class RestartCommandTests(unittest.TestCase):

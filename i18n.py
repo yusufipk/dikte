@@ -204,6 +204,7 @@ TR = {
     "Interface language": "Arayüz dili",
     "Menu bar emoji": "Menü çubuğu emojisi",
     "System microphone (monochrome)": "Sistem mikrofonu (tek renk)",
+    "Analog clock (current time)": "Analog saat (şu anki saat)",
     "Choose the system icon, an emoji, or type any emoji. "
     "It changes as soon as Settings is saved.":
         "Sistem ikonunu veya bir emojiyi seç ya da istediğin emojiyi yaz. "

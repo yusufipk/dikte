@@ -51,8 +51,9 @@ Dikte'yi etkinleştir.
 
 Dikte macOS menü çubuğunda **🎙️** simgesiyle çalışır. Başka bir hazır simgeyi
 **Ayarlar → Genel → Menü çubuğu emojisi** altında seçebilir, macOS'in diğer
-ikonlarına benzeyen tek renkli sistem mikrofonunu kullanabilir veya istediğin
-emojiyi yazabilirsin; ayarlar kaydedilince simge hemen değişir. Aynı sayfadaki
+ikonlarına benzeyen tek renkli sistem mikrofonunu ya da canlı analog saati
+kullanabilir veya istediğin emojiyi yazabilirsin; ayarlar kaydedilince simge
+hemen değişir. Aynı sayfadaki
 **Oturum açtığımda Dikte'yi başlat** seçeneği varsayılan olarak açıktır. Dikte
 ayrıca altı saatte bir GitHub Releases'ı denetler ve doğrulanmış yeni macOS
 derlemesini otomatik kurar. Bu davranışı kapatmak, kurulu sürümü görmek veya
