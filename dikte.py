@@ -224,10 +224,10 @@ class Dikte:
             sys, "_MEIPASS", os.path.dirname(os.path.realpath(__file__))
         )
         if sys.platform == "darwin":
-            # A filename ending in Template makes AppKit recolour the alpha mask
-            # automatically for light/dark menu bars.
+            # Keep the user's chosen microphone emoji in colour rather than
+            # letting AppKit turn it into a monochrome template image.
             icon = QIcon(os.path.join(
-                root, "assets", "dikte-menubarTemplate.svg"
+                root, "assets", "dikte-menubar-emoji.png"
             ))
         else:
             icon = QIcon.fromTheme(name)
