@@ -16,7 +16,9 @@ Usage:
 """
 
 import os
+import subprocess
 import sys
+import time
 from datetime import datetime
 from math import cos, pi, sin
 
@@ -802,9 +804,29 @@ class Dikte:
         self.updater.install_ready()
 
     def restart(self):
-        """Replace this process with a fresh one, picking up code and settings."""
+        """Start a fresh process that picks up code and settings."""
         if self.settings_window is not None:
             self.settings_window.close()
+        if sys.platform == "darwin" and getattr(sys, "frozen", False):
+            try:
+                subprocess.Popen(
+                    _restart_helper_arguments(sys.executable, os.getpid()),
+                    close_fds=True,
+                    start_new_session=True,
+                )
+            except OSError as exc:
+                self.tray.showMessage(
+                    "Dikte",
+                    f"Dikte could not restart: {exc}",
+                    QSystemTrayIcon.MessageIcon.Warning,
+                    8000,
+                )
+                return
+            # A clean AppKit shutdown is required. Replacing this process with
+            # execv leaves its NSStatusItem detached, so the next tray icon is
+            # invisible even though Dikte is still running.
+            self.app.quit()
+            return
         self.shutdown()
         QLocalServer.removeServer(SERVER_NAME)
         os.execv(sys.executable, _restart_arguments(
@@ -842,6 +864,36 @@ def _restart_arguments(frozen, script=None):
     if frozen:
         return [sys.executable]
     return [sys.executable, script or os.path.realpath(__file__)]
+
+
+def _restart_helper_arguments(executable, old_pid):
+    """Return argv for the clean macOS packaged-app restart helper."""
+    return [str(executable), "finish-restart", str(int(old_pid))]
+
+
+def _finish_restart(arguments):
+    """Wait for the old AppKit process to exit, then become a clean Dikte."""
+    if len(arguments) != 1:
+        return 2
+    try:
+        old_pid = int(arguments[0])
+    except (TypeError, ValueError):
+        return 2
+    if old_pid <= 1 or old_pid == os.getpid():
+        return 2
+
+    for _ in range(300):
+        try:
+            os.kill(old_pid, 0)
+        except ProcessLookupError:
+            break
+        except PermissionError:
+            return 2
+        time.sleep(0.1)
+    else:
+        return 2
+
+    os.execve(sys.executable, [sys.executable], dict(os.environ))
 
 
 def _emoji_icon(value):
@@ -957,6 +1009,8 @@ def main():
     raw_args = sys.argv[1:]
     if raw_args and raw_args[0] == "finish-update":
         return updater.finish_update(raw_args[1:])
+    if raw_args and raw_args[0] == "finish-restart":
+        return _finish_restart(raw_args[1:])
 
     args = [a for a in raw_args if not a.startswith("-")]
     command = args[0] if args else ""

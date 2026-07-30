@@ -5,6 +5,7 @@ import unittest
 import zipfile
 from math import pi
 from pathlib import Path
+from unittest import mock
 
 import assistant
 import autostart
@@ -60,6 +61,45 @@ class RestartCommandTests(unittest.TestCase):
             dikte._restart_arguments(False, script),
             [sys.executable, script],
         )
+
+    def test_packaged_macos_restart_uses_a_clean_helper_process(self):
+        self.assertEqual(
+            dikte._restart_helper_arguments("/Applications/Dikte", 123),
+            ["/Applications/Dikte", "finish-restart", "123"],
+        )
+
+    def test_restart_helper_rejects_an_invalid_pid(self):
+        self.assertEqual(dikte._finish_restart(["not-a-pid"]), 2)
+
+    def test_packaged_restart_quits_only_after_helper_starts(self):
+        instance = dikte.Dikte.__new__(dikte.Dikte)
+        instance.settings_window = None
+        instance.app = mock.Mock()
+        instance.tray = mock.Mock()
+        instance.shutdown = mock.Mock()
+        with (
+            mock.patch.object(sys, "frozen", True, create=True),
+            mock.patch("dikte.subprocess.Popen") as popen,
+        ):
+            instance.restart()
+        popen.assert_called_once()
+        instance.app.quit.assert_called_once()
+        instance.shutdown.assert_not_called()
+
+    def test_packaged_restart_keeps_running_when_helper_cannot_start(self):
+        instance = dikte.Dikte.__new__(dikte.Dikte)
+        instance.settings_window = None
+        instance.app = mock.Mock()
+        instance.tray = mock.Mock()
+        instance.shutdown = mock.Mock()
+        with (
+            mock.patch.object(sys, "frozen", True, create=True),
+            mock.patch("dikte.subprocess.Popen", side_effect=OSError("boom")),
+        ):
+            instance.restart()
+        instance.app.quit.assert_not_called()
+        instance.shutdown.assert_not_called()
+        instance.tray.showMessage.assert_called_once()
 
 
 class MacAutostartTests(unittest.TestCase):
