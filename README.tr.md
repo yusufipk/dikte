@@ -54,8 +54,13 @@ Dikte macOS menü çubuğunda **🎙️** simgesiyle çalışır. Başka bir haz
 ikonlarına benzeyen tek renkli sistem mikrofonunu kullanabilir veya istediğin
 emojiyi yazabilirsin; ayarlar kaydedilince simge hemen değişir. Aynı sayfadaki
 **Oturum açtığımda Dikte'yi başlat** seçeneği varsayılan olarak açıktır. Dikte
-boştayken simgeye tıklamak Ayarlar penceresini doğrudan açar. AppKit açarken
-macOS 27'de çöken Qt yerel durum menüsü bu nedenle özellikle kullanılmaz.
+ayrıca altı saatte bir GitHub Releases'ı denetler ve doğrulanmış yeni macOS
+derlemesini otomatik kurar. Bu davranışı kapatmak, kurulu sürümü görmek veya
+elle denetlemek için **Ayarlar → Genel → Güncellemeler** bölümünü kullan.
+İndirilen paketin GitHub'daki boyutu ve SHA-256 özeti, uygulama kimliği, gömülü
+sürümü ve macOS kod imzası doğrulanmadan Dikte değiştirilip yeniden başlatılmaz.
+Dikte boştayken simgeye tıklamak Ayarlar penceresini doğrudan açar. AppKit
+açarken macOS 27'de çöken Qt yerel durum menüsü bu nedenle özellikle kullanılmaz.
 
 Uygulama yerel/ad-hoc imzalıdır. Apple Developer hesabıyla noterlenmemiş,
 internetten indirilmiş bir derlemede ilk açılışta **Control-tık → Aç** gerekebilir.
@@ -96,7 +101,7 @@ Sesi yazıya çevirme ikisinden birinde, temizleme OpenRouter veya Codex CLI'da
 | Ajana sesle komut ver | Tepsi menüsü → *Claude'a sor*, ya da `dikte ask` |
 | Toplantıyı başlat / bitir | Tepsi menüsü → *Toplantı kaydet*, ya da `dikte meeting` |
 | Ayarlar | Tepsi menüsü → *Ayarlar*, ya da `dikte settings` |
-| Güncelleme sonrası yeniden yükle | Tepsi menüsü → *Yeniden başlat*, ya da `dikte restart` |
+| macOS güncellemesini denetle | Ayarlar → Genel → *Güncellemeleri şimdi denetle* |
 | Çık | Tepsi menüsü → *Çık*, ya da `dikte quit` |
 
 Ekranın köşesindeki gösterge kırmızı kayıt noktasını, canlı ses dalgasını ve

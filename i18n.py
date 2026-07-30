@@ -209,6 +209,27 @@ TR = {
         "Sistem ikonunu veya bir emojiyi seç ya da istediğin emojiyi yaz. "
         "Ayarlar kaydedilince hemen değişir.",
     "Start Dikte when I log in": "Oturum açtığımda Dikte'yi başlat",
+    "Automatically install macOS updates":
+        "macOS güncellemelerini otomatik yükle",
+    "Updates": "Güncellemeler",
+    "Check for updates now": "Güncellemeleri şimdi denetle",
+    "Current version: v{version}": "Geçerli sürüm: v{version}",
+    "Updates are available in the packaged macOS app.":
+        "Güncellemeler paketlenmiş macOS uygulamasında kullanılabilir.",
+    "Checking for updates…": "Güncellemeler denetleniyor…",
+    "Dikte is up to date (v{version}).": "Dikte güncel (v{version}).",
+    "Downloading Dikte v{version}…": "Dikte v{version} indiriliyor…",
+    "Dikte v{version} is ready to install.":
+        "Dikte v{version} kurulmaya hazır.",
+    "Installing Dikte v{version}…": "Dikte v{version} kuruluyor…",
+    "Update installed. Restarting Dikte…":
+        "Güncelleme kuruldu. Dikte yeniden başlatılıyor…",
+    "Update failed: {error}": "Güncelleme başarısız: {error}",
+    "Dikte update": "Dikte güncellemesi",
+    "Dikte v{version} is downloading.": "Dikte v{version} indiriliyor.",
+    "Dikte v{version} will install when recording finishes.":
+        "Dikte v{version}, kayıt bitince kurulacak.",
+    "Dikte was updated to v{version}.": "Dikte v{version} sürümüne güncellendi.",
     "Automatic (system)": "Otomatik (sistem)",
     "Turkish": "Türkçe",
     "English": "İngilizce",

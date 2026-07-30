@@ -52,6 +52,7 @@ import config as cfg  # noqa: E402
 import hotkey  # noqa: E402
 import i18n  # noqa: E402
 import meeting  # noqa: E402
+import updater  # noqa: E402
 from i18n import t  # noqa: E402
 from meeting import MeetingPipeline  # noqa: E402
 from overlay import Overlay  # noqa: E402
@@ -93,6 +94,7 @@ class Dikte:
         self.meeting_message = ""
         self.settings_window = None
         self._quitting = False
+        self.updater = updater.UpdateManager()
 
         self.overlay = Overlay(self.conf["overlay_corner"])
         # The agent's indicator sits on top of the dictation one when both are
@@ -141,8 +143,26 @@ class Dikte:
         # Connect once. _apply_settings() rebuilds the actions after every Save;
         # reconnecting here used to add another activation handler each time.
         self.tray.activated.connect(self._tray_clicked)
+        self.updater.update_available.connect(self._on_update_available)
+        self.updater.ready.connect(self._install_update_when_idle)
+        self.updater.restart_requested.connect(self.app.quit)
         self._apply_settings()
         self.tray.show()
+
+        self.update_timer = QTimer()
+        self.update_timer.setInterval(6 * 60 * 60 * 1000)
+        self.update_timer.timeout.connect(self._check_for_updates)
+        self.update_timer.start()
+        QTimer.singleShot(10000, self._check_for_updates)
+
+        updated_to = os.environ.pop("DIKTE_UPDATED_TO", "")
+        if updated_to:
+            QTimer.singleShot(1500, lambda: self.tray.showMessage(
+                t("Dikte update"),
+                t("Dikte was updated to v{version}.", version=updated_to),
+                QSystemTrayIcon.MessageIcon.Information,
+                5000,
+            ))
 
     # ---- tray ----------------------------------------------------------
 
@@ -702,7 +722,7 @@ class Dikte:
         if self.settings_window is None:
             self.settings_window = SettingsWindow(
                 self.conf, launch_command(), meeting_command(), self.meetings,
-                ask_command(),
+                ask_command(), self.updater, self._check_for_updates,
             )
             self.settings_window.applied.connect(self._apply_settings)
             self.settings_window.finished.connect(self._settings_closed)
@@ -729,6 +749,41 @@ class Dikte:
             autostart.sync(self.conf["launch_at_login"], sys.executable)
         except OSError as exc:
             print(f"dikte: could not update launch-at-login ({exc})")
+
+    def _check_for_updates(self, manual=False):
+        if sys.platform != "darwin":
+            return False
+        if not manual and not self.conf["auto_update"]:
+            return False
+        return self.updater.check(manual=manual)
+
+    def _on_update_available(self, version):
+        self.tray.showMessage(
+            t("Dikte update"),
+            t("Dikte v{version} is downloading.", version=version),
+            QSystemTrayIcon.MessageIcon.Information,
+            5000,
+        )
+
+    def _install_update_when_idle(self, version, manual):
+        if not manual and not self.conf["auto_update"]:
+            self.updater.discard_ready()
+            return
+        if (
+            self.state != IDLE
+            or self.ask_state != IDLE
+            or self.meeting_state != M_IDLE
+        ):
+            self.updater.set_status(t(
+                "Dikte v{version} will install when recording finishes.",
+                version=version,
+            ))
+            QTimer.singleShot(
+                30000,
+                lambda: self._install_update_when_idle(version, manual),
+            )
+            return
+        self.updater.install_ready()
 
     def restart(self):
         """Replace this process with a fresh one, picking up code and settings."""
@@ -822,7 +877,11 @@ def send_command(command, timeout=800):
 
 
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("-")]
+    raw_args = sys.argv[1:]
+    if raw_args and raw_args[0] == "finish-update":
+        return updater.finish_update(raw_args[1:])
+
+    args = [a for a in raw_args if not a.startswith("-")]
     command = args[0] if args else ""
 
     if command and command not in ("toggle", "cancel", "settings", "restart",

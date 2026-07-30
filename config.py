@@ -371,6 +371,7 @@ DEFAULTS = {
     "ui_language": "auto",          # auto | tr | en
     "menubar_emoji": "🎙️",          # macOS menu-bar icon; any emoji is accepted
     "launch_at_login": IS_MACOS,
+    "auto_update": IS_MACOS,
     "openai_api_key": "",
     "openai_base_url": "https://api.openai.com/v1",
     "openrouter_api_key": "",

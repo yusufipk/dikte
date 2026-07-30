@@ -2,6 +2,7 @@ import plistlib
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 import assistant
@@ -9,6 +10,7 @@ import autostart
 import dikte
 import hotkey
 import local_whisper
+import updater
 
 
 class MacShortcutParserTests(unittest.TestCase):
@@ -65,6 +67,64 @@ class MacAutostartTests(unittest.TestCase):
             self.assertFalse(autostart.update(True, executable, path))
             self.assertTrue(autostart.update(False, executable, path))
             self.assertFalse(path.exists())
+
+
+class MacUpdaterTests(unittest.TestCase):
+    @staticmethod
+    def _release(version="0.3.5", digest=None):
+        digest = digest or "a" * 64
+        return {
+            "tag_name": f"macos-v{version}",
+            "draft": False,
+            "prerelease": True,
+            "assets": [{
+                "name": "Dikte-macOS.zip",
+                "size": 1234,
+                "digest": f"sha256:{digest}",
+                "browser_download_url": (
+                    "https://github.com/benfirad/dikte-macos/releases/download/"
+                    f"macos-v{version}/Dikte-macOS.zip"
+                ),
+            }],
+        }
+
+    def test_latest_verified_release_is_selected(self):
+        latest = updater.select_latest_release([
+            self._release("0.3.4"),
+            self._release("0.4.0"),
+            {"tag_name": "unrelated"},
+        ])
+        self.assertEqual(latest.version, "0.4.0")
+        self.assertEqual(latest.version_tuple, (0, 4, 0))
+
+    def test_release_without_digest_is_rejected(self):
+        release = self._release()
+        release["assets"][0]["digest"] = None
+        self.assertIsNone(updater.release_from_payload(release))
+
+    def test_release_from_another_download_host_is_rejected(self):
+        release = self._release()
+        release["assets"][0]["browser_download_url"] = (
+            "https://example.com/Dikte-macOS.zip"
+        )
+        self.assertIsNone(updater.release_from_payload(release))
+
+    def test_archive_path_traversal_is_rejected(self):
+        with tempfile.TemporaryDirectory() as directory:
+            archive = Path(directory) / "unsafe.zip"
+            with zipfile.ZipFile(archive, "w") as handle:
+                handle.writestr("../outside", "unsafe")
+            with self.assertRaisesRegex(RuntimeError, "unsafe path"):
+                updater._safe_archive(archive)
+
+    def test_packaged_app_path_is_derived_from_executable(self):
+        self.assertEqual(
+            updater.packaged_app_path(
+                "/Applications/Dikte.app/Contents/MacOS/Dikte"
+            ),
+            Path("/Applications/Dikte.app"),
+        )
+        self.assertIsNone(updater.packaged_app_path("/usr/bin/python3"))
 
 
 class MacAudioDeviceParserTests(unittest.TestCase):

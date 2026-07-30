@@ -52,8 +52,13 @@ Dikte runs as the **🎙️** icon in the macOS menu bar. Choose another one fro
 **Settings → General → Menu bar emoji**, including a monochrome system-style
 microphone, or type any emoji you like; it changes as soon as the settings are
 saved. **Start Dikte when I log in** is enabled by default and can be turned off
-on the same page. Click the icon while Dikte is idle to open Settings directly.
-This deliberately avoids Qt's native status-item context menu, which crashes on
+on the same page. Dikte also checks GitHub Releases every six hours and
+automatically installs newer verified macOS builds. Turn this off, see the
+installed version, or run a manual check under **Settings → General → Updates**.
+Every download must match GitHub's declared size and SHA-256 digest, bundle ID,
+embedded version, and macOS code signature before Dikte replaces the app and
+restarts. Click the icon while Dikte is idle to open Settings directly. This
+deliberately avoids Qt's native status-item context menu, which crashes on
 macOS 27 when AppKit opens it.
 
 The app is locally/ad-hoc signed. A downloaded build may need **Control-click →
@@ -94,7 +99,7 @@ stored in `~/.config/dikte/config.json` on Linux or
 | Speak a command to an agent | Tray menu → *Ask Claude*, or `dikte ask` |
 | Start / end a meeting | Tray menu → *Record a meeting*, or `dikte meeting` |
 | Settings | Tray menu → *Settings*, or `dikte settings` |
-| Reload after an update | Tray menu → *Restart*, or `dikte restart` |
+| Check for a macOS update | Settings → General → *Check for updates now* |
 | Quit | Tray menu → *Quit*, or `dikte quit` |
 
 An indicator in the screen corner shows a red dot, a live waveform and the

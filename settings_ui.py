@@ -22,6 +22,7 @@ import filetranscribe
 import hotkey
 import local_whisper
 import meeting
+from app_version import APP_VERSION
 from filetranscribe import FileTranscriber
 from i18n import t
 
@@ -141,13 +142,16 @@ class SettingsWindow(QDialog):
     _local_install_done = pyqtSignal(bool, str, str)
 
     def __init__(self, conf, launch_command, meeting_command=None,
-                 meetings=None, ask_command=None, parent=None):
+                 meetings=None, ask_command=None, update_manager=None,
+                 update_check=None, parent=None):
         super().__init__(parent)
         self.conf = conf
         self.launch_command = launch_command
         self.meeting_command = meeting_command or launch_command
         self.ask_command = ask_command or launch_command
         self.meetings = meetings
+        self.update_manager = update_manager
+        self.update_check = update_check
         # Each provider keeps its own transcription model, so switching the
         # provider back and forth never overwrites the other one's.
         self._models = {"local": "", "openai": "", "openrouter": ""}
@@ -184,6 +188,8 @@ class SettingsWindow(QDialog):
         self._or_test_done.connect(self._on_or_test_done)
         self._local_install_progress.connect(self._on_local_install_progress)
         self._local_install_done.connect(self._on_local_install_done)
+        if self.update_manager is not None:
+            self.update_manager.status_changed.connect(self._on_update_status)
         self.transcriber.progress.connect(self._on_file_progress)
         self.transcriber.finished.connect(self._on_file_finished)
         self.transcriber.failed.connect(self._on_file_failed)
@@ -221,6 +227,23 @@ class SettingsWindow(QDialog):
         self.launch_at_login = QCheckBox(t("Start Dikte when I log in"))
         if IS_MACOS:
             form.addRow("", self.launch_at_login)
+
+        self.auto_update = QCheckBox(t("Automatically install macOS updates"))
+        if IS_MACOS:
+            form.addRow("", self.auto_update)
+
+        self.update_status = QLabel(
+            self.update_manager.status if self.update_manager is not None
+            else t("Current version: v{version}", version=APP_VERSION)
+        )
+        self.update_status.setWordWrap(True)
+        self.check_update = QPushButton(t("Check for updates now"))
+        self.check_update.clicked.connect(self._check_for_updates)
+        update_row = QHBoxLayout()
+        update_row.addWidget(self.update_status, 1)
+        update_row.addWidget(self.check_update)
+        if IS_MACOS:
+            form.addRow(t("Updates"), update_row)
 
         self.mic = QComboBox()
         self.mic.addItem(t("Default microphone"), "")
@@ -1006,6 +1029,7 @@ class SettingsWindow(QDialog):
         else:
             self.menubar_emoji.setCurrentText(icon_value)
         self.launch_at_login.setChecked(conf["launch_at_login"])
+        self.auto_update.setChecked(conf["auto_update"])
         self._select_data(self.mic, conf["mic_target"])
         self._select_data(self.language, conf["language"])
         self.auto_paste.setChecked(conf["auto_paste"])
@@ -1103,6 +1127,7 @@ class SettingsWindow(QDialog):
             else icon_text or cfg.DEFAULTS["menubar_emoji"]
         )
         conf["launch_at_login"] = self.launch_at_login.isChecked()
+        conf["auto_update"] = self.auto_update.isChecked()
         conf["mic_target"] = self.mic.currentData() or ""
         conf["language"] = self.language.currentData() or "auto"
         conf["auto_paste"] = self.auto_paste.isChecked()
@@ -1207,6 +1232,13 @@ class SettingsWindow(QDialog):
         self._load_history()  # the trim may just have dropped rows from the list
         self.applied.emit()
         QMessageBox.information(self, t("Dikte Settings"), t("Saved successfully."))
+
+    def _check_for_updates(self):
+        if self.update_check is not None:
+            self.update_check(True)
+
+    def _on_update_status(self, message):
+        self.update_status.setText(message)
 
     @staticmethod
     def _select_data(combo, value):
