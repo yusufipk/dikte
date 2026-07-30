@@ -15,6 +15,7 @@ def _xdg(var, default):
 
 
 IS_MACOS = sys.platform == "darwin"
+SYSTEM_MENUBAR_ICON = "__system_microphone__"
 if IS_MACOS:
     CONFIG_DIR = pathlib.Path.home() / "Library/Application Support/Dikte"
     DATA_DIR = CONFIG_DIR
@@ -369,6 +370,7 @@ da senin soracağın soruya verilecek bir yanıt yok.
 DEFAULTS = {
     "ui_language": "auto",          # auto | tr | en
     "menubar_emoji": "🎙️",          # macOS menu-bar icon; any emoji is accepted
+    "launch_at_login": IS_MACOS,
     "openai_api_key": "",
     "openai_base_url": "https://api.openai.com/v1",
     "openrouter_api_key": "",

@@ -1,7 +1,11 @@
+import plistlib
 import sys
+import tempfile
 import unittest
+from pathlib import Path
 
 import assistant
+import autostart
 import dikte
 import hotkey
 import local_whisper
@@ -28,6 +32,39 @@ class TrayMenuPolicyTests(unittest.TestCase):
 
     def test_linux_keeps_the_native_context_menu(self):
         self.assertTrue(dikte._uses_native_tray_context_menu("linux"))
+
+
+class RestartCommandTests(unittest.TestCase):
+    def test_packaged_restart_does_not_pass_the_bundled_script(self):
+        self.assertEqual(dikte._restart_arguments(True), [sys.executable])
+
+    def test_source_restart_passes_the_python_script(self):
+        script = "/tmp/dikte.py"
+        self.assertEqual(
+            dikte._restart_arguments(False, script),
+            [sys.executable, script],
+        )
+
+
+class MacAutostartTests(unittest.TestCase):
+    def test_packaged_app_executable_is_recognised(self):
+        self.assertTrue(autostart._is_macos_app_executable(
+            "/Applications/Dikte.app/Contents/MacOS/Dikte"
+        ))
+        self.assertFalse(autostart._is_macos_app_executable("/usr/bin/python3"))
+
+    def test_launch_agent_is_created_and_removed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "dev.dikte.app.plist"
+            executable = "/Applications/Dikte.app/Contents/MacOS/Dikte"
+            self.assertTrue(autostart.update(True, executable, path))
+            payload = plistlib.loads(path.read_bytes())
+            self.assertEqual(payload["Label"], "dev.dikte.app")
+            self.assertEqual(payload["ProgramArguments"], [executable])
+            self.assertTrue(payload["RunAtLoad"])
+            self.assertFalse(autostart.update(True, executable, path))
+            self.assertTrue(autostart.update(False, executable, path))
+            self.assertFalse(path.exists())
 
 
 class MacAudioDeviceParserTests(unittest.TestCase):

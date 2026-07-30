@@ -27,7 +27,11 @@ from i18n import t
 
 IS_MACOS = sys.platform == "darwin"
 UI_LANGUAGES = [("Automatic (system)", "auto"), ("Turkish", "tr"), ("English", "en")]
-MENUBAR_EMOJIS = ["🎙️", "✍️", "🗣️", "🎤", "📝", "🪄", "🧠", "💬"]
+MENUBAR_ICONS = [
+    ("System microphone (monochrome)", cfg.SYSTEM_MENUBAR_ICON),
+    *[(emoji, emoji) for emoji in
+      ["🎙️", "✍️", "🗣️", "🎤", "📝", "🪄", "🧠", "💬"]],
+]
 LANGUAGES = [
     ("Detect automatically", "auto"), ("Turkish", "tr"), ("English", "en"),
     ("German", "de"), ("French", "fr"), ("Spanish", "es"), ("Arabic", "ar"),
@@ -205,12 +209,18 @@ class SettingsWindow(QDialog):
 
         self.menubar_emoji = QComboBox()
         self.menubar_emoji.setEditable(True)
-        self.menubar_emoji.addItems(MENUBAR_EMOJIS)
+        for label, value in MENUBAR_ICONS:
+            self.menubar_emoji.addItem(t(label), value)
         self.menubar_emoji.setToolTip(t(
-            "Choose one or type any emoji. It changes as soon as Settings is saved."
+            "Choose the system icon, an emoji, or type any emoji. "
+            "It changes as soon as Settings is saved."
         ))
         if IS_MACOS:
             form.addRow(t("Menu bar emoji"), self.menubar_emoji)
+
+        self.launch_at_login = QCheckBox(t("Start Dikte when I log in"))
+        if IS_MACOS:
+            form.addRow("", self.launch_at_login)
 
         self.mic = QComboBox()
         self.mic.addItem(t("Default microphone"), "")
@@ -989,9 +999,13 @@ class SettingsWindow(QDialog):
     def _load(self):
         conf = self.conf
         self._select_data(self.ui_language, conf["ui_language"])
-        self.menubar_emoji.setCurrentText(
-            conf["menubar_emoji"] or cfg.DEFAULTS["menubar_emoji"]
-        )
+        icon_value = conf["menubar_emoji"] or cfg.DEFAULTS["menubar_emoji"]
+        icon_index = self.menubar_emoji.findData(icon_value)
+        if icon_index >= 0:
+            self.menubar_emoji.setCurrentIndex(icon_index)
+        else:
+            self.menubar_emoji.setCurrentText(icon_value)
+        self.launch_at_login.setChecked(conf["launch_at_login"])
         self._select_data(self.mic, conf["mic_target"])
         self._select_data(self.language, conf["language"])
         self.auto_paste.setChecked(conf["auto_paste"])
@@ -1081,10 +1095,14 @@ class SettingsWindow(QDialog):
     def _save(self):
         conf = self.conf
         conf["ui_language"] = self.ui_language.currentData() or "auto"
+        icon_text = self.menubar_emoji.currentText().strip()
+        icon_index = self.menubar_emoji.findText(icon_text)
         conf["menubar_emoji"] = (
-            self.menubar_emoji.currentText().strip()
-            or cfg.DEFAULTS["menubar_emoji"]
+            self.menubar_emoji.itemData(icon_index)
+            if icon_index >= 0
+            else icon_text or cfg.DEFAULTS["menubar_emoji"]
         )
+        conf["launch_at_login"] = self.launch_at_login.isChecked()
         conf["mic_target"] = self.mic.currentData() or ""
         conf["language"] = self.language.currentData() or "auto"
         conf["auto_paste"] = self.auto_paste.isChecked()

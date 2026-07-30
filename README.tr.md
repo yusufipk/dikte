@@ -50,10 +50,12 @@ açılmazsa **Sistem Ayarları → Gizlilik ve Güvenlik → Erişilebilirlik** 
 Dikte'yi etkinleştir.
 
 Dikte macOS menü çubuğunda **🎙️** simgesiyle çalışır. Başka bir hazır simgeyi
-**Ayarlar → Genel → Menü çubuğu emojisi** altında seçebilir veya istediğin
-emojiyi yazabilirsin; ayarlar kaydedilince simge hemen değişir. Dikte boştayken
-simgeye tıklamak Ayarlar penceresini doğrudan açar. AppKit açarken macOS 27'de
-çöken Qt yerel durum menüsü bu nedenle özellikle kullanılmaz.
+**Ayarlar → Genel → Menü çubuğu emojisi** altında seçebilir, macOS'in diğer
+ikonlarına benzeyen tek renkli sistem mikrofonunu kullanabilir veya istediğin
+emojiyi yazabilirsin; ayarlar kaydedilince simge hemen değişir. Aynı sayfadaki
+**Oturum açtığımda Dikte'yi başlat** seçeneği varsayılan olarak açıktır. Dikte
+boştayken simgeye tıklamak Ayarlar penceresini doğrudan açar. AppKit açarken
+macOS 27'de çöken Qt yerel durum menüsü bu nedenle özellikle kullanılmaz.
 
 Uygulama yerel/ad-hoc imzalıdır. Apple Developer hesabıyla noterlenmemiş,
 internetten indirilmiş bir derlemede ilk açılışta **Control-tık → Aç** gerekebilir.

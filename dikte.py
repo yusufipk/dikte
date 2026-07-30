@@ -47,6 +47,7 @@ from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon  # noqa: E402
 
 import assistant  # noqa: E402
 import audio  # noqa: E402
+import autostart  # noqa: E402
 import config as cfg  # noqa: E402
 import hotkey  # noqa: E402
 import i18n  # noqa: E402
@@ -234,10 +235,14 @@ class Dikte:
             sys, "_MEIPASS", os.path.dirname(os.path.realpath(__file__))
         )
         if sys.platform == "darwin":
-            # Draw this at runtime so any emoji entered in Settings can be used.
-            # A regular QPixmap also keeps AppKit from treating it as a
-            # monochrome template image.
-            icon = _emoji_icon(self.conf["menubar_emoji"])
+            selection = self.conf["menubar_emoji"]
+            if selection == cfg.SYSTEM_MENUBAR_ICON:
+                icon = QIcon(os.path.join(root, "assets", "dikteTemplate.svg"))
+                icon.setIsMask(True)
+            else:
+                # Draw this at runtime so any emoji entered in Settings can be
+                # used. A regular QPixmap keeps colour emoji in colour.
+                icon = _emoji_icon(selection)
             if icon.isNull():
                 icon = QIcon(os.path.join(
                     root, "assets", "dikte-menubar-emoji.png"
@@ -720,6 +725,10 @@ class Dikte:
                               "meeting": self.conf["meeting_shortcut"]})
         else:
             self.evdev.stop()
+        try:
+            autostart.sync(self.conf["launch_at_login"], sys.executable)
+        except OSError as exc:
+            print(f"dikte: could not update launch-at-login ({exc})")
 
     def restart(self):
         """Replace this process with a fresh one, picking up code and settings."""
@@ -727,8 +736,10 @@ class Dikte:
             self.settings_window.close()
         self.shutdown()
         QLocalServer.removeServer(SERVER_NAME)
-        script = os.path.realpath(__file__)
-        os.execv(sys.executable, [sys.executable, script])
+        os.execv(sys.executable, _restart_arguments(
+            getattr(sys, "frozen", False),
+            os.path.realpath(__file__),
+        ))
 
     def shutdown(self):
         self._quitting = True
@@ -753,6 +764,13 @@ def _preview(text):
 def _uses_native_tray_context_menu(platform_name=None):
     """The Qt/AppKit status-item menu is unsafe on current macOS."""
     return (platform_name or sys.platform) != "darwin"
+
+
+def _restart_arguments(frozen, script=None):
+    """Return argv for a source checkout or a frozen application bundle."""
+    if frozen:
+        return [sys.executable]
+    return [sys.executable, script or os.path.realpath(__file__)]
 
 
 def _emoji_icon(value):

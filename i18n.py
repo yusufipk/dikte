@@ -203,8 +203,12 @@ TR = {
     "Saved successfully.": "Başarıyla kaydedildi.",
     "Interface language": "Arayüz dili",
     "Menu bar emoji": "Menü çubuğu emojisi",
-    "Choose one or type any emoji. It changes as soon as Settings is saved.":
-        "Birini seç ya da istediğin emojiyi yaz. Ayarlar kaydedilince hemen değişir.",
+    "System microphone (monochrome)": "Sistem mikrofonu (tek renk)",
+    "Choose the system icon, an emoji, or type any emoji. "
+    "It changes as soon as Settings is saved.":
+        "Sistem ikonunu veya bir emojiyi seç ya da istediğin emojiyi yaz. "
+        "Ayarlar kaydedilince hemen değişir.",
+    "Start Dikte when I log in": "Oturum açtığımda Dikte'yi başlat",
     "Automatic (system)": "Otomatik (sistem)",
     "Turkish": "Türkçe",
     "English": "İngilizce",

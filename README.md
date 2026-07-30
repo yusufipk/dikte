@@ -49,10 +49,12 @@ permission; if it is not enabled automatically, add Dikte under **System
 Settings → Privacy & Security → Accessibility**.
 
 Dikte runs as the **🎙️** icon in the macOS menu bar. Choose another one from
-**Settings → General → Menu bar emoji**, or type any emoji you like; it changes
-as soon as the settings are saved. Click the icon while Dikte is idle to open
-Settings directly. This deliberately avoids Qt's native status-item context
-menu, which crashes on macOS 27 when AppKit opens it.
+**Settings → General → Menu bar emoji**, including a monochrome system-style
+microphone, or type any emoji you like; it changes as soon as the settings are
+saved. **Start Dikte when I log in** is enabled by default and can be turned off
+on the same page. Click the icon while Dikte is idle to open Settings directly.
+This deliberately avoids Qt's native status-item context menu, which crashes on
+macOS 27 when AppKit opens it.
 
 The app is locally/ad-hoc signed. A downloaded build may need **Control-click →
 Open** on its first launch unless a release has been notarized by an Apple
