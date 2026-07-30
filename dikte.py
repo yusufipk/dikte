@@ -24,7 +24,14 @@ import sys
 if sys.platform == "darwin":
     os.environ["PATH"] = os.pathsep.join(
         path for path in (
-            "/opt/homebrew/bin", "/usr/local/bin", os.environ.get("PATH", "")
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            os.path.expanduser("~/.local/bin"),
+            "/Applications/ChatGPT.app/Contents/Resources",
+            os.path.expanduser(
+                "~/Applications/ChatGPT.app/Contents/Resources"
+            ),
+            os.environ.get("PATH", ""),
         ) if path
     )
 
@@ -814,7 +821,8 @@ def main():
 
     # No key for the chosen transcription provider means nothing can work yet,
     # so the settings window is the only useful thing to open.
-    if command == "settings" or not dikte.conf.transcribe_target().api_key:
+    target = dikte.conf.transcribe_target()
+    if command == "settings" or (target.provider != "local" and not target.api_key):
         dikte.open_settings()
     elif command == "toggle":
         QTimer.singleShot(0, dikte.toggle)

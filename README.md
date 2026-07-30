@@ -1,9 +1,8 @@
 # Dikte
 
-Press `Ctrl+Space`, talk, press again. The recording goes to OpenAI or OpenRouter
-for transcription, a model on OpenRouter cleans it up (dropping the *uh*s, the
-restarts, the missing punctuation), and the result lands in your clipboard and
-is pasted into whatever window you were typing in.
+Press `Ctrl+Space`, talk, press again. The recording is transcribed either
+locally with whisper.cpp (no API key) or through OpenAI/OpenRouter, then lands
+in your clipboard and is pasted into whatever window you were typing in.
 
 Runs on KDE Plasma 6 / Wayland and macOS 13 or newer. The macOS port uses
 AVFoundation for audio, native Carbon global hotkeys, and the system clipboard.
@@ -56,14 +55,24 @@ Developer account. Settings and history live in
 
 GitHub Actions also builds `Dikte-macOS.zip` on every pull request and push.
 
-Two keys go in the settings window: **OpenAI** and **OpenRouter**. Speech to text
-runs on either one (`gpt-4o-transcribe` by default), cleanup always on
-OpenRouter (`google/gemini-3.5-flash-lite`), so a single OpenRouter key can
-cover both. They fall back to `OPENAI_API_KEY` and `OPENROUTER_API_KEY`, and are
+### Use it without an API key
+
+Under **Settings → API and models → Speech to text**, select **Local Whisper —
+no API key**, then click **Install local Whisper**. On macOS the button installs
+Homebrew's `whisper-cpp` when needed and downloads the recommended multilingual
+`large-v3-turbo-q5_0` model (574 MB) once. Audio and transcripts remain on the
+machine. Turn transcript cleanup off for completely keyless plain dictation.
+
+For spoken questions and actions, Settings → Agent already supports the signed-in
+`codex exec` or `claude -p` CLI session. This needs no separately pasted API key:
+Local Whisper first turns speech into text, Dikte sends that text to the selected
+CLI, and pastes its answer. Codex CLI does not accept audio input directly.
+
+The hosted alternative takes **OpenAI** and/or **OpenRouter** keys. Speech to text
+runs on either one; cleanup runs on OpenRouter, so a single OpenRouter key can
+cover both. Keys fall back to `OPENAI_API_KEY` and `OPENROUTER_API_KEY`, and are
 stored in `~/.config/dikte/config.json` on Linux or
-`~/Library/Application Support/Dikte/config.json` on macOS, mode 600. Cleanup can be switched off,
-in which case the raw transcript is pasted, and a thinking model's effort can be
-set next to it.
+`~/Library/Application Support/Dikte/config.json` on macOS, mode 600.
 
 ## Using it
 
@@ -160,7 +169,8 @@ dikte.py          entry point, tray icon, state machine, IPC
 audio.py          PCM capture: PipeWire on Linux, AVFoundation on macOS
 meeting.py        channel split, speaker labelling, cleanup, minutes
 assistant.py      running a dictation through Claude Code, Codex or OpenRouter
-api.py            transcription on either provider, OpenRouter cleanup (stdlib only)
+api.py            hosted or Local Whisper transcription, OpenRouter cleanup
+local_whisper.py  whisper.cpp install, verified model download and transcription
 worker.py         transcribe → clean up → clipboard → paste
 vad.py            deciding whether a recording holds speech at all
 filetranscribe.py file transcription: ffmpeg, chunking, timestamps

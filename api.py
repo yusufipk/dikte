@@ -14,6 +14,7 @@ import secrets
 import urllib.error
 import urllib.request
 
+import local_whisper
 from i18n import t
 
 APP_URL = "https://github.com/yusufipk/dikte"
@@ -141,6 +142,14 @@ def _transcribe_request(target, wav_path, language, prompt, response_format,
 
 
 def transcribe(target, wav_path, language="", prompt="", timeout=300):
+    if target.provider == "local":
+        try:
+            return local_whisper.transcribe(
+                wav_path, model_path=target.model, language=language,
+                prompt=prompt, timeout=max(timeout, 600),
+            )
+        except local_whisper.LocalWhisperError as exc:
+            raise ApiError(str(exc)) from exc
     data = _transcribe_request(
         target, wav_path, language, prompt, "json", timeout=timeout
     )
@@ -152,6 +161,14 @@ def transcribe(target, wav_path, language="", prompt="", timeout=300):
 
 def transcribe_segments(target, wav_path, language="", prompt="", timeout=300):
     """[(start_seconds, end_seconds, text)] using whisper-1's verbose response."""
+    if target.provider == "local":
+        try:
+            return local_whisper.transcribe_segments(
+                wav_path, model_path=target.model, language=language,
+                prompt=prompt, timeout=max(timeout, 600),
+            )
+        except local_whisper.LocalWhisperError as exc:
+            raise ApiError(str(exc)) from exc
     data = _transcribe_request(
         target._replace(model=timestamp_model(target.provider)),
         wav_path, language, prompt, "verbose_json",

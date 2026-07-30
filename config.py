@@ -26,6 +26,7 @@ HISTORY_FILE = DATA_DIR / "history.jsonl"
 RECORDINGS_DIR = DATA_DIR / "recordings"
 MEETINGS_DIR = DATA_DIR / "meetings"
 MEETINGS_FILE = DATA_DIR / "meetings.jsonl"
+LOCAL_WHISPER_MODEL = DATA_DIR / "models/ggml-large-v3-turbo-q5_0.bin"
 
 CLEANUP_PROMPT_EN = """You clean up dictation transcripts. You are given the raw
 text of something spoken out loud. Make it readable with MINIMAL interference.
@@ -371,9 +372,10 @@ DEFAULTS = {
     "openai_base_url": "https://api.openai.com/v1",
     "openrouter_api_key": "",
     "openrouter_base_url": "https://openrouter.ai/api/v1",
-    "transcribe_provider": "openai",  # openai | openrouter
+    "transcribe_provider": "openai",  # openai | openrouter | local
     "transcribe_model": "gpt-4o-transcribe",           # used when provider is openai
     "openrouter_transcribe_model": "openai/gpt-4o-transcribe",
+    "local_whisper_model": str(LOCAL_WHISPER_MODEL),
     "language": "tr",
     "transcribe_prompt": "",
     "cleanup_enabled": True,
@@ -502,6 +504,9 @@ class Config:
 
     def transcribe_target(self):
         """Key, endpoint and model for whichever provider does speech to text."""
+        if self["transcribe_provider"] == "local":
+            return api.Target("local", "Local Whisper", "", "",
+                              self["local_whisper_model"])
         if self["transcribe_provider"] == "openrouter":
             return api.Target("openrouter", "OpenRouter", self.openrouter_key(),
                               self["openrouter_base_url"],

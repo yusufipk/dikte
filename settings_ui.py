@@ -20,6 +20,7 @@ import audio
 import config as cfg
 import filetranscribe
 import hotkey
+import local_whisper
 import meeting
 from filetranscribe import FileTranscriber
 from i18n import t
@@ -31,10 +32,15 @@ LANGUAGES = [
     ("German", "de"), ("French", "fr"), ("Spanish", "es"), ("Arabic", "ar"),
 ]
 CORNERS = ["bottom-left", "bottom-right", "top-left", "top-right"]
-TRANSCRIBE_PROVIDERS = [("OpenAI", "openai"), ("OpenRouter", "openrouter")]
+TRANSCRIBE_PROVIDERS = [
+    ("Local Whisper — no API key", "local"),
+    ("OpenAI", "openai"),
+    ("OpenRouter", "openrouter"),
+]
 # Starting points for the model box; "Fetch model list" replaces them with
 # whatever the provider offers today.
 TRANSCRIBE_MODELS = {
+    "local": [str(local_whisper.default_model_path())],
     "openai": ["gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1"],
     "openrouter": [
         "openai/gpt-4o-transcribe", "openai/gpt-4o-mini-transcribe",
@@ -122,6 +128,8 @@ class SettingsWindow(QDialog):
     _transcribe_models_loaded = pyqtSignal(list, str)
     _test_done = pyqtSignal(bool, str)
     _or_test_done = pyqtSignal(bool, str)
+    _local_install_progress = pyqtSignal(int, int)
+    _local_install_done = pyqtSignal(bool, str, str)
 
     def __init__(self, conf, launch_command, meeting_command=None,
                  meetings=None, ask_command=None, parent=None):
@@ -133,7 +141,7 @@ class SettingsWindow(QDialog):
         self.meetings = meetings
         # Each provider keeps its own transcription model, so switching the
         # provider back and forth never overwrites the other one's.
-        self._models = {"openai": "", "openrouter": ""}
+        self._models = {"local": "", "openai": "", "openrouter": ""}
         self._shown_provider = ""
         self.transcriber = FileTranscriber(conf, self)
         self.setWindowTitle(t("Dikte Settings"))
@@ -165,6 +173,8 @@ class SettingsWindow(QDialog):
         self._transcribe_models_loaded.connect(self._on_transcribe_models_loaded)
         self._test_done.connect(self._on_test_done)
         self._or_test_done.connect(self._on_or_test_done)
+        self._local_install_progress.connect(self._on_local_install_progress)
+        self._local_install_done.connect(self._on_local_install_done)
         self.transcriber.progress.connect(self._on_file_progress)
         self.transcriber.finished.connect(self._on_file_finished)
         self.transcriber.failed.connect(self._on_file_failed)
@@ -285,7 +295,7 @@ class SettingsWindow(QDialog):
         stt_form = QFormLayout(stt)
         self.transcribe_provider = QComboBox()
         for label, value in TRANSCRIBE_PROVIDERS:
-            self.transcribe_provider.addItem(label, value)
+            self.transcribe_provider.addItem(t(label), value)
         stt_form.addRow(t("Provider"), self.transcribe_provider)
 
         self.transcribe_model = QComboBox()
@@ -957,8 +967,11 @@ class SettingsWindow(QDialog):
 
         self.openai_key.setText(conf["openai_api_key"])
         self.openrouter_key.setText(conf["openrouter_api_key"])
-        self._models = {"openai": conf["transcribe_model"],
-                        "openrouter": conf["openrouter_transcribe_model"]}
+        self._models = {
+            "local": conf["local_whisper_model"],
+            "openai": conf["transcribe_model"],
+            "openrouter": conf["openrouter_transcribe_model"],
+        }
         self._shown_provider = ""
         self._select_data(self.transcribe_provider, conf["transcribe_provider"])
         self._provider_changed()  # selecting index 0 fires no signal
@@ -1042,7 +1055,8 @@ class SettingsWindow(QDialog):
         provider = self.transcribe_provider.currentData() or "openai"
         self._models[provider] = self.transcribe_model.currentText().strip()
         conf["transcribe_provider"] = provider
-        for key, name in (("openai", "transcribe_model"),
+        for key, name in (("local", "local_whisper_model"),
+                          ("openai", "transcribe_model"),
                           ("openrouter", "openrouter_transcribe_model")):
             conf[name] = self._models[key].strip() or cfg.DEFAULTS[name]
 
@@ -1136,11 +1150,21 @@ class SettingsWindow(QDialog):
         self.transcribe_model.clear()
         self.transcribe_model.addItems(TRANSCRIBE_MODELS[provider])
         self.transcribe_model.setCurrentText(self._models[provider])
-        self.transcribe_status.setText("")
+        if provider == "local":
+            self.refresh_transcribe_models.setText(t("Install local Whisper"))
+            self.transcribe_status.setText(
+                local_whisper.status(self.transcribe_model.currentText())
+            )
+        else:
+            self.refresh_transcribe_models.setText(t("Fetch model list"))
+            self.transcribe_status.setText("")
 
     def _load_transcribe_models(self):
         """The model list of whichever provider is selected."""
         provider = self.transcribe_provider.currentData() or "openai"
+        if provider == "local":
+            self._install_local_whisper()
+            return
         self.refresh_transcribe_models.setEnabled(False)
         self.transcribe_status.setText(t("Fetching model list…"))
         openai_key = self.openai_key.text().strip() or self.conf.openai_key()
@@ -1157,6 +1181,48 @@ class SettingsWindow(QDialog):
                 self._transcribe_models_loaded.emit([], str(exc))
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _install_local_whisper(self):
+        self.refresh_transcribe_models.setEnabled(False)
+        self.transcribe_status.setText(
+            t("Installing Local Whisper and downloading the recommended "
+              "Turkish model (574 MB)…")
+        )
+
+        def progress(done, total):
+            self._local_install_progress.emit(done, total)
+
+        def work():
+            try:
+                path = local_whisper.install_recommended(progress)
+                self._local_install_done.emit(True, str(path), "")
+            except local_whisper.LocalWhisperError as exc:
+                self._local_install_done.emit(False, "", str(exc))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_local_install_progress(self, done, total):
+        if total:
+            self.transcribe_status.setText(
+                t("Downloading Local Whisper model: {percent}%",
+                  percent=min(100, int(done * 100 / total)))
+            )
+        else:
+            self.transcribe_status.setText(
+                t("Downloading Local Whisper model: {size} MB",
+                  size=round(done / 1024 / 1024))
+            )
+
+    def _on_local_install_done(self, ok, path, error):
+        self.refresh_transcribe_models.setEnabled(True)
+        if not ok:
+            self.transcribe_status.setText("✗ " + error)
+            return
+        self.transcribe_model.setCurrentText(path)
+        self._models["local"] = path
+        self.transcribe_status.setText(
+            "✓ " + t("Local Whisper is ready (no API key).")
+        )
 
     def _on_transcribe_models_loaded(self, models, error):
         self.refresh_transcribe_models.setEnabled(True)

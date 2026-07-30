@@ -1,9 +1,8 @@
 # Dikte
 
-`Ctrl+Space`'e bas, konuş, tekrar bas. Ses OpenAI'ye ya da OpenRouter'a gidip
-yazıya çevrilir, OpenRouter'daki bir model transkripti temizler (ıı'lar,
-tekrarlar, eksik noktalama), sonuç panoya kopyalanır ve o an yazdığın pencereye
-yapıştırılır.
+`Ctrl+Space`'e bas, konuş, tekrar bas. Ses API anahtarı gerektirmeyen yerel
+whisper.cpp ile veya OpenAI/OpenRouter üzerinden yazıya çevrilir; sonuç panoya
+kopyalanır ve o an yazdığın pencereye yapıştırılır.
 
 KDE Plasma 6 / Wayland ve macOS 13 veya üstünde çalışır. macOS portu ses için
 AVFoundation, genel kısayol için yerleşik Carbon API'si ve sistem panosunu
@@ -55,15 +54,27 @@ internetten indirilmiş bir derlemede ilk açılışta **Control-tık → Aç** 
 Ayarlar ve geçmiş `~/Library/Application Support/Dikte` altında tutulur.
 GitHub Actions her push ve pull request'te `Dikte-macOS.zip` üretir.
 
-Ayarlar penceresinde iki anahtar istenir: **OpenAI** ve **OpenRouter**. Sesi
-yazıya çevirme ikisinden birinde çalışır (varsayılan `gpt-4o-transcribe`),
-temizleme her zaman OpenRouter'da (`google/gemini-3.5-flash-lite`), yani tek bir
+### API anahtarı olmadan kullanım
+
+**Ayarlar → API ve modeller → Sesi yazıya çevirme** altında **Yerel Whisper —
+API anahtarı yok** sağlayıcısını seçip **Yerel Whisper'ı kur** düğmesine bas.
+macOS'te düğme gerekirse Homebrew `whisper-cpp` paketini kurar ve Türkçe için
+önerilen çok dilli `large-v3-turbo-q5_0` modelini (574 MB) bir kez indirir.
+Ses ve transkript bilgisayardan dışarı çıkmaz. Tamamen anahtarsız normal dikte
+için transkript temizlemeyi kapat.
+
+Sesle soru sormak veya işlem yaptırmak için Ayarlar → Ajan sekmesi zaten giriş
+yaptığın `codex exec` ya da `claude -p` terminal oturumunu destekler. Ayrı bir
+API anahtarı yapıştırılmaz: Yerel Whisper sesi metne çevirir, Dikte metni seçilen
+terminal aracına gönderir ve cevabı yapıştırır. Codex CLI ses dosyasını doğrudan
+girdi olarak kabul etmez.
+
+Bulut seçeneğinde **OpenAI** ve/veya **OpenRouter** anahtarı kullanılabilir.
+Sesi yazıya çevirme ikisinden birinde, temizleme OpenRouter'da çalışır; tek bir
 OpenRouter anahtarı ikisine de yeter. Boş bırakırsan `OPENAI_API_KEY` ve
 `OPENROUTER_API_KEY` kullanılır; anahtarlar Linux'ta
 `~/.config/dikte/config.json`, macOS'te
-`~/Library/Application Support/Dikte/config.json` içinde, izinler 600.
-Temizlemeyi tamamen kapatabilirsin, o zaman ham transkript
-yapıştırılır; modelin yanındaki kutudan düşünme seviyesini de seçebilirsin.
+`~/Library/Application Support/Dikte/config.json` içinde, izinler 600 tutulur.
 
 ## Kullanım
 
@@ -158,7 +169,8 @@ dikte.py          giriş noktası, tepsi simgesi, durum makinesi, IPC
 audio.py          PCM kaydı: Linux'ta PipeWire, macOS'te AVFoundation
 meeting.py        kanal ayırma, konuşmacı etiketi, temizleme, tutanak
 assistant.py      dikteyi Claude Code, Codex ya da OpenRouter'dan geçirme
-api.py            iki sağlayıcıda transkript + OpenRouter temizleme (yalnız stdlib)
+api.py            bulut veya Yerel Whisper transkripti + OpenRouter temizleme
+local_whisper.py  whisper.cpp kurulumu, doğrulanmış model indirme ve transkript
 worker.py         transkript → temizleme → pano → yapıştırma
 vad.py            kayıtta gerçekten konuşma var mı kararı
 filetranscribe.py dosyadan transkript: ffmpeg, parçalama, zaman damgaları

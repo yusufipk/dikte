@@ -110,6 +110,33 @@ TR = {
         "eleniyorsa düşür, gürültü hâlâ geçiyorsa yükselt.",
     "Recording too short, speak for at least 0.3 s": "Ses çok kısa, en az 0,3 saniye konuş",
     "Unexpected error: {error}": "Beklenmeyen hata: {error}",
+    "whisper.cpp is not installed.": "whisper.cpp kurulu değil.",
+    "Local Whisper is installed; the model has not been downloaded.":
+        "Yerel Whisper kurulu; model henüz indirilmemiş.",
+    "Local Whisper is ready (no API key).":
+        "Yerel Whisper hazır (API anahtarı gerektirmez).",
+    "Install whisper.cpp first, then try again.":
+        "Önce whisper.cpp'yi kur, sonra yeniden dene.",
+    "Could not install whisper.cpp: {error}":
+        "whisper.cpp kurulamadı: {error}",
+    "The downloaded Whisper model failed verification.":
+        "İndirilen Whisper modeli doğrulamadan geçemedi.",
+    "Could not download the Whisper model: {error}":
+        "Whisper modeli indirilemedi: {error}",
+    "whisper.cpp is not installed. Open Settings → API and models and install "
+    "Local Whisper.":
+        "whisper.cpp kurulu değil. Ayarlar → API ve modeller bölümünü açıp "
+        "Yerel Whisper'ı kur.",
+    "The local Whisper model is missing. Open Settings → API and models and "
+    "click Install local Whisper.":
+        "Yerel Whisper modeli eksik. Ayarlar → API ve modeller bölümünü açıp "
+        "Yerel Whisper'ı kur düğmesine bas.",
+    "Could not run Local Whisper: {error}":
+        "Yerel Whisper çalıştırılamadı: {error}",
+    "Local Whisper failed: {error}":
+        "Yerel Whisper başarısız oldu: {error}",
+    "Could not read Local Whisper's result: {error}":
+        "Yerel Whisper sonucu okunamadı: {error}",
 
     # --- audio / paste errors -----------------------------------------
     "pw-record not found. Is pipewire-audio installed?":
@@ -209,6 +236,7 @@ TR = {
     # --- settings: api --------------------------------------------------
     "Keys": "Anahtarlar",
     "Speech to text": "Sesi yazıya çevirme",
+    "Local Whisper — no API key": "Yerel Whisper — API anahtarı yok",
     "Transcript cleanup": "Transkripti temizleme",
     "API key": "API anahtarı",
     "Model": "Model",
@@ -237,6 +265,15 @@ TR = {
         "hafif bir iş, fazla düşünmenin çoğunlukla getirisi süre ve token. "
         "Düşünemeyen modeller bunu yok sayar.",
     "Fetch model list": "Model listesini çek",
+    "Install local Whisper": "Yerel Whisper'ı kur",
+    "Installing Local Whisper and downloading the recommended Turkish model "
+    "(574 MB)…":
+        "Yerel Whisper kuruluyor ve Türkçe için önerilen model indiriliyor "
+        "(574 MB)…",
+    "Downloading Local Whisper model: {percent}%":
+        "Yerel Whisper modeli indiriliyor: %{percent}",
+    "Downloading Local Whisper model: {size} MB":
+        "Yerel Whisper modeli indiriliyor: {size} MB",
     "Fetching model list…": "Model listesi çekiliyor…",
     "Could not fetch the list: {error}": "Liste alınamadı: {error}",
     "{count} models loaded.": "{count} model yüklendi.",

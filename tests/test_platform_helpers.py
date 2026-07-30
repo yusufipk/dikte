@@ -2,6 +2,7 @@ import sys
 import unittest
 
 import hotkey
+import local_whisper
 
 
 class MacShortcutParserTests(unittest.TestCase):
@@ -27,6 +28,20 @@ class MacAudioDeviceParserTests(unittest.TestCase):
         devices = audio._mac_audio_devices()
         self.assertTrue(devices)
         self.assertTrue(all(index.isdigit() and name for index, name in devices))
+
+
+class LocalWhisperTests(unittest.TestCase):
+    def test_json_segments_are_converted_to_seconds(self):
+        payload = {
+            "transcription": [
+                {"offsets": {"from": 250, "to": 1750}, "text": " Merhaba dünya. "},
+                {"offsets": {"from": 1750, "to": 2600}, "text": "Nasılsın?"},
+            ]
+        }
+        self.assertEqual(
+            local_whisper.parse_result(payload),
+            [(0.25, 1.75, "Merhaba dünya."), (1.75, 2.6, "Nasılsın?")],
+        )
 
 
 if __name__ == "__main__":
