@@ -368,6 +368,7 @@ da senin soracağın soruya verilecek bir yanıt yok.
 
 DEFAULTS = {
     "ui_language": "auto",          # auto | tr | en
+    "menubar_emoji": "🎙️",          # macOS menu-bar icon; any emoji is accepted
     "openai_api_key": "",
     "openai_base_url": "https://api.openai.com/v1",
     "openrouter_api_key": "",

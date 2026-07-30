@@ -40,8 +40,8 @@ if sys.platform == "darwin":
 if os.environ.get("XDG_SESSION_TYPE") == "wayland" and os.environ.get("DISPLAY"):
     os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
 
-from PyQt6.QtCore import QTimer, QElapsedTimer  # noqa: E402
-from PyQt6.QtGui import QAction, QIcon  # noqa: E402
+from PyQt6.QtCore import Qt, QTimer, QElapsedTimer  # noqa: E402
+from PyQt6.QtGui import QAction, QFont, QIcon, QPainter, QPixmap  # noqa: E402
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon  # noqa: E402
 
@@ -224,11 +224,14 @@ class Dikte:
             sys, "_MEIPASS", os.path.dirname(os.path.realpath(__file__))
         )
         if sys.platform == "darwin":
-            # Keep the user's chosen microphone emoji in colour rather than
-            # letting AppKit turn it into a monochrome template image.
-            icon = QIcon(os.path.join(
-                root, "assets", "dikte-menubar-emoji.png"
-            ))
+            # Draw this at runtime so any emoji entered in Settings can be used.
+            # A regular QPixmap also keeps AppKit from treating it as a
+            # monochrome template image.
+            icon = _emoji_icon(self.conf["menubar_emoji"])
+            if icon.isNull():
+                icon = QIcon(os.path.join(
+                    root, "assets", "dikte-menubar-emoji.png"
+                ))
         else:
             icon = QIcon.fromTheme(name)
             if icon.isNull():
@@ -735,6 +738,21 @@ class Dikte:
 def _preview(text):
     line = text.replace("\n", " ")
     return line[:48] + ("…" if len(line) > 48 else "")
+
+
+def _emoji_icon(value):
+    """Render a user-selected emoji as a high-resolution menu-bar icon."""
+    emoji = str(value or "").strip() or cfg.DEFAULTS["menubar_emoji"]
+    pixmap = QPixmap(128, 128)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    font = QFont("Apple Color Emoji")
+    font.setPixelSize(92)
+    painter.setFont(font)
+    painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, emoji)
+    painter.end()
+    return QIcon(pixmap)
 
 
 def _clock(seconds):

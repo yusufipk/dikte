@@ -49,7 +49,9 @@ izni, ilk otomatik yapıştırmada Erişilebilirlik/Otomasyon izni sorulur. Otom
 açılmazsa **Sistem Ayarları → Gizlilik ve Güvenlik → Erişilebilirlik** altında
 Dikte'yi etkinleştir.
 
-Dikte macOS menü çubuğunda **🎙️** simgesiyle çalışır. Simgeye
+Dikte macOS menü çubuğunda **🎙️** simgesiyle çalışır. Başka bir hazır simgeyi
+**Ayarlar → Genel → Menü çubuğu emojisi** altında seçebilir veya istediğin
+emojiyi yazabilirsin; ayarlar kaydedilince simge hemen değişir. Simgeye
 tıklayınca menüsü açılır; **Ayarlar…** ilk sıradadır ve Dikte boştayken simgenin
 doğrudan tetiklenmesi Ayarlar penceresini açar.
 

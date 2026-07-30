@@ -48,9 +48,11 @@ permission. The first automatic paste asks for Accessibility/Automation
 permission; if it is not enabled automatically, add Dikte under **System
 Settings → Privacy & Security → Accessibility**.
 
-Dikte runs as the **🎙️** icon in the macOS menu bar. Click it to
-open its menu; **Settings…** is the first item and a direct icon activation
-opens the Settings window while Dikte is idle.
+Dikte runs as the **🎙️** icon in the macOS menu bar. Choose another one from
+**Settings → General → Menu bar emoji**, or type any emoji you like; it changes
+as soon as the settings are saved. Click the icon to open its menu;
+**Settings…** is the first item and a direct icon activation opens the Settings
+window while Dikte is idle.
 
 The app is locally/ad-hoc signed. A downloaded build may need **Control-click →
 Open** on its first launch unless a release has been notarized by an Apple
