@@ -15,15 +15,19 @@ Usage:
   dikte.py quit          shut the application down
 """
 
+import contextlib
 import os
+import signal
+import socket
 import sys
+import threading
 
 # A Wayland client cannot place a window in a screen corner, so the indicator
 # is drawn through XWayland.
 if os.environ.get("XDG_SESSION_TYPE") == "wayland" and os.environ.get("DISPLAY"):
     os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
 
-from PyQt6.QtCore import QTimer, QElapsedTimer  # noqa: E402
+from PyQt6.QtCore import QTimer, QElapsedTimer, QSocketNotifier  # noqa: E402
 from PyQt6.QtGui import QAction, QIcon  # noqa: E402
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon  # noqa: E402
@@ -34,6 +38,7 @@ import config as cfg  # noqa: E402
 import hotkey  # noqa: E402
 import i18n  # noqa: E402
 import meeting  # noqa: E402
+import whispercpp  # noqa: E402
 from i18n import t  # noqa: E402
 from meeting import MeetingPipeline  # noqa: E402
 from overlay import Overlay  # noqa: E402
@@ -87,6 +92,10 @@ class Dikte:
         self.meeting_recorder = audio.MeetingRecorder()
         self.meetings = MeetingPipeline(self.conf)
         self.evdev = hotkey.EvdevHotkey()
+        # Before anything is started: a server from a Dikte that was killed
+        # outright is still holding the model in memory.
+        whispercpp.sweep()
+        self._apply_local_whisper()
 
         self.recorder.level.connect(self._on_level)
         self.recorder.stopped.connect(self._on_recorded)
@@ -107,6 +116,11 @@ class Dikte:
         self.meetings.failed.connect(self._on_meeting_failed)
         self.evdev.triggered.connect(self._on_evdev)
         self.evdev.failed.connect(self._on_error)
+        # Started here as well as when the settings are saved: the listener is
+        # a setting like any other, and one that only came on after a visit to
+        # the settings window would be off again after the next restart —
+        # including the tray's own Restart, and the autostart on login.
+        self._apply_hotkeys()
 
         self.elapsed = QElapsedTimer()
         self.meeting_elapsed = QElapsedTimer()
@@ -655,11 +669,40 @@ class Dikte:
         # Don't drop the object while its own signal is still being delivered.
         QTimer.singleShot(0, lambda: setattr(self, "settings_window", None))
 
+    def _apply_local_whisper(self):
+        """Pass the local settings on, and hold the model ready if asked to.
+
+        Loading a large model onto the GPU takes a second or two. Doing it while
+        Dikte starts rather than on the first dictation is the whole reason a
+        server is kept alive instead of running whisper-cli per recording; the
+        checkbox is there for the machine whose VRAM is wanted elsewhere.
+        """
+        self.conf.apply_local_whisper()
+        if self.conf["transcribe_provider"] != "local":
+            whispercpp.stop()      # give the memory back when it is not in use
+            return
+        if not (self.conf["local_preload"] and self.conf.transcribe_ready()):
+            return
+
+        def warm():
+            try:
+                whispercpp.serve()
+            except whispercpp.LocalWhisperError as exc:
+                # Not worth an indicator: the first dictation raises the same
+                # thing where the user can act on it.
+                print(f"dikte: local whisper: {exc}", file=sys.stderr)
+
+        threading.Thread(target=warm, daemon=True).start()
+
     def _apply_settings(self):
         self.overlay.corner = self.conf["overlay_corner"]
         self.ask_overlay.corner = self.conf["overlay_corner"]
+        self._apply_local_whisper()
         self._build_tray()
         self._refresh_tray()
+        self._apply_hotkeys()
+
+    def _apply_hotkeys(self):
         if self.conf["evdev_hotkey"]:
             self.evdev.start({"toggle": self.conf["shortcut"],
                               "ask": self.conf["assistant_shortcut"],
@@ -688,6 +731,9 @@ class Dikte:
             self.meeting_recorder.stop()
         self.overlay.dismiss()
         self.ask_overlay.dismiss()
+        # Also on the restart path, which replaces the process without ever
+        # reaching atexit and would otherwise leave the model in memory.
+        whispercpp.stop()
         self.tray.hide()
 
 
@@ -729,6 +775,41 @@ def send_command(command, timeout=800):
     return True
 
 
+def install_signal_handlers(app):
+    """Quit properly on the signals a session sends, rather than dying where we stand.
+
+    Qt spends its time blocked inside C, and a Python signal handler only runs
+    between bytecodes, so on its own it would not run until the next event
+    arrived — which, for an idle tray icon, may be never. set_wakeup_fd writes
+    the signal number to a socket instead, and a notifier turns that into an
+    event Qt does deliver.
+
+    Worth the trouble because of what shutdown() does: a logout sends SIGTERM,
+    and without this the whisper.cpp server outlives the session holding the
+    model in graphics memory. SIGKILL cannot be caught at all, which is what
+    whispercpp.sweep() is for.
+
+    Returns the objects it made; they have to stay alive to keep working.
+    """
+    reader, writer = socket.socketpair()
+    reader.setblocking(False)
+    writer.setblocking(False)
+    signal.set_wakeup_fd(writer.fileno())
+    notifier = QSocketNotifier(reader.fileno(), QSocketNotifier.Type.Read)
+
+    def woken():
+        with contextlib.suppress(OSError):
+            reader.recv(64)
+        app.quit()          # aboutToQuit runs shutdown()
+
+    notifier.activated.connect(woken)
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        # A handler that does nothing, so that the default action — stopping
+        # the process on the spot — is replaced by the wakeup above.
+        signal.signal(sig, lambda *_: None)
+    return reader, writer, notifier
+
+
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("-")]
     command = args[0] if args else ""
@@ -743,6 +824,12 @@ def main():
     app.setApplicationName("Dikte")
     app.setDesktopFileName("dikte")
     app.setQuitOnLastWindowClosed(False)
+    # Before Dikte is built, because building it is what starts the whisper.cpp
+    # server, and a signal arriving in the middle of that would otherwise take
+    # the default action and leave the server behind. A signal this early lands
+    # in the socket and is delivered as soon as the event loop starts.
+    # Held in a name so the notifier and its socket outlive this function.
+    signal_plumbing = install_signal_handlers(app)  # noqa: F841
 
     # No command and an instance already running: bring its settings forward.
     if send_command(command or "settings"):
@@ -795,9 +882,10 @@ def main():
     server.newConnection.connect(on_connection)
     app.aboutToQuit.connect(dikte.shutdown)
 
-    # No key for the chosen transcription provider means nothing can work yet,
-    # so the settings window is the only useful thing to open.
-    if command == "settings" or not dikte.conf.transcribe_target().api_key:
+    # A transcription provider that cannot run yet — no API key, or no local
+    # model downloaded — means nothing can work, so the settings window is the
+    # only useful thing to open.
+    if command == "settings" or not dikte.conf.transcribe_ready():
         dikte.open_settings()
     elif command == "toggle":
         QTimer.singleShot(0, dikte.toggle)

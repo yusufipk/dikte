@@ -32,6 +32,19 @@ else
   ok "All dependencies present"
 fi
 
+# whisper.cpp is what transcribes by default, on this machine rather than an
+# API. It is its own step because a setup that transcribes through OpenAI or
+# OpenRouter does not need it.
+if command -v whisper-server >/dev/null; then
+  ok "whisper.cpp present (local speech to text)"
+  say "Download a model in Settings → API and models."
+else
+  warn "whisper-server not found: local speech to text will not run"
+  say  "Arch/CachyOS:  sudo pacman -S --needed whisper-cpp"
+  say  "For an NVIDIA card, add cuda for the GPU backend:  sudo pacman -S --needed cuda"
+  say  "Or pick OpenAI/OpenRouter under Settings → API and models."
+fi
+
 # 2. ydotoold --------------------------------------------------------------
 if command -v ydotool >/dev/null; then
   if systemctl --user is-active --quiet ydotool 2>/dev/null \
@@ -101,5 +114,6 @@ fi
 
 echo
 ok "Done. Start it with:  dikte"
-say "The settings window opens on first run; add your OpenAI and OpenRouter keys."
+say "The settings window opens on first run: download a whisper.cpp model for"
+say "speech to text, and add an OpenRouter key for the cleanup step."
 echo

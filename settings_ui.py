@@ -20,6 +20,7 @@ import config as cfg
 import filetranscribe
 import hotkey
 import meeting
+import whispercpp
 from filetranscribe import FileTranscriber
 from i18n import t
 
@@ -29,9 +30,12 @@ LANGUAGES = [
     ("German", "de"), ("French", "fr"), ("Spanish", "es"), ("Arabic", "ar"),
 ]
 CORNERS = ["bottom-left", "bottom-right", "top-left", "top-right"]
-TRANSCRIBE_PROVIDERS = [("OpenAI", "openai"), ("OpenRouter", "openrouter")]
+TRANSCRIBE_PROVIDERS = [
+    ("Local (whisper.cpp)", "local"), ("OpenAI", "openai"), ("OpenRouter", "openrouter"),
+]
 # Starting points for the model box; "Fetch model list" replaces them with
-# whatever the provider offers today.
+# whatever the provider offers today. The local list is not one of these: it is
+# a fixed catalogue of files to download, built from whispercpp.MODELS.
 TRANSCRIBE_MODELS = {
     "openai": ["gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1"],
     "openrouter": [
@@ -41,6 +45,8 @@ TRANSCRIBE_MODELS = {
         "deepgram/nova-3", "google/chirp-3",
     ],
 }
+CLEANUP_PROVIDERS = [("OpenRouter", "openrouter"), ("DeepSeek", "deepseek")]
+DEEPSEEK_MODELS = ["deepseek-v4-flash", "deepseek-v4-pro"]
 CLEANUP_MODELS = [
     "google/gemini-3.5-flash-lite", "google/gemini-3.1-flash-lite",
     "google/gemini-2.5-flash-lite", "anthropic/claude-haiku-4.5",
@@ -108,8 +114,11 @@ class SettingsWindow(QDialog):
 
     _models_loaded = pyqtSignal(list, str)
     _transcribe_models_loaded = pyqtSignal(list, str)
+    _download_progress = pyqtSignal(int, int)   # bytes done, bytes expected
+    _download_done = pyqtSignal(str, str)       # model id, error ("" on success)
     _test_done = pyqtSignal(bool, str)
     _or_test_done = pyqtSignal(bool, str)
+    _ds_test_done = pyqtSignal(bool, str)
 
     def __init__(self, conf, launch_command, meeting_command=None,
                  meetings=None, ask_command=None, parent=None):
@@ -121,8 +130,15 @@ class SettingsWindow(QDialog):
         self.meetings = meetings
         # Each provider keeps its own transcription model, so switching the
         # provider back and forth never overwrites the other one's.
-        self._models = {"openai": "", "openrouter": ""}
+        self._models = {"local": "", "openai": "", "openrouter": ""}
         self._shown_provider = ""
+        self._download_thread = None
+        self._download_stop = threading.Event()
+        # Same idea for cleanup: switching provider must not overwrite the
+        # other one's model or thinking level.
+        self._cleanup_values = {name: {"openrouter": "", "deepseek": ""}
+                                for name, _, _ in self._CLEANUP_FIELDS}
+        self._shown_cleanup_provider = ""
         self.transcriber = FileTranscriber(conf, self)
         self.setWindowTitle(t("Dikte Settings"))
         self.resize(680, 640)
@@ -151,8 +167,11 @@ class SettingsWindow(QDialog):
 
         self._models_loaded.connect(self._on_models_loaded)
         self._transcribe_models_loaded.connect(self._on_transcribe_models_loaded)
+        self._download_progress.connect(self._on_download_progress)
+        self._download_done.connect(self._on_download_done)
         self._test_done.connect(self._on_test_done)
         self._or_test_done.connect(self._on_or_test_done)
+        self._ds_test_done.connect(self._on_ds_test_done)
         self.transcriber.progress.connect(self._on_file_progress)
         self.transcriber.finished.connect(self._on_file_finished)
         self.transcriber.failed.connect(self._on_file_failed)
@@ -210,7 +229,7 @@ class SettingsWindow(QDialog):
         self.max_seconds.setSuffix(t(" s"))
         form.addRow(t("Longest recording"), self.max_seconds)
 
-        self.skip_silent = QCheckBox(t("Skip silent recordings (don't call the API)"))
+        self.skip_silent = QCheckBox(t("Skip silent recordings"))
         form.addRow("", self.skip_silent)
 
         self.silence_db = QSpinBox()
@@ -263,37 +282,94 @@ class SettingsWindow(QDialog):
         self.or_test_label.setWordWrap(True)
         keys_form.addRow("OpenRouter", self._row(self.openrouter_key, self.or_test_button))
         keys_form.addRow("", self.or_test_label)
+
+        self.deepseek_key = QLineEdit()
+        self.deepseek_key.setEchoMode(QLineEdit.EchoMode.Password)
+        self.deepseek_key.setPlaceholderText(t("sk-… (falls back to DEEPSEEK_API_KEY)"))
+        self.ds_test_button = QPushButton(t("Test"))
+        self.ds_test_button.clicked.connect(self._test_deepseek)
+        self.ds_test_label = QLabel("")
+        self.ds_test_label.setWordWrap(True)
+        keys_form.addRow("DeepSeek", self._row(self.deepseek_key, self.ds_test_button))
+        keys_form.addRow("", self.ds_test_label)
         outer.addWidget(keys)
 
         stt = QGroupBox(t("Speech to text"))
         stt_form = QFormLayout(stt)
         self.transcribe_provider = QComboBox()
         for label, value in TRANSCRIBE_PROVIDERS:
-            self.transcribe_provider.addItem(label, value)
+            self.transcribe_provider.addItem(t(label), value)
         stt_form.addRow(t("Provider"), self.transcribe_provider)
 
         self.transcribe_model = QComboBox()
         self.transcribe_model.setEditable(True)
         self.refresh_transcribe_models = QPushButton(t("Fetch model list"))
         self.refresh_transcribe_models.clicked.connect(self._load_transcribe_models)
+        # Shares the row with the fetch button; only one of the two applies to
+        # the chosen provider, so only one of them is ever visible.
+        self.download_model = QPushButton(t("Download"))
+        self.download_model.clicked.connect(self._toggle_download)
         stt_form.addRow(t("Model"),
-                        self._row(self.transcribe_model, self.refresh_transcribe_models))
+                        self._row(self.transcribe_model,
+                                  self.refresh_transcribe_models, self.download_model))
         # A spanning row: in the narrow field column a wrapped label gets a
         # height that fits one line, and the rest of the text is cut off.
         self.transcribe_status = QLabel("")
         self.transcribe_status.setWordWrap(True)
         stt_form.addRow(self.transcribe_status)
         self.transcribe_provider.currentIndexChanged.connect(self._provider_changed)
+        self.transcribe_model.currentIndexChanged.connect(self._model_changed)
         outer.addWidget(stt)
+
+        # Its own box rather than rows inside the one above, so that switching
+        # provider hides the settings and their labels together.
+        self.local_box = QGroupBox(t("Local whisper"))
+        local_form = QFormLayout(self.local_box)
+        self.local_gpu = QCheckBox(t("Use the GPU"))
+        self.local_gpu.setToolTip(
+            t("whisper.cpp runs on the GPU through ggml's CUDA, ROCm or Vulkan "
+              "backend, whichever the installed package was built with. Turn "
+              "this off to keep the graphics memory free.")
+        )
+        local_form.addRow("", self.local_gpu)
+
+        self.local_preload = QCheckBox(t("Load the model when Dikte starts"))
+        self.local_preload.setToolTip(
+            t("A large model takes a second or two to load. Loading it up front "
+              "keeps the first dictation as quick as the rest; leaving it off "
+              "gives the memory back until something needs it.")
+        )
+        local_form.addRow("", self.local_preload)
+
+        self.local_threads = QSpinBox()
+        self.local_threads.setRange(0, 64)
+        self.local_threads.setSpecialValueText(t("Automatic"))
+        self.local_threads.setToolTip(
+            t("How many CPU threads whisper.cpp may use. It barely matters when "
+              "the GPU is doing the work.")
+        )
+        local_form.addRow(t("Threads"), self.local_threads)
+
+        models_link = QLabel(
+            f'<a href="file://{whispercpp.models_dir()}">{whispercpp.models_dir()}</a>'
+        )
+        models_link.setOpenExternalLinks(True)
+        models_link.setWordWrap(True)
+        local_form.addRow(t("Models"), models_link)
+        outer.addWidget(self.local_box)
 
         orr = QGroupBox(t("Transcript cleanup"))
         orr_form = QFormLayout(orr)
         self.cleanup_enabled = QCheckBox(t("Clean the transcript with a model"))
         orr_form.addRow("", self.cleanup_enabled)
 
+        self.cleanup_provider = QComboBox()
+        for label, value in CLEANUP_PROVIDERS:
+            self.cleanup_provider.addItem(t(label), value)
+        orr_form.addRow(t("Provider"), self.cleanup_provider)
+
         self.cleanup_model = QComboBox()
         self.cleanup_model.setEditable(True)
-        self.cleanup_model.addItems(CLEANUP_MODELS)
         self.refresh_models = QPushButton(t("Fetch model list"))
         self.refresh_models.clicked.connect(self._load_models)
         orr_form.addRow(t("Model"), self._row(self.cleanup_model, self.refresh_models))
@@ -301,16 +377,12 @@ class SettingsWindow(QDialog):
         self.cleanup_reasoning = QComboBox()
         for label, value in REASONING_LEVELS:
             self.cleanup_reasoning.addItem(t(label), value)
-        self.cleanup_reasoning.setToolTip(
-            t("How long a thinking model may reason before it answers. Cleanup is "
-              "a light job, so more thinking mostly costs time and tokens. Models "
-              "that cannot think ignore this.")
-        )
         orr_form.addRow(t("Thinking"), self.cleanup_reasoning)
 
-        self.models_label = QLabel(t("Runs on OpenRouter."))
+        self.models_label = QLabel("")
         self.models_label.setWordWrap(True)
         orr_form.addRow(self.models_label)
+        self.cleanup_provider.currentIndexChanged.connect(self._cleanup_provider_changed)
         outer.addWidget(orr)
         outer.addStretch(1)
         return page
@@ -921,14 +993,24 @@ class SettingsWindow(QDialog):
 
         self.openai_key.setText(conf["openai_api_key"])
         self.openrouter_key.setText(conf["openrouter_api_key"])
-        self._models = {"openai": conf["transcribe_model"],
+        self._models = {"local": conf["local_model"],
+                        "openai": conf["transcribe_model"],
                         "openrouter": conf["openrouter_transcribe_model"]}
         self._shown_provider = ""
+        self.local_gpu.setChecked(conf["local_gpu"])
+        self.local_preload.setChecked(conf["local_preload"])
+        self.local_threads.setValue(int(conf["local_threads"]))
         self._select_data(self.transcribe_provider, conf["transcribe_provider"])
         self._provider_changed()  # selecting index 0 fires no signal
+        self.deepseek_key.setText(conf["deepseek_api_key"])
         self.cleanup_enabled.setChecked(conf["cleanup_enabled"])
-        self.cleanup_model.setCurrentText(conf["cleanup_model"])
-        self._select_data(self.cleanup_reasoning, conf["cleanup_reasoning"])
+        for name, openrouter_key, deepseek_key in self._CLEANUP_FIELDS:
+            self._cleanup_values[name] = {"openrouter": conf[openrouter_key],
+                                          "deepseek": conf[deepseek_key]}
+        self._shown_cleanup_provider = ""
+        self._select_data(self.cleanup_provider, conf["cleanup_provider"])
+        # Also fills the two meeting boxes, which the cleanup provider owns.
+        self._cleanup_provider_changed()  # selecting index 0 fires no signal
         self.cleanup_prompt.setPlainText(conf["cleanup_prompt"] or cfg.default_cleanup_prompt())
         self.file_cleanup_prompt.setPlainText(
             conf["file_cleanup_prompt"] or cfg.default_file_cleanup_prompt()
@@ -958,8 +1040,6 @@ class SettingsWindow(QDialog):
         self.meeting_self_name.setText(conf["meeting_self_name"])
         self.meeting_other_name.setText(conf["meeting_other_name"])
         self.meeting_participants.setPlainText(conf["meeting_participants"])
-        self.meeting_model.setCurrentText(conf["meeting_model"])
-        self._select_data(self.meeting_reasoning, conf["meeting_reasoning"])
         self._select_data(self.meeting_language, conf["meeting_language"])
         self.meeting_cleanup.setChecked(conf["meeting_cleanup"])
         self.meeting_max_minutes.setValue(max(5, int(conf["meeting_max_seconds"]) // 60))
@@ -1002,17 +1082,32 @@ class SettingsWindow(QDialog):
 
         conf["openai_api_key"] = self.openai_key.text().strip()
         conf["openrouter_api_key"] = self.openrouter_key.text().strip()
+        conf["deepseek_api_key"] = self.deepseek_key.text().strip()
 
-        provider = self.transcribe_provider.currentData() or "openai"
-        self._models[provider] = self.transcribe_model.currentText().strip()
+        provider = self.transcribe_provider.currentData() or "local"
+        self._models[provider] = self._current_model()
         conf["transcribe_provider"] = provider
-        for key, name in (("openai", "transcribe_model"),
+        for key, name in (("local", "local_model"),
+                          ("openai", "transcribe_model"),
                           ("openrouter", "openrouter_transcribe_model")):
             conf[name] = self._models[key].strip() or cfg.DEFAULTS[name]
+        conf["local_gpu"] = self.local_gpu.isChecked()
+        conf["local_preload"] = self.local_preload.isChecked()
+        conf["local_threads"] = self.local_threads.value()
 
         conf["cleanup_enabled"] = self.cleanup_enabled.isChecked()
-        conf["cleanup_model"] = self.cleanup_model.currentText().strip()
-        conf["cleanup_reasoning"] = self.cleanup_reasoning.currentData() or ""
+        cleanup_provider = self.cleanup_provider.currentData() or "openrouter"
+        self._stash_cleanup(cleanup_provider)
+        conf["cleanup_provider"] = cleanup_provider
+        # The two meeting boxes are saved here too, because the cleanup
+        # provider is what decides which of its two values they were showing.
+        for name, openrouter_key, deepseek_key in self._CLEANUP_FIELDS:
+            values = self._cleanup_values[name]
+            for provider, key in (("openrouter", openrouter_key),
+                                  ("deepseek", deepseek_key)):
+                stored = (values[provider] or "").strip()
+                conf[key] = (stored if stored or name.endswith("_reasoning")
+                             else cfg.DEFAULTS[key])
 
         # Store an empty prompt when it matches the default, so switching the
         # interface language also switches the prompt language.
@@ -1056,9 +1151,6 @@ class SettingsWindow(QDialog):
         conf["meeting_self_name"] = self.meeting_self_name.text().strip()
         conf["meeting_other_name"] = self.meeting_other_name.text().strip()
         conf["meeting_participants"] = self.meeting_participants.toPlainText().strip()
-        conf["meeting_model"] = (self.meeting_model.currentText().strip()
-                                 or cfg.DEFAULTS["meeting_model"])
-        conf["meeting_reasoning"] = self.meeting_reasoning.currentData() or ""
         conf["meeting_language"] = self.meeting_language.currentData() or ""
         conf["meeting_cleanup"] = self.meeting_cleanup.isChecked()
         conf["meeting_max_seconds"] = self.meeting_max_minutes.value() * 60
@@ -1091,20 +1183,224 @@ class SettingsWindow(QDialog):
 
     # ---- api helpers -----------------------------------------------------
 
+    def _current_model(self):
+        """The chosen model id.
+
+        The hosted providers take any id the user types, so their box is a
+        free text field. The local one can only run a file it has, so its box
+        is a fixed list and the id travels as the item's data, leaving the
+        label free to say how big the download is.
+        """
+        if self._shown_provider == "local":
+            return self.transcribe_model.currentData() or whispercpp.DEFAULT_MODEL
+        return self.transcribe_model.currentText().strip()
+
     def _provider_changed(self):
         """Swap the model box over to the newly chosen provider's own model."""
         if self._shown_provider:
-            self._models[self._shown_provider] = self.transcribe_model.currentText().strip()
-        provider = self.transcribe_provider.currentData() or "openai"
-        self._shown_provider = provider
+            self._models[self._shown_provider] = self._current_model()
+        provider = self.transcribe_provider.currentData() or "local"
+        local = provider == "local"
+
+        # Blocked because filling the box fires currentIndexChanged for every
+        # item, and _model_changed would read a half-built list.
+        self.transcribe_model.blockSignals(True)
         self.transcribe_model.clear()
-        self.transcribe_model.addItems(TRANSCRIBE_MODELS[provider])
-        self.transcribe_model.setCurrentText(self._models[provider])
-        self.transcribe_status.setText("")
+        self.transcribe_model.setEditable(not local)
+        if local:
+            self._fill_local_models()
+            self._select_data(self.transcribe_model,
+                              self._models["local"] or whispercpp.DEFAULT_MODEL)
+        else:
+            self.transcribe_model.addItems(TRANSCRIBE_MODELS[provider])
+            self.transcribe_model.setCurrentText(self._models[provider])
+        self.transcribe_model.blockSignals(False)
+
+        # Assigned only now: _current_model() above still had to read the box
+        # the way the previous provider filled it.
+        self._shown_provider = provider
+        self.refresh_transcribe_models.setVisible(not local)
+        self.download_model.setVisible(local)
+        self.local_box.setVisible(local)
+        if local:
+            self._refresh_local_status()
+        else:
+            self.transcribe_status.setText("")
+
+    def _fill_local_models(self):
+        """The catalogue, each line saying whether it is here or what it weighs."""
+        for model in whispercpp.MODELS:
+            note = (t("downloaded") if whispercpp.installed(model.id)
+                    else whispercpp.human_size(model.size))
+            self.transcribe_model.addItem(f"{model.label} — {note}", model.id)
+
+    def _model_changed(self):
+        if self._shown_provider == "local" and not self._downloading:
+            self._refresh_local_status()
+
+    @property
+    def _downloading(self):
+        return self._download_thread is not None and self._download_thread.is_alive()
+
+    def _refresh_local_status(self):
+        model_id = self._current_model()
+        self.transcribe_status.setText(
+            whispercpp.status(model_id, self.conf["local_binary"])
+        )
+        # Nothing to fetch for a model that is already on disk; re-downloading
+        # gigabytes by a stray click is not worth the one case it would fix.
+        self.download_model.setEnabled(
+            whispercpp.find(model_id) is not None and not whispercpp.installed(model_id)
+        )
+        self.download_model.setText(t("Download"))
+
+    def _toggle_download(self):
+        if self._downloading:
+            self._download_stop.set()
+            self.download_model.setEnabled(False)
+            self.download_model.setText(t("Stopping…"))
+            return
+
+        model_id = self._current_model()
+        model = whispercpp.find(model_id)
+        if model is None:
+            return
+        self._download_stop.clear()
+        self.download_model.setText(t("Stop"))
+        self.transcribe_status.setText(t("Downloading {model} ({size})…",
+                                         model=model.label,
+                                         size=whispercpp.human_size(model.size)))
+
+        def work():
+            try:
+                landed = whispercpp.download(
+                    model_id,
+                    on_progress=self._report_download,
+                    should_stop=self._download_stop.is_set,
+                )
+                self._download_done.emit(model_id, "" if landed else t("Stopped."))
+            except whispercpp.LocalWhisperError as exc:
+                self._download_done.emit(model_id, str(exc))
+
+        self._download_thread = threading.Thread(target=work, daemon=True)
+        self._download_thread.start()
+
+    def _report_download(self, done, total):
+        self._download_progress.emit(done, total)
+
+    def _on_download_progress(self, done, total):
+        if total:
+            self.transcribe_status.setText(
+                t("Downloading… {percent}% ({done} of {total})",
+                  percent=int(done * 100 / total),
+                  done=whispercpp.human_size(done), total=whispercpp.human_size(total))
+            )
+        else:
+            self.transcribe_status.setText(
+                t("Downloading… {done}", done=whispercpp.human_size(done))
+            )
+
+    def _on_download_done(self, model_id, error):
+        self.download_model.setEnabled(True)
+        if self._shown_provider == "local":
+            # The list carries "downloaded" against each model, so it is now out
+            # of date for the one that just landed.
+            chosen = self._current_model()
+            self.transcribe_model.blockSignals(True)
+            self.transcribe_model.clear()
+            self._fill_local_models()
+            self._select_data(self.transcribe_model, chosen)
+            self.transcribe_model.blockSignals(False)
+            self._refresh_local_status()
+        if error:
+            self.transcribe_status.setText(error)
+        elif whispercpp.installed(model_id):
+            self.transcribe_status.setText(
+                t("{model} downloaded. Press Save to use it.",
+                  model=whispercpp.label(model_id))
+            )
+
+    # ---- cleanup provider ------------------------------------------------
+
+    # The cleanup provider also writes the minutes, so the two model boxes and
+    # the two thinking boxes move together with it. Each provider keeps its own
+    # values, the way the transcription models already do.
+    _CLEANUP_FIELDS = (
+        ("cleanup_model", "cleanup_model", "deepseek_cleanup_model"),
+        ("cleanup_reasoning", "cleanup_reasoning", "deepseek_cleanup_reasoning"),
+        ("meeting_model", "meeting_model", "deepseek_meeting_model"),
+        ("meeting_reasoning", "meeting_reasoning", "deepseek_meeting_reasoning"),
+    )
+
+    def _cleanup_boxes(self):
+        """[(widget, per-provider stash)] for the fields the provider owns."""
+        return [(getattr(self, name), self._cleanup_values[name])
+                for name, _, _ in self._CLEANUP_FIELDS]
+
+    def _stash_cleanup(self, provider):
+        for widget, values in self._cleanup_boxes():
+            values[provider] = (widget.currentData() if not widget.isEditable()
+                                else widget.currentText().strip())
+
+    def _cleanup_provider_changed(self):
+        if self._shown_cleanup_provider:
+            self._stash_cleanup(self._shown_cleanup_provider)
+        provider = self.cleanup_provider.currentData() or "openrouter"
+        deepseek = provider == "deepseek"
+
+        self.cleanup_model.blockSignals(True)
+        self.cleanup_model.clear()
+        self.cleanup_model.addItems(DEEPSEEK_MODELS if deepseek else CLEANUP_MODELS)
+        self.cleanup_model.setCurrentText(self._cleanup_values["cleanup_model"][provider])
+        self.cleanup_model.blockSignals(False)
+
+        self.meeting_model.blockSignals(True)
+        self.meeting_model.clear()
+        self.meeting_model.addItems(DEEPSEEK_MODELS if deepseek else MEETING_MODELS)
+        self.meeting_model.setCurrentText(self._cleanup_values["meeting_model"][provider])
+        self.meeting_model.blockSignals(False)
+
+        for name in ("cleanup_reasoning", "meeting_reasoning"):
+            self._select_data(getattr(self, name), self._cleanup_values[name][provider])
+
+        self._shown_cleanup_provider = provider
+        tip = (t("DeepSeek thinks unless it is told not to, and cleanup is not a "
+                 "job worth thinking about: it costs seconds and can come back "
+                 "with the whole reply spent on the thinking. “Off” is the "
+                 "setting you want here. Minutes are the other way round.")
+               if deepseek else
+               t("How long a thinking model may reason before it answers. Cleanup "
+                 "is a light job, so more thinking mostly costs time and tokens. "
+                 "Models that cannot think ignore this."))
+        self.cleanup_reasoning.setToolTip(tip)
+        self.models_label.setText(
+            t("Cleanup and the meeting minutes both run on {service}.",
+              service="DeepSeek" if deepseek else "OpenRouter")
+        )
+
+    def _test_deepseek(self):
+        key = self.deepseek_key.text().strip() or self.conf.deepseek_key()
+        base = self.conf["deepseek_base_url"]
+        self.ds_test_button.setEnabled(False)
+        self.ds_test_label.setText(t("Trying…"))
+
+        def work():
+            try:
+                self._ds_test_done.emit(True, api.deepseek_key_status(key, base))
+            except api.ApiError as exc:
+                self._ds_test_done.emit(False, str(exc))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_ds_test_done(self, ok, message):
+        self.ds_test_button.setEnabled(True)
+        self.ds_test_label.setText(message)
 
     def _load_transcribe_models(self):
         """The model list of whichever provider is selected."""
         provider = self.transcribe_provider.currentData() or "openai"
+        if provider == "local":
+            return
         self.refresh_transcribe_models.setEnabled(False)
         self.transcribe_status.setText(t("Fetching model list…"))
         openai_key = self.openai_key.text().strip() or self.conf.openai_key()
@@ -1136,11 +1432,17 @@ class SettingsWindow(QDialog):
     def _load_models(self):
         self.refresh_models.setEnabled(False)
         self.models_label.setText(t("Fetching model list…"))
-        key = self.openrouter_key.text().strip() or self.conf.openrouter_key()
+        deepseek = self.cleanup_provider.currentData() == "deepseek"
+        key = ((self.deepseek_key.text().strip() or self.conf.deepseek_key())
+               if deepseek else
+               (self.openrouter_key.text().strip() or self.conf.openrouter_key()))
+        base = self.conf["deepseek_base_url"]
 
         def work():
             try:
-                self._models_loaded.emit(api.openrouter_models(key), "")
+                models = (api.deepseek_models(key, base) if deepseek
+                          else api.openrouter_models(key))
+                self._models_loaded.emit(models, "")
             except api.ApiError as exc:
                 self._models_loaded.emit([], str(exc))
 

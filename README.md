@@ -1,9 +1,10 @@
 # Dikte
 
-Press `Ctrl+Space`, talk, press again. The recording goes to OpenAI or OpenRouter
-for transcription, a model on OpenRouter cleans it up (dropping the *uh*s, the
+Press `Ctrl+Space`, talk, press again. The recording is transcribed by whisper.cpp
+on your own machine, a model on OpenRouter cleans it up (dropping the *uh*s, the
 restarts, the missing punctuation), and the result lands in your clipboard and
-is pasted into whatever window you were typing in.
+is pasted into whatever window you were typing in. OpenAI and OpenRouter are
+there as alternatives for the transcription too.
 
 Built for KDE Plasma 6 on Wayland. No dependencies beyond system packages:
 just the Python standard library and PyQt6.
@@ -23,7 +24,9 @@ just the Python standard library and PyQt6.
 
 ```sh
 sudo pacman -S --needed pipewire-audio wl-clipboard ydotool ffmpeg python-pyqt6
-systemctl --user enable --now ydotool     # needed for auto-paste
+sudo pacman -S --needed whisper-cpp      # local speech to text
+sudo pacman -S --needed cuda             # its GPU backend, on an NVIDIA card
+systemctl --user enable --now ydotool    # needed for auto-paste
 
 ./install.sh                 # or:  ./install.sh "Ctrl+Alt+Space"
 dikte                        # the settings window opens on first run
@@ -32,13 +35,26 @@ dikte                        # the settings window opens on first run
 `install.sh` adds the `dikte` command, a menu entry, an autostart entry and the
 KDE shortcut.
 
-Two keys go in the settings window: **OpenAI** and **OpenRouter**. Speech to text
-runs on either one (`gpt-4o-transcribe` by default), cleanup always on
-OpenRouter (`google/gemini-3.5-flash-lite`), so a single OpenRouter key can
-cover both. They fall back to `OPENAI_API_KEY` and `OPENROUTER_API_KEY`, and are
-stored in `~/.config/dikte/config.json`, mode 600. Cleanup can be switched off,
-in which case the raw transcript is pasted, and a thinking model's effort can be
-set next to it.
+Speech to text runs locally by default, on whisper.cpp. Pick a model under
+Settings → API and models and press **Download**: `large-v3-turbo` (1.5 GB) is
+the default, and the list runs from `tiny` up to `large-v3`. Models land in
+`~/.local/share/dikte/models`. Nothing of the audio leaves the machine, and it
+costs nothing per dictation.
+
+Cleanup runs on **DeepSeek** (`deepseek-v4-flash`) or **OpenRouter**
+(`google/gemini-3.5-flash-lite`), whichever you pick; the same choice also writes
+the meeting minutes. It can be switched off, in which case the raw transcript is
+pasted. Transcription can also be moved to **OpenAI** or **OpenRouter** under the
+same tab, on a machine that would rather not run a model itself. The keys fall
+back to `OPENAI_API_KEY`, `OPENROUTER_API_KEY` and `DEEPSEEK_API_KEY`, and are
+stored in `~/.config/dikte/config.json`, mode 600.
+
+One thing worth knowing about DeepSeek: it thinks unless it is told not to, and
+cleanup is not a job worth thinking about. Measured on the example below,
+thinking took six times as long for the same sentence, spent 95% of its output
+tokens on the reasoning, and sometimes came back with nothing to paste at all.
+So Dikte ships DeepSeek's cleanup with **Thinking: Off** and leaves the minutes,
+which are worth thinking about, to think.
 
 ## Using it
 
@@ -61,7 +77,15 @@ second one stacks above the first while both are up.
 
 ## What it does
 
-- **Silence never reaches the API.** Handed near-silence, a transcription model
+- **Transcription runs on this machine.** whisper.cpp is kept alive as a server
+  next to Dikte, on the `/v1/audio/transcriptions` path the hosted providers
+  use, which is what makes it one more base URL rather than a second code path:
+  dictation, file transcription, subtitles and meetings all go through it
+  unchanged. The model is loaded while Dikte starts rather than on the first
+  dictation, so a few seconds of speech comes back in about as long as it took
+  to say — the loading is the slow part, not the transcribing. Turn that off
+  under Settings → Local whisper to keep the graphics memory free.
+- **Silence never reaches the model.** Handed near-silence, a transcription model
   invents a sentence instead of returning nothing ("Thanks for watching", or in
   Turkish "Altyazı M.K."). A recording is dropped when nothing rose 10 dB above
   *that recording's own* noise floor for at least 0.3 s, which is also what
@@ -128,7 +152,8 @@ dikte.py          entry point, tray icon, state machine, IPC
 audio.py          PCM capture: pw-record for dictation, ffmpeg for a meeting
 meeting.py        channel split, speaker labelling, cleanup, minutes
 assistant.py      running a dictation through Claude Code, Codex or OpenRouter
-api.py            transcription on either provider, OpenRouter cleanup (stdlib only)
+api.py            transcription on any provider, OpenRouter cleanup (stdlib only)
+whispercpp.py     the local whisper.cpp server and its model downloads
 worker.py         transcribe → clean up → clipboard → paste
 vad.py            deciding whether a recording holds speech at all
 filetranscribe.py file transcription: ffmpeg, chunking, timestamps

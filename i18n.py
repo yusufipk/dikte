@@ -157,8 +157,7 @@ TR = {
     "top-right": "sağ-üst",
     "Longest recording": "En uzun kayıt",
     " s": " sn",
-    "Skip silent recordings (don't call the API)":
-        "Sessiz kayıtları atla (API'ye gönderme)",
+    "Skip silent recordings": "Sessiz kayıtları atla",
     "Silence threshold": "Sessizlik eşiği",
     "Keep audio files (~/.local/share/dikte/recordings)":
         "Ses kayıtlarını sakla (~/.local/share/dikte/recordings)",
@@ -175,6 +174,26 @@ TR = {
     "Test": "Test et",
     "Trying…": "Deneniyor…",
     "Runs on OpenRouter.": "OpenRouter üzerinde çalışır.",
+
+    # --- settings: cleanup provider -------------------------------------
+    "sk-… (falls back to DEEPSEEK_API_KEY)": "sk-… (boşsa DEEPSEEK_API_KEY kullanılır)",
+    "Cleanup and the meeting minutes both run on {service}.":
+        "Temizleme ve toplantı tutanağı {service} üzerinde çalışır.",
+    "Key works.": "Anahtar çalışıyor.",
+    "Key works. Balance: {balance} {currency}.":
+        "Anahtar çalışıyor. Bakiye: {balance} {currency}.",
+    "Key works, but the balance is spent ({balance} {currency}).":
+        "Anahtar çalışıyor ama bakiye tükenmiş ({balance} {currency}).",
+    "DeepSeek thinks unless it is told not to, and cleanup is not a job worth "
+    "thinking about: it costs seconds and can come back with the whole reply "
+    "spent on the thinking. “Off” is the setting you want here. Minutes are the "
+    "other way round.":
+        "DeepSeek, aksi söylenmedikçe düşünür; temizleme ise düşünmeye değecek "
+        "bir iş değil: saniyeler götürür ve yanıtın tamamını düşünmeye harcayıp "
+        "boş dönebilir. Burada istediğin ayar “Kapalı”. Tutanakta tam tersi.",
+    "The cleanup model spent its whole reply on thinking. Set Thinking to “Off”.":
+        "Temizleme modeli yanıtının tamamını düşünmeye harcadı. Düşünme ayarını "
+        "“Kapalı” yap.",
     "Connection works. {count} audio models visible.":
         "Bağlantı tamam. {count} ses modeli görünüyor.",
     "Clean the transcript with a model": "Transkripti bir modelle temizle",
@@ -195,6 +214,66 @@ TR = {
         "Düşünemeyen modeller bunu yok sayar.",
     "Fetch model list": "Model listesini çek",
     "Fetching model list…": "Model listesi çekiliyor…",
+
+    # --- settings: local whisper ----------------------------------------
+    "Local (whisper.cpp)": "Yerel (whisper.cpp)",
+    "Local Whisper": "Yerel Whisper",
+    "Local whisper": "Yerel whisper",
+    "Download": "İndir",
+    "downloaded": "indirildi",
+    # "Stop", "Stopping…" and "Stopped." are already in the file transcription
+    # section below; the download buttons reuse them.
+    "Use the GPU": "Ekran kartını kullan",
+    "whisper.cpp runs on the GPU through ggml's CUDA, ROCm or Vulkan backend, "
+    "whichever the installed package was built with. Turn this off to keep the "
+    "graphics memory free.":
+        "whisper.cpp, kurulu paketin hangisiyle derlendiyse ggml'in CUDA, ROCm "
+        "veya Vulkan arka ucu üzerinden ekran kartında çalışır. Ekran kartı "
+        "belleğini boş tutmak için bunu kapatın.",
+    "Load the model when Dikte starts": "Modeli Dikte açılırken yükle",
+    "A large model takes a second or two to load. Loading it up front keeps the "
+    "first dictation as quick as the rest; leaving it off gives the memory back "
+    "until something needs it.":
+        "Büyük bir modelin yüklenmesi bir iki saniye sürer. Baştan yüklemek ilk "
+        "diktenin de diğerleri kadar hızlı olmasını sağlar; kapalı bırakmak "
+        "belleği ihtiyaç duyulana kadar geri verir.",
+    "Threads": "İş parçacığı",
+    "Automatic": "Otomatik",
+    "How many CPU threads whisper.cpp may use. It barely matters when the GPU is "
+    "doing the work.":
+        "whisper.cpp'nin kullanabileceği işlemci iş parçacığı sayısı. İşi ekran "
+        "kartı yapıyorsa neredeyse hiç fark etmez.",
+    "Models": "Modeller",
+    "Downloading {model} ({size})…": "{model} indiriliyor ({size})…",
+    "Downloading… {percent}% ({done} of {total})":
+        "İndiriliyor… %{percent} ({done} / {total})",
+    "Downloading… {done}": "İndiriliyor… {done}",
+    "{model} downloaded. Press Save to use it.":
+        "{model} indirildi. Kullanmak için Kaydet'e basın.",
+    "whisper.cpp is not installed. Install it with: sudo pacman -S whisper-cpp":
+        "whisper.cpp kurulu değil. Kurmak için: sudo pacman -S whisper-cpp",
+    "The local model “{model}” has not been downloaded. Settings → API and "
+    "models → Download.":
+        "“{model}” yerel modeli indirilmemiş. Ayarlar → API ve modeller → İndir.",
+    "“{model}” has not been downloaded yet ({size}).":
+        "“{model}” henüz indirilmedi ({size}).",
+    "Running: {model}, {device}.": "Çalışıyor: {model}, {device}.",
+    "Ready: {model}, {device}. It loads on the first dictation.":
+        "Hazır: {model}, {device}. İlk diktede yüklenir.",
+    "GPU": "ekran kartı",
+    "CPU": "işlemci",
+    "Unknown model: {model}": "Bilinmeyen model: {model}",
+    "Could not create the model directory: {error}":
+        "Model dizini oluşturulamadı: {error}",
+    "Could not download the model: HTTP {code}": "Model indirilemedi: HTTP {code}",
+    "Could not download the model: {error}": "Model indirilemedi: {error}",
+    "Could not write the model: {error}": "Model yazılamadı: {error}",
+    "Could not delete the model: {error}": "Model silinemedi: {error}",
+    "The download stopped early ({done} of {total}).":
+        "İndirme erken kesildi ({done} / {total}).",
+    "Could not start whisper.cpp: {error}": "whisper.cpp başlatılamadı: {error}",
+    "whisper.cpp did not start: {error}": "whisper.cpp açılmadı: {error}",
+    "no output": "çıktı yok",
     "Could not fetch the list: {error}": "Liste alınamadı: {error}",
     "{count} models loaded.": "{count} model yüklendi.",
     "Key works, no spending limit set.": "Anahtar çalışıyor, harcama sınırı yok.",

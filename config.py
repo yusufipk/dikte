@@ -7,6 +7,8 @@ import pathlib
 
 import api
 import i18n
+import whispercpp
+from i18n import t
 
 
 def _xdg(var, default):
@@ -365,14 +367,36 @@ DEFAULTS = {
     "openai_base_url": "https://api.openai.com/v1",
     "openrouter_api_key": "",
     "openrouter_base_url": "https://openrouter.ai/api/v1",
-    "transcribe_provider": "openai",  # openai | openrouter
+    "transcribe_provider": "local",  # local | openai | openrouter
     "transcribe_model": "gpt-4o-transcribe",           # used when provider is openai
     "openrouter_transcribe_model": "openai/gpt-4o-transcribe",
+
+    # --- local whisper.cpp ---------------------------------------------------
+    "local_model": whispercpp.DEFAULT_MODEL,
+    "local_threads": 0,             # 0 -> whisper.cpp picks
+    "local_gpu": True,
+    "local_preload": True,          # load the model while Dikte starts, not on
+                                    # the first dictation
+    "local_binary": "",             # empty -> whisper-server from PATH
     "language": "tr",
     "transcribe_prompt": "",
     "cleanup_enabled": True,
+    "cleanup_provider": "openrouter",   # openrouter | deepseek
     "cleanup_model": "google/gemini-3.5-flash-lite",
     "cleanup_reasoning": "",        # empty -> whatever the model does by default
+
+    # --- DeepSeek --------------------------------------------------------
+    # Its own API rather than OpenRouter's copy of it: no middleman's cut, and
+    # one more key instead of one more account. The thinking settings are kept
+    # apart from OpenRouter's because the two default to opposite things —
+    # DeepSeek thinks unless told not to, and cleanup is not worth thinking
+    # about, while minutes are.
+    "deepseek_api_key": "",
+    "deepseek_base_url": "https://api.deepseek.com",
+    "deepseek_cleanup_model": "deepseek-v4-flash",
+    "deepseek_cleanup_reasoning": "none",
+    "deepseek_meeting_model": "deepseek-v4-flash",
+    "deepseek_meeting_reasoning": "",
     "cleanup_prompt": "",           # empty -> language-specific default
     "auto_paste": True,
     "paste_shortcut": "ctrl+v",
@@ -494,14 +518,64 @@ class Config:
     def openrouter_key(self):
         return self["openrouter_api_key"].strip() or os.environ.get("OPENROUTER_API_KEY", "").strip()
 
+    def deepseek_key(self):
+        return self["deepseek_api_key"].strip() or os.environ.get("DEEPSEEK_API_KEY", "").strip()
+
+    def cleanup_target(self):
+        """Key, endpoint, model and thinking level for the cleanup job."""
+        if self["cleanup_provider"] == "deepseek":
+            return api.Target("deepseek", "DeepSeek", self.deepseek_key(),
+                              self["deepseek_base_url"],
+                              self["deepseek_cleanup_model"],
+                              self["deepseek_cleanup_reasoning"])
+        return api.Target("openrouter", "OpenRouter", self.openrouter_key(),
+                          self["openrouter_base_url"], self["cleanup_model"],
+                          self["cleanup_reasoning"])
+
+    def minutes_target(self):
+        """The same provider, but the model and effort meant for the minutes."""
+        if self["cleanup_provider"] == "deepseek":
+            return api.Target("deepseek", "DeepSeek", self.deepseek_key(),
+                              self["deepseek_base_url"],
+                              self["deepseek_meeting_model"],
+                              self["deepseek_meeting_reasoning"])
+        return api.Target("openrouter", "OpenRouter", self.openrouter_key(),
+                          self["openrouter_base_url"], self["meeting_model"],
+                          self["meeting_reasoning"])
+
     def transcribe_target(self):
-        """Key, endpoint and model for whichever provider does speech to text."""
-        if self["transcribe_provider"] == "openrouter":
+        """Key, endpoint and model for whichever provider does speech to text.
+
+        The local one leaves its base URL empty on purpose: the server picks a
+        port when it starts, and starting it here would make reading the
+        settings launch a process. api.py fills the address in when it is about
+        to send the request, which is the moment the server is needed anyway.
+        """
+        provider = self["transcribe_provider"]
+        if provider == "local":
+            return api.Target("local", t("Local Whisper"), "local", "",
+                              self["local_model"])
+        if provider == "openrouter":
             return api.Target("openrouter", "OpenRouter", self.openrouter_key(),
                               self["openrouter_base_url"],
                               self["openrouter_transcribe_model"])
         return api.Target("openai", "OpenAI", self.openai_key(),
                           self["openai_base_url"], self["transcribe_model"])
+
+    def transcribe_ready(self):
+        """Whether speech to text could run right now, without opening Settings."""
+        if self["transcribe_provider"] == "local":
+            return whispercpp.ready(self["local_model"], self["local_binary"])
+        return bool(self.transcribe_target().api_key)
+
+    def apply_local_whisper(self):
+        """Hand the local settings to the server, restarting it if they changed."""
+        whispercpp.configure(
+            model=self["local_model"],
+            threads=int(self["local_threads"]),
+            gpu=bool(self["local_gpu"]),
+            binary=self["local_binary"],
+        )
 
     def cleanup_prompt(self, with_timestamps=False, with_speakers=False,
                        subtitles=False):

@@ -1,9 +1,9 @@
 # Dikte
 
-`Ctrl+Space`'e bas, konuş, tekrar bas. Ses OpenAI'ye ya da OpenRouter'a gidip
-yazıya çevrilir, OpenRouter'daki bir model transkripti temizler (ıı'lar,
-tekrarlar, eksik noktalama), sonuç panoya kopyalanır ve o an yazdığın pencereye
-yapıştırılır.
+`Ctrl+Space`'e bas, konuş, tekrar bas. Ses kendi makinende whisper.cpp ile yazıya
+çevrilir, OpenRouter'daki bir model transkripti temizler (ıı'lar, tekrarlar,
+eksik noktalama), sonuç panoya kopyalanır ve o an yazdığın pencereye
+yapıştırılır. Yazıya çevirme için OpenAI ve OpenRouter da seçenek olarak duruyor.
 
 KDE Plasma 6 / Wayland için yazıldı. Sistem paketleri dışında bağımlılığı yok:
 sadece Python standart kütüphanesi ve PyQt6.
@@ -23,7 +23,9 @@ sadece Python standart kütüphanesi ve PyQt6.
 
 ```sh
 sudo pacman -S --needed pipewire-audio wl-clipboard ydotool ffmpeg python-pyqt6
-systemctl --user enable --now ydotool     # otomatik yapıştırma için
+sudo pacman -S --needed whisper-cpp      # yerel sesten yazıya
+sudo pacman -S --needed cuda             # NVIDIA kartta ekran kartı arka ucu
+systemctl --user enable --now ydotool    # otomatik yapıştırma için
 
 ./install.sh                 # ya da:  ./install.sh "Ctrl+Alt+Space"
 dikte                        # ilk açılışta ayarlar penceresi gelir
@@ -32,13 +34,27 @@ dikte                        # ilk açılışta ayarlar penceresi gelir
 `install.sh` `dikte` komutunu, menü girdisini, oturum açılışında otomatik
 başlatmayı ve KDE kısayolunu kurar.
 
-Ayarlar penceresinde iki anahtar istenir: **OpenAI** ve **OpenRouter**. Sesi
-yazıya çevirme ikisinden birinde çalışır (varsayılan `gpt-4o-transcribe`),
-temizleme her zaman OpenRouter'da (`google/gemini-3.5-flash-lite`), yani tek bir
-OpenRouter anahtarı ikisine de yeter. Boş bırakırsan `OPENAI_API_KEY` ve
-`OPENROUTER_API_KEY` kullanılır; anahtarlar `~/.config/dikte/config.json`
-içinde, izinler 600. Temizlemeyi tamamen kapatabilirsin, o zaman ham transkript
-yapıştırılır; modelin yanındaki kutudan düşünme seviyesini de seçebilirsin.
+Sesi yazıya çevirme varsayılan olarak yerelde, whisper.cpp üzerinde çalışır.
+Ayarlar → API ve modeller altından bir model seçip **İndir**'e bas: varsayılan
+`large-v3-turbo` (1,5 GB), liste `tiny`'den `large-v3`'e kadar gidiyor. Modeller
+`~/.local/share/dikte/models` altına iner. Ses makineden çıkmıyor ve dikte başına
+bir maliyeti yok.
+
+Temizleme, seçtiğine göre **DeepSeek** (`deepseek-v4-flash`) ya da **OpenRouter**
+(`google/gemini-3.5-flash-lite`) üzerinde çalışır; aynı seçim toplantı tutanağını
+da yazar. Temizlemeyi tamamen kapatabilirsin, o zaman ham transkript
+yapıştırılır. Yazıya çevirmeyi aynı sekmeden **OpenAI** ya da **OpenRouter**'a
+taşıyabilirsin — kendi üstünde model çalıştırmak istemeyen makine için.
+Anahtarları boş bırakırsan `OPENAI_API_KEY`, `OPENROUTER_API_KEY` ve
+`DEEPSEEK_API_KEY` kullanılır; `~/.config/dikte/config.json` içinde saklanır,
+izinler 600.
+
+DeepSeek hakkında bilinmesi gereken bir şey var: aksi söylenmedikçe düşünüyor, ve
+temizleme düşünmeye değecek bir iş değil. Aşağıdaki örnekte ölçüldü: düşünme aynı
+cümle için altı kat uzun sürdü, çıktı token'larının %95'ini akıl yürütmeye
+harcadı ve zaman zaman yapıştıracak hiçbir şey döndürmedi. Bu yüzden Dikte,
+DeepSeek'in temizlemesini **Düşünme: Kapalı** ile getiriyor; düşünmeye değen
+tutanağı ise düşünmeye bırakıyor.
 
 ## Kullanım
 
@@ -61,7 +77,15 @@ birden ekrandayken ikincisi birincinin üstüne yerleşir.
 
 ## Neler yapıyor
 
-- **Sessizlik API'ye gitmez.** Sessize yakın bir ses verildiğinde model boş dize
+- **Yazıya çevirme bu makinede.** whisper.cpp, Dikte'nin yanında bir sunucu
+  olarak ayakta tutuluyor ve bulut sağlayıcılarının kullandığı
+  `/v1/audio/transcriptions` yoluna oturtuluyor; ikinci bir kod yolu değil de
+  bir base URL daha olmasını sağlayan bu: dikte, dosya transkripsiyonu, altyazı
+  ve toplantı hiç değişmeden bunun üzerinden geçiyor. Model ilk diktede değil
+  Dikte açılırken yükleniyor, böylece birkaç saniyelik konuşma söylendiği kadar
+  sürede geri geliyor — yavaş olan kısım yükleme, çevirme değil. Ekran kartı
+  belleğini boş tutmak istersen Ayarlar → Yerel whisper altından kapat.
+- **Sessizlik modele gitmez.** Sessize yakın bir ses verildiğinde model boş dize
   döndürmez, bir cümle uydurur ("Altyazı M.K.", "Thanks for watching"). *O
   kaydın kendi* gürültü tabanının 10 dB üstüne en az 0,3 saniye çıkan bir şey
   yoksa kayıt atılır; ne kadar yüksek olursa olsun sabit fanı ya da cızırtıyı
@@ -126,7 +150,8 @@ dikte.py          giriş noktası, tepsi simgesi, durum makinesi, IPC
 audio.py          PCM kaydı: diktede pw-record, toplantıda ffmpeg
 meeting.py        kanal ayırma, konuşmacı etiketi, temizleme, tutanak
 assistant.py      dikteyi Claude Code, Codex ya da OpenRouter'dan geçirme
-api.py            iki sağlayıcıda transkript + OpenRouter temizleme (yalnız stdlib)
+api.py            her sağlayıcıda transkript + OpenRouter temizleme (yalnız stdlib)
+whispercpp.py     yerel whisper.cpp sunucusu ve model indirmeleri
 worker.py         transkript → temizleme → pano → yapıştırma
 vad.py            kayıtta gerçekten konuşma var mı kararı
 filetranscribe.py dosyadan transkript: ffmpeg, parçalama, zaman damgaları

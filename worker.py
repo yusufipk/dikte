@@ -102,20 +102,14 @@ class Pipeline(QObject):
 
             text = raw
             warning = ""
+            cleaner = conf.cleanup_target()
             # Claude reads through “eee” and “hani” without help, so a dictation
             # on its way there is normally sent as it was heard, one API call and
             # a second or two lighter.
             if (conf["assistant_cleanup"] if ask else conf["cleanup_enabled"]):
                 self.stage.emit(t("Cleaning up…"))
                 try:
-                    text = api.cleanup(
-                        raw,
-                        conf.openrouter_key(),
-                        conf["cleanup_model"],
-                        conf.cleanup_prompt(),
-                        reasoning=conf["cleanup_reasoning"],
-                        base_url=conf["openrouter_base_url"],
-                    )
+                    text = api.cleanup(cleaner, raw, conf.cleanup_prompt())
                 except api.ApiError as exc:
                     # Keep the transcript, but never let the failure pass unseen:
                     # a rejected key would otherwise look like working dictation.
@@ -151,7 +145,7 @@ class Pipeline(QObject):
                 "duration": round(duration, 1),
                 "elapsed": round(time.monotonic() - started, 1),
                 "model": target.model,
-                "cleanup_model": conf["cleanup_model"] if conf["cleanup_enabled"] else "",
+                "cleanup_model": cleaner.model if conf["cleanup_enabled"] else "",
                 "cleanup_error": warning,
                 "mode": "ask" if ask else "",
                 "question": question,
