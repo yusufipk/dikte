@@ -56,6 +56,7 @@ import config as cfg  # noqa: E402
 import hotkey  # noqa: E402
 import i18n  # noqa: E402
 import meeting  # noqa: E402
+import paste  # noqa: E402
 import updater  # noqa: E402
 from i18n import t  # noqa: E402
 from meeting import MeetingPipeline  # noqa: E402
@@ -1007,6 +1008,8 @@ def send_command(command, timeout=800):
 
 def main():
     raw_args = sys.argv[1:]
+    if raw_args and raw_args[0] == "check-accessibility":
+        return 0 if paste.macos_accessibility_trusted() else 1
     if raw_args and raw_args[0] == "finish-update":
         return updater.finish_update(raw_args[1:])
     if raw_args and raw_args[0] == "finish-restart":

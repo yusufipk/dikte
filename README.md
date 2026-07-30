@@ -44,8 +44,8 @@ open dist
 ```
 
 Unzip `Dikte-macOS.zip`, then drag `Dikte.app` into `/Applications`. The first recording asks for Microphone
-permission. The first automatic paste asks for Accessibility/Automation
-permission; if it is not enabled automatically, add Dikte under **System
+permission. The first automatic paste asks for Accessibility permission; if it
+is not enabled automatically, add Dikte under **System
 Settings → Privacy & Security → Accessibility**.
 
 Dikte runs as the **🎙️** icon in the macOS menu bar. Choose another one from
@@ -62,9 +62,11 @@ restarts. Click the icon while Dikte is idle to open Settings directly. This
 deliberately avoids Qt's native status-item context menu, which crashes on
 macOS 27 when AppKit opens it.
 
-The app is locally/ad-hoc signed. A downloaded build may need **Control-click →
-Open** on its first launch unless a release has been notarized by an Apple
-Developer account. Settings and history live in
+Official macOS releases use one stable Apple Development signature so
+Accessibility permission survives automatic updates. They are not notarized,
+so a downloaded build may still need **Control-click → Open** on its first
+launch. Contributor and CI builds fall back to ad-hoc signing unless
+`DIKTE_CODESIGN_IDENTITY` is set. Settings and history live in
 `~/Library/Application Support/Dikte`.
 
 GitHub Actions also builds `Dikte-macOS.zip` on every pull request and push.

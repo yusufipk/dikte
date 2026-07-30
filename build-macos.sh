@@ -5,6 +5,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD_VENV="$ROOT_DIR/.venv-build"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+CODE_SIGN_IDENTITY="${DIKTE_CODESIGN_IDENTITY:--}"
+OFFICIAL_TEAM_ID="PTQ5FN6P8U"
 BUILD_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/dikte-build.XXXXXX")"
 trap 'rm -rf "$BUILD_ROOT"' EXIT
 
@@ -27,6 +29,11 @@ mkdir -p "$BUILD_ROOT"
   "$ROOT_DIR/assets/dikte-app.svg" "$BUILD_ROOT/Dikte.iconset"
 iconutil -c icns "$BUILD_ROOT/Dikte.iconset" -o "$BUILD_ROOT/Dikte.icns"
 
+PYINSTALLER_SIGN_ARGS=()
+if [[ "$CODE_SIGN_IDENTITY" != "-" ]]; then
+  PYINSTALLER_SIGN_ARGS=(--codesign-identity "$CODE_SIGN_IDENTITY")
+fi
+
 "$BUILD_VENV/bin/pyinstaller" \
   --noconfirm \
   --clean \
@@ -38,6 +45,7 @@ iconutil -c icns "$BUILD_ROOT/Dikte.iconset" -o "$BUILD_ROOT/Dikte.icns"
   --distpath "$BUILD_ROOT/dist" \
   --specpath "$BUILD_ROOT/spec" \
   --add-data "$ROOT_DIR/assets:assets" \
+  "${PYINSTALLER_SIGN_ARGS[@]}" \
   "$ROOT_DIR/dikte.py"
 
 APP="$BUILD_ROOT/dist/Dikte.app"
@@ -60,13 +68,18 @@ set_plist "LSMinimumSystemVersion" string "13.0"
 set_plist "LSApplicationCategoryType" string "public.app-category.utilities"
 set_plist "NSMicrophoneUsageDescription" string \
   "Dikte records your voice only when you start dictation."
-set_plist "NSAppleEventsUsageDescription" string \
-  "Dikte uses System Events to paste the transcript into the focused application."
 
-# Editing Info.plist invalidates PyInstaller's ad-hoc signature. Re-sign so
-# Apple Silicon can launch the local build without a broken-signature error.
+# Editing Info.plist invalidates PyInstaller's signature. Release builds use a
+# stable identity so macOS Accessibility permission survives app updates; CI
+# and local contributors without an identity retain the ad-hoc fallback.
 xattr -cr "$APP"
-codesign --force --deep --sign - "$APP"
+if [[ "$CODE_SIGN_IDENTITY" == "-" ]]; then
+  codesign --force --sign - "$APP"
+else
+  SIGN_REQUIREMENT="=designated => identifier \"dev.dikte.app\" and anchor apple generic and certificate leaf[subject.OU] = \"$OFFICIAL_TEAM_ID\""
+  codesign --force --sign "$CODE_SIGN_IDENTITY" \
+    --requirements "$SIGN_REQUIREMENT" "$APP"
+fi
 codesign --verify --deep --strict "$APP"
 
 mkdir -p "$ROOT_DIR/dist"

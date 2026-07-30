@@ -156,6 +156,10 @@ TR = {
         "osascript bulunamadı, otomatik yapıştırma yapılamıyor.",
     "Could not paste automatically: {error}":
         "Otomatik yapıştırma yapılamadı: {error}",
+    "macOS Accessibility permission is required for automatic paste. "
+    "Enable Dikte in System Settings.":
+        "Otomatik yapıştırma için macOS Erişilebilirlik izni gerekir. "
+        "Sistem Ayarları'nda Dikte'yi etkinleştir.",
     "Could not run ydotool: {error}": "ydotool çalıştırılamadı: {error}",
     "ydotool failed: {error}\nIs ydotoold running? (systemctl --user status ydotool)":
         "ydotool hatası: {error}\nydotoold çalışıyor mu? (systemctl --user status ydotool)",

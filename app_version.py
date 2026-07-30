@@ -1,6 +1,6 @@
 """Version and release-channel metadata for the packaged macOS app."""
 
-APP_VERSION = "0.3.7"
+APP_VERSION = "0.3.8"
 RELEASE_REPOSITORY = "benfirad/dikte-macos"
 RELEASE_TAG_PREFIX = "macos-v"
 RELEASE_ASSET = "Dikte-macOS.zip"

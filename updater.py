@@ -34,6 +34,11 @@ DOWNLOAD_PREFIX = (
     f"https://github.com/{RELEASE_REPOSITORY}/releases/download/"
 )
 BUNDLE_ID = "dev.dikte.app"
+OFFICIAL_TEAM_ID = "PTQ5FN6P8U"
+OFFICIAL_CODE_REQUIREMENT = (
+    f'=identifier "{BUNDLE_ID}" and anchor apple generic '
+    f'and certificate leaf[subject.OU] = "{OFFICIAL_TEAM_ID}"'
+)
 MAX_API_BYTES = 2 * 1024 * 1024
 MAX_UPDATE_BYTES = 200 * 1024 * 1024
 REQUEST_TIMEOUT = 30
@@ -211,7 +216,10 @@ def verify_bundle(bundle, expected_version):
     if info.get("CFBundleShortVersionString") != expected_version:
         raise RuntimeError("the update bundle version does not match its release")
     subprocess.run(
-        ["codesign", "--verify", "--deep", "--strict", str(bundle)],
+        [
+            "codesign", "--verify", "--deep", "--strict",
+            "-R", OFFICIAL_CODE_REQUIREMENT, str(bundle),
+        ],
         check=True,
         capture_output=True,
         text=True,

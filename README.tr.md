@@ -45,7 +45,7 @@ open dist
 
 `Dikte-macOS.zip` dosyasını açıp `Dikte.app` dosyasını `/Applications`
 klasörüne sürükle. İlk kayıtta Mikrofon
-izni, ilk otomatik yapıştırmada Erişilebilirlik/Otomasyon izni sorulur. Otomatik
+izni, ilk otomatik yapıştırmada Erişilebilirlik izni sorulur. Otomatik
 açılmazsa **Sistem Ayarları → Gizlilik ve Güvenlik → Erişilebilirlik** altında
 Dikte'yi etkinleştir.
 
@@ -63,9 +63,12 @@ sürümü ve macOS kod imzası doğrulanmadan Dikte değiştirilip yeniden başl
 Dikte boştayken simgeye tıklamak Ayarlar penceresini doğrudan açar. AppKit
 açarken macOS 27'de çöken Qt yerel durum menüsü bu nedenle özellikle kullanılmaz.
 
-Uygulama yerel/ad-hoc imzalıdır. Apple Developer hesabıyla noterlenmemiş,
-internetten indirilmiş bir derlemede ilk açılışta **Control-tık → Aç** gerekebilir.
-Ayarlar ve geçmiş `~/Library/Application Support/Dikte` altında tutulur.
+Resmî macOS sürümleri aynı Apple Development kimliğiyle imzalanır; böylece
+otomatik güncelleme Erişilebilirlik iznini sıfırlamaz. Paket noterlenmediği için
+internetten indirilen bir derlemede ilk açılışta yine **Control-tık → Aç**
+gerekebilir. Katkı ve CI derlemeleri `DIKTE_CODESIGN_IDENTITY` ayarlanmadıkça
+ad-hoc imzaya döner. Ayarlar ve geçmiş
+`~/Library/Application Support/Dikte` altında tutulur.
 GitHub Actions her push ve pull request'te `Dikte-macOS.zip` üretir.
 
 ### API anahtarı olmadan kullanım

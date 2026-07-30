@@ -12,6 +12,7 @@ import autostart
 import dikte
 import hotkey
 import local_whisper
+import paste
 import updater
 
 
@@ -180,6 +181,13 @@ class MacUpdaterTests(unittest.TestCase):
         )
         self.assertIsNone(updater.packaged_app_path("/usr/bin/python3"))
 
+    def test_update_signature_requirement_is_pinned_to_official_team(self):
+        self.assertIn('identifier "dev.dikte.app"', updater.OFFICIAL_CODE_REQUIREMENT)
+        self.assertIn(
+            'certificate leaf[subject.OU] = "PTQ5FN6P8U"',
+            updater.OFFICIAL_CODE_REQUIREMENT,
+        )
+
 
 class MacAudioDeviceParserTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform == "darwin", "macOS-only AVFoundation test")
@@ -221,6 +229,28 @@ class CleanupProviderTests(unittest.TestCase):
             "cleanup_model": "example/model",
         }
         self.assertEqual(assistant.cleanup_model_name(conf), "example/model")
+
+
+class MacPasteShortcutTests(unittest.TestCase):
+    def test_command_v_uses_native_keycode_and_flag(self):
+        self.assertEqual(
+            paste._parse_macos_shortcut("cmd+v"),
+            (9, 1 << 20),
+        )
+
+    def test_multiple_modifiers_are_combined(self):
+        self.assertEqual(
+            paste._parse_macos_shortcut("ctrl+shift+v"),
+            (9, (1 << 18) | (1 << 17)),
+        )
+
+    def test_unknown_macos_key_is_rejected(self):
+        with self.assertRaises(paste.PasteError):
+            paste._parse_macos_shortcut("cmd+F12")
+
+    def test_accessibility_status_is_false_off_macos(self):
+        with mock.patch.object(paste, "IS_MACOS", False):
+            self.assertFalse(paste.macos_accessibility_trusted())
 
 
 if __name__ == "__main__":
