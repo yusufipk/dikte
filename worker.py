@@ -108,15 +108,10 @@ class Pipeline(QObject):
             if (conf["assistant_cleanup"] if ask else conf["cleanup_enabled"]):
                 self.stage.emit(t("Cleaning up…"))
                 try:
-                    text = api.cleanup(
-                        raw,
-                        conf.openrouter_key(),
-                        conf["cleanup_model"],
-                        conf.cleanup_prompt(),
-                        reasoning=conf["cleanup_reasoning"],
-                        base_url=conf["openrouter_base_url"],
+                    text = assistant.cleanup_transcript(
+                        raw, conf, conf.cleanup_prompt(),
                     )
-                except api.ApiError as exc:
+                except (api.ApiError, assistant.AssistantError) as exc:
                     # Keep the transcript, but never let the failure pass unseen:
                     # a rejected key would otherwise look like working dictation.
                     text = raw
@@ -151,7 +146,10 @@ class Pipeline(QObject):
                 "duration": round(duration, 1),
                 "elapsed": round(time.monotonic() - started, 1),
                 "model": target.model,
-                "cleanup_model": conf["cleanup_model"] if conf["cleanup_enabled"] else "",
+                "cleanup_model": (
+                    assistant.cleanup_model_name(conf)
+                    if conf["cleanup_enabled"] else ""
+                ),
                 "cleanup_error": warning,
                 "mode": "ask" if ask else "",
                 "question": question,

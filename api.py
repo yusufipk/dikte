@@ -2,8 +2,8 @@
 
 Transcription runs on either provider: OpenRouter mirrors OpenAI's
 /audio/transcriptions endpoint field for field, so one multipart request serves
-both and only the key, the base URL and the model id change. Cleanup is always
-OpenRouter.
+both and only the key, the base URL and the model id change. Hosted cleanup is
+OpenRouter; assistant.py also offers the signed-in Codex CLI.
 """
 
 import collections

@@ -379,7 +379,9 @@ DEFAULTS = {
     "language": "tr",
     "transcribe_prompt": "",
     "cleanup_enabled": True,
+    "cleanup_provider": "openrouter",  # openrouter | codex
     "cleanup_model": "google/gemini-3.5-flash-lite",
+    "cleanup_codex_model": "",         # empty -> Codex CLI's own default
     "cleanup_reasoning": "",        # empty -> whatever the model does by default
     "cleanup_prompt": "",           # empty -> language-specific default
     "auto_paste": True,

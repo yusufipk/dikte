@@ -54,6 +54,10 @@ CLEANUP_MODELS = [
     "google/gemini-2.5-flash-lite", "anthropic/claude-haiku-4.5",
     "openai/gpt-5-mini", "meta-llama/llama-3.3-70b-instruct",
 ]
+CLEANUP_PROVIDERS = [
+    ("OpenRouter", "openrouter"),
+    ("Codex CLI — no API key", "codex"),
+]
 # Minutes are a harder job than cleanup: an hour of talk has to be read whole
 # and turned into decisions, so the starting points are the larger models.
 MEETING_MODELS = [
@@ -317,12 +321,34 @@ class SettingsWindow(QDialog):
         self.cleanup_enabled = QCheckBox(t("Clean the transcript with a model"))
         orr_form.addRow("", self.cleanup_enabled)
 
+        self.cleanup_provider = QComboBox()
+        for label, value in CLEANUP_PROVIDERS:
+            self.cleanup_provider.addItem(t(label), value)
+        self.cleanup_provider.currentIndexChanged.connect(
+            self._cleanup_provider_changed
+        )
+        orr_form.addRow(t("Provider"), self.cleanup_provider)
+
         self.cleanup_model = QComboBox()
         self.cleanup_model.setEditable(True)
         self.cleanup_model.addItems(CLEANUP_MODELS)
         self.refresh_models = QPushButton(t("Fetch model list"))
         self.refresh_models.clicked.connect(self._load_models)
-        orr_form.addRow(t("Model"), self._row(self.cleanup_model, self.refresh_models))
+        self.cleanup_openrouter_label = QLabel(t("OpenRouter model"))
+        self.cleanup_openrouter_row = self._row(
+            self.cleanup_model, self.refresh_models
+        )
+        orr_form.addRow(
+            self.cleanup_openrouter_label, self.cleanup_openrouter_row
+        )
+
+        self.cleanup_codex_model = QComboBox()
+        self.cleanup_codex_model.setEditable(True)
+        self.cleanup_codex_model.addItem(t("Codex's own default"), "")
+        for name in CODEX_MODELS:
+            self.cleanup_codex_model.addItem(name, name)
+        self.cleanup_codex_label = QLabel(t("Codex model"))
+        orr_form.addRow(self.cleanup_codex_label, self.cleanup_codex_model)
 
         self.cleanup_reasoning = QComboBox()
         for label, value in REASONING_LEVELS:
@@ -334,7 +360,7 @@ class SettingsWindow(QDialog):
         )
         orr_form.addRow(t("Thinking"), self.cleanup_reasoning)
 
-        self.models_label = QLabel(t("Runs on OpenRouter."))
+        self.models_label = QLabel("")
         self.models_label.setWordWrap(True)
         orr_form.addRow(self.models_label)
         outer.addWidget(orr)
@@ -976,8 +1002,13 @@ class SettingsWindow(QDialog):
         self._select_data(self.transcribe_provider, conf["transcribe_provider"])
         self._provider_changed()  # selecting index 0 fires no signal
         self.cleanup_enabled.setChecked(conf["cleanup_enabled"])
+        self._select_data(self.cleanup_provider, conf["cleanup_provider"])
         self.cleanup_model.setCurrentText(conf["cleanup_model"])
+        self.cleanup_codex_model.setCurrentText(
+            conf["cleanup_codex_model"] or t("Codex's own default")
+        )
         self._select_data(self.cleanup_reasoning, conf["cleanup_reasoning"])
+        self._cleanup_provider_changed()
         self.cleanup_prompt.setPlainText(conf["cleanup_prompt"] or cfg.default_cleanup_prompt())
         self.file_cleanup_prompt.setPlainText(
             conf["file_cleanup_prompt"] or cfg.default_file_cleanup_prompt()
@@ -1061,7 +1092,15 @@ class SettingsWindow(QDialog):
             conf[name] = self._models[key].strip() or cfg.DEFAULTS[name]
 
         conf["cleanup_enabled"] = self.cleanup_enabled.isChecked()
+        conf["cleanup_provider"] = (
+            self.cleanup_provider.currentData() or "openrouter"
+        )
         conf["cleanup_model"] = self.cleanup_model.currentText().strip()
+        codex_cleanup_model = self.cleanup_codex_model.currentText().strip()
+        conf["cleanup_codex_model"] = (
+            "" if codex_cleanup_model == t("Codex's own default")
+            else codex_cleanup_model
+        )
         conf["cleanup_reasoning"] = self.cleanup_reasoning.currentData() or ""
 
         # Store an empty prompt when it matches the default, so switching the
@@ -1158,6 +1197,19 @@ class SettingsWindow(QDialog):
         else:
             self.refresh_transcribe_models.setText(t("Fetch model list"))
             self.transcribe_status.setText("")
+
+    def _cleanup_provider_changed(self):
+        codex = (self.cleanup_provider.currentData() == "codex")
+        self.cleanup_openrouter_label.setVisible(not codex)
+        self.cleanup_openrouter_row.setVisible(not codex)
+        self.cleanup_codex_label.setVisible(codex)
+        self.cleanup_codex_model.setVisible(codex)
+        self.models_label.setText(
+            t("Uses your signed-in Codex CLI session; no API key is needed. "
+              "The transcript is sent to Codex.")
+            if codex else
+            t("Runs on OpenRouter.")
+        )
 
     def _load_transcribe_models(self):
         """The model list of whichever provider is selected."""

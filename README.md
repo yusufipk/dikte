@@ -65,7 +65,9 @@ Under **Settings → API and models → Speech to text**, select **Local Whisper
 no API key**, then click **Install local Whisper**. On macOS the button installs
 Homebrew's `whisper-cpp` when needed and downloads the recommended multilingual
 `large-v3-turbo-q5_0` model (574 MB) once. Audio and transcripts remain on the
-machine. Turn transcript cleanup off for completely keyless plain dictation.
+machine. Under **Transcript cleanup**, choose **Codex CLI — no API key** to run
+the Cleanup Rules through the signed-in Codex session, or turn cleanup off for
+fully local raw transcription.
 
 For spoken questions and actions, Settings → Agent already supports the signed-in
 `codex exec` or `claude -p` CLI session. This needs no separately pasted API key:
@@ -73,8 +75,9 @@ Local Whisper first turns speech into text, Dikte sends that text to the selecte
 CLI, and pastes its answer. Codex CLI does not accept audio input directly.
 
 The hosted alternative takes **OpenAI** and/or **OpenRouter** keys. Speech to text
-runs on either one; cleanup runs on OpenRouter, so a single OpenRouter key can
-cover both. Keys fall back to `OPENAI_API_KEY` and `OPENROUTER_API_KEY`, and are
+runs on either one; cleanup can run on OpenRouter or Codex CLI, so a single
+OpenRouter key can cover both hosted steps. Keys fall back to `OPENAI_API_KEY`
+and `OPENROUTER_API_KEY`, and are
 stored in `~/.config/dikte/config.json` on Linux or
 `~/Library/Application Support/Dikte/config.json` on macOS, mode 600.
 

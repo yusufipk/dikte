@@ -64,8 +64,10 @@ GitHub Actions her push ve pull request'te `Dikte-macOS.zip` üretir.
 API anahtarı yok** sağlayıcısını seçip **Yerel Whisper'ı kur** düğmesine bas.
 macOS'te düğme gerekirse Homebrew `whisper-cpp` paketini kurar ve Türkçe için
 önerilen çok dilli `large-v3-turbo-q5_0` modelini (574 MB) bir kez indirir.
-Ses ve transkript bilgisayardan dışarı çıkmaz. Tamamen anahtarsız normal dikte
-için transkript temizlemeyi kapat.
+Ses ve transkript yerel transkripsiyon sırasında bilgisayardan dışarı çıkmaz.
+**Transkript temizleme** altında **Codex CLI — API anahtarı yok** seçilirse
+Cleanup Rules giriş yaptığın Codex oturumunda çalışır; tamamen yerel ham
+transkript için temizlemeyi kapatabilirsin.
 
 Sesle soru sormak veya işlem yaptırmak için Ayarlar → Ajan sekmesi zaten giriş
 yaptığın `codex exec` ya da `claude -p` terminal oturumunu destekler. Ayrı bir
@@ -74,8 +76,9 @@ terminal aracına gönderir ve cevabı yapıştırır. Codex CLI ses dosyasını
 girdi olarak kabul etmez.
 
 Bulut seçeneğinde **OpenAI** ve/veya **OpenRouter** anahtarı kullanılabilir.
-Sesi yazıya çevirme ikisinden birinde, temizleme OpenRouter'da çalışır; tek bir
-OpenRouter anahtarı ikisine de yeter. Boş bırakırsan `OPENAI_API_KEY` ve
+Sesi yazıya çevirme ikisinden birinde, temizleme OpenRouter veya Codex CLI'da
+çalışır; tek bir OpenRouter anahtarı iki bulut adımına da yeter. Boş bırakırsan
+`OPENAI_API_KEY` ve
 `OPENROUTER_API_KEY` kullanılır; anahtarlar Linux'ta
 `~/.config/dikte/config.json`, macOS'te
 `~/Library/Application Support/Dikte/config.json` içinde, izinler 600 tutulur.

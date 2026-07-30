@@ -17,6 +17,7 @@ import wave
 from PyQt6.QtCore import QObject, pyqtSignal
 
 import api
+import assistant
 from i18n import t
 
 CHUNK_SECONDS = 600          # 10 min ≈ 19 MB at 16 kHz mono s16
@@ -118,7 +119,8 @@ class FileTranscriber(QObject):
 
         except Cancelled:
             self.progress.emit(t("Stopped."))
-        except (api.ApiError, OSError, subprocess.SubprocessError, wave.Error) as exc:
+        except (api.ApiError, assistant.AssistantError, OSError,
+                subprocess.SubprocessError, wave.Error) as exc:
             self.failed.emit(str(exc))
         finally:
             if workdir:
@@ -130,14 +132,7 @@ class FileTranscriber(QObject):
         out = []
         for block in split_text(text, timestamps):
             self._check()
-            out.append(api.cleanup(
-                block,
-                conf.openrouter_key(),
-                conf["cleanup_model"],
-                prompt,
-                reasoning=conf["cleanup_reasoning"],
-                base_url=conf["openrouter_base_url"],
-            ))
+            out.append(assistant.cleanup_transcript(block, conf, prompt))
         return ("\n" if timestamps else "\n\n").join(out)
 
 

@@ -26,6 +26,7 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 
@@ -86,6 +87,91 @@ class AssistantError(Exception):
 
 class Cancelled(Exception):
     pass
+
+
+def cleanup_transcript(text, conf, system_prompt, timeout=180):
+    """Clean one transcript through OpenRouter or the signed-in Codex CLI."""
+    if conf["cleanup_provider"] != "codex":
+        return api.cleanup(
+            text,
+            conf.openrouter_key(),
+            conf["cleanup_model"],
+            system_prompt,
+            reasoning=conf["cleanup_reasoning"],
+            base_url=conf["openrouter_base_url"],
+            timeout=timeout,
+        )
+    return _cleanup_with_codex(text, conf, system_prompt, timeout)
+
+
+def cleanup_model_name(conf):
+    if conf["cleanup_provider"] == "codex":
+        return "codex:" + (conf["cleanup_codex_model"].strip() or "default")
+    return conf["cleanup_model"]
+
+
+def _cleanup_with_codex(text, conf, system_prompt, timeout):
+    if not shutil.which("codex"):
+        raise AssistantError(t(
+            "{binary} not found. Install it, or pick another provider under "
+            "Settings → Agent.", binary="codex",
+        ))
+
+    body = (
+        f"{system_prompt}\n\n"
+        "---\n\n"
+        f"<transcript>\n{text}\n</transcript>"
+    )
+    with tempfile.TemporaryDirectory(prefix="dikte-codex-cleanup-") as workdir:
+        output = os.path.join(workdir, "answer.txt")
+        cmd = [
+            "codex", "exec",
+            "--ephemeral",
+            "--skip-git-repo-check",
+            "--ignore-rules",
+            "--sandbox", "read-only",
+            "-c", 'approval_policy="never"',
+            "--color", "never",
+            "--output-last-message", output,
+        ]
+        model = conf["cleanup_codex_model"].strip()
+        if model:
+            cmd += ["--model", model]
+        effort = CODEX_EFFORT.get(conf["cleanup_reasoning"], "")
+        if effort:
+            cmd += ["-c", f'model_reasoning_effort="{effort}"']
+        cmd.append(body)
+
+        try:
+            run = subprocess.run(
+                cmd, cwd=workdir, stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                text=True, encoding="utf-8", errors="replace",
+                timeout=timeout, check=False,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise AssistantError(t(
+                "It did not finish within {seconds} seconds.", seconds=timeout
+            )) from exc
+        except OSError as exc:
+            raise AssistantError(t(
+                "Could not run {binary}: {error}", binary="codex", error=exc
+            )) from exc
+
+        if run.returncode != 0:
+            raise AssistantError(
+                (run.stderr or t("Codex ended with an error.")).strip()[-1200:]
+            )
+        try:
+            with open(output, encoding="utf-8") as fh:
+                answer = fh.read().strip()
+        except OSError as exc:
+            raise AssistantError(t(
+                "Could not read Codex's reply: {error}", error=exc
+            )) from exc
+        if not answer:
+            raise AssistantError(t("The cleanup model returned an empty reply."))
+        return answer
 
 
 def provider(conf):

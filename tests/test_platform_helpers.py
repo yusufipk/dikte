@@ -1,6 +1,7 @@
 import sys
 import unittest
 
+import assistant
 import hotkey
 import local_whisper
 
@@ -42,6 +43,24 @@ class LocalWhisperTests(unittest.TestCase):
             local_whisper.parse_result(payload),
             [(0.25, 1.75, "Merhaba dünya."), (1.75, 2.6, "Nasılsın?")],
         )
+
+
+class CleanupProviderTests(unittest.TestCase):
+    def test_codex_cleanup_model_name_uses_default(self):
+        conf = {
+            "cleanup_provider": "codex",
+            "cleanup_codex_model": "",
+            "cleanup_model": "unused",
+        }
+        self.assertEqual(assistant.cleanup_model_name(conf), "codex:default")
+
+    def test_openrouter_cleanup_model_name_is_preserved(self):
+        conf = {
+            "cleanup_provider": "openrouter",
+            "cleanup_codex_model": "",
+            "cleanup_model": "example/model",
+        }
+        self.assertEqual(assistant.cleanup_model_name(conf), "example/model")
 
 
 if __name__ == "__main__":

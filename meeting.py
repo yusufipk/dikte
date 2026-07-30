@@ -25,6 +25,7 @@ import wave
 from PyQt6.QtCore import QObject, pyqtSignal
 
 import api
+import assistant
 import config as cfg
 import filetranscribe
 import vad
@@ -136,7 +137,8 @@ class MeetingPipeline(QObject):
         except Cancelled:
             cfg.update_meeting(base, error=t("Stopped."))
             self._say(t("Stopped."))
-        except (api.ApiError, OSError, subprocess.SubprocessError, wave.Error) as exc:
+        except (api.ApiError, assistant.AssistantError, OSError,
+                subprocess.SubprocessError, wave.Error) as exc:
             # The audio stays put no matter what the keep setting says: it is the
             # only copy of the meeting, and the run can be tried again from it.
             cfg.update_meeting(base, status="failed", error=str(exc))
@@ -208,14 +210,7 @@ class MeetingPipeline(QObject):
             if len(blocks) > 1:
                 self._say(t("Cleaning up {index}/{count}…",
                             index=index, count=len(blocks)))
-            out.append(api.cleanup(
-                block,
-                conf.openrouter_key(),
-                conf["cleanup_model"],
-                prompt,
-                reasoning=conf["cleanup_reasoning"],
-                base_url=conf["openrouter_base_url"],
-            ))
+            out.append(assistant.cleanup_transcript(block, conf, prompt))
         return "\n".join(out)
 
     def _write(self, doc_path, minutes, transcript, entry):

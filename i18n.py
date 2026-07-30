@@ -247,6 +247,15 @@ TR = {
     "Test": "Test et",
     "Trying…": "Deneniyor…",
     "Runs on OpenRouter.": "OpenRouter üzerinde çalışır.",
+    "Codex CLI — no API key": "Codex CLI — API anahtarı yok",
+    "OpenRouter model": "OpenRouter modeli",
+    "Codex model": "Codex modeli",
+    "Uses your signed-in Codex CLI session; no API key is needed. "
+    "The transcript is sent to Codex.":
+        "Giriş yaptığın Codex CLI oturumunu kullanır; API anahtarı gerekmez. "
+        "Transkript Codex'e gönderilir.",
+    "Could not read Codex's reply: {error}":
+        "Codex'in yanıtı okunamadı: {error}",
     "Connection works. {count} audio models visible.":
         "Bağlantı tamam. {count} ses modeli görünüyor.",
     "Clean the transcript with a model": "Transkripti bir modelle temizle",
