@@ -2,6 +2,7 @@ import sys
 import unittest
 
 import assistant
+import dikte
 import hotkey
 import local_whisper
 
@@ -19,6 +20,14 @@ class MacShortcutParserTests(unittest.TestCase):
 
     def test_rejects_unknown_key(self):
         self.assertEqual(hotkey._parse_macos_shortcut("Cmd+Nope"), (None, None))
+
+
+class TrayMenuPolicyTests(unittest.TestCase):
+    def test_macos_avoids_the_crashing_native_context_menu(self):
+        self.assertFalse(dikte._uses_native_tray_context_menu("darwin"))
+
+    def test_linux_keeps_the_native_context_menu(self):
+        self.assertTrue(dikte._uses_native_tray_context_menu("linux"))
 
 
 class MacAudioDeviceParserTests(unittest.TestCase):

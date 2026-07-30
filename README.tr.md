@@ -51,9 +51,9 @@ Dikte'yi etkinleştir.
 
 Dikte macOS menü çubuğunda **🎙️** simgesiyle çalışır. Başka bir hazır simgeyi
 **Ayarlar → Genel → Menü çubuğu emojisi** altında seçebilir veya istediğin
-emojiyi yazabilirsin; ayarlar kaydedilince simge hemen değişir. Simgeye
-tıklayınca menüsü açılır; **Ayarlar…** ilk sıradadır ve Dikte boştayken simgenin
-doğrudan tetiklenmesi Ayarlar penceresini açar.
+emojiyi yazabilirsin; ayarlar kaydedilince simge hemen değişir. Dikte boştayken
+simgeye tıklamak Ayarlar penceresini doğrudan açar. AppKit açarken macOS 27'de
+çöken Qt yerel durum menüsü bu nedenle özellikle kullanılmaz.
 
 Uygulama yerel/ad-hoc imzalıdır. Apple Developer hesabıyla noterlenmemiş,
 internetten indirilmiş bir derlemede ilk açılışta **Control-tık → Aç** gerekebilir.

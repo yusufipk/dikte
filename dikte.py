@@ -137,6 +137,9 @@ class Dikte:
         self.meeting_ticker.timeout.connect(self._meeting_tick)
 
         self.tray = QSystemTrayIcon()
+        # Connect once. _apply_settings() rebuilds the actions after every Save;
+        # reconnecting here used to add another activation handler each time.
+        self.tray.activated.connect(self._tray_clicked)
         self._apply_settings()
         self.tray.show()
 
@@ -199,9 +202,16 @@ class Dikte:
         self.quit_action.triggered.connect(self.app.quit)
         self.menu.addAction(self.quit_action)
 
-        self.tray.setContextMenu(self.menu)
+        if _uses_native_tray_context_menu():
+            self.tray.setContextMenu(self.menu)
+        else:
+            # Qt 6.10 asks NSEvent.clickCount while macOS 27 is opening a
+            # status-item menu. The OS now supplies a MouseExited event there
+            # and aborts the process with NSInternalInconsistencyException.
+            # With no native context menu, the real click reaches activated()
+            # and opens Settings without entering that crashing AppKit path.
+            self.tray.setContextMenu(None)
         self.tray.setToolTip(t("Dikte — click for Settings"))
-        self.tray.activated.connect(self._tray_clicked)
         self._set_icon("audio-input-microphone")
 
     def _tray_clicked(self, reason):
@@ -738,6 +748,11 @@ class Dikte:
 def _preview(text):
     line = text.replace("\n", " ")
     return line[:48] + ("…" if len(line) > 48 else "")
+
+
+def _uses_native_tray_context_menu(platform_name=None):
+    """The Qt/AppKit status-item menu is unsafe on current macOS."""
+    return (platform_name or sys.platform) != "darwin"
 
 
 def _emoji_icon(value):
