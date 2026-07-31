@@ -2,3 +2,7 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+
+# Written by install.ps1 with this machine's own Python and install path, so it
+# is never the same on two machines.
+dikte-launcher.vbs
