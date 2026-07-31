@@ -214,7 +214,7 @@ class MacUpdaterTests(unittest.TestCase):
     def test_release_from_renamed_repository_is_accepted(self):
         release = self._release("0.3.11")
         release["assets"][0]["browser_download_url"] = (
-            "https://github.com/benfirad/daakDİKTE-macos/releases/download/"
+            "https://github.com/benfirad/daakDIKTE-macos/releases/download/"
             "macos-v0.3.11/Dikte-macOS.zip"
         )
         self.assertEqual(
@@ -224,7 +224,7 @@ class MacUpdaterTests(unittest.TestCase):
 
     def test_unicode_repository_urls_are_ascii_safe(self):
         self.assertNotIn("İ", updater.API_URL)
-        self.assertIn("daakD%C4%B0KTE-macos", updater.API_URL)
+        self.assertIn("daakDIKTE-macos", updater.API_URL)
         self.assertEqual(
             updater._ascii_url(
                 "https://github.com/benfirad/daakDİKTE-macos/"
