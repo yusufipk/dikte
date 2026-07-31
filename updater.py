@@ -13,6 +13,7 @@ import tempfile
 import threading
 import time
 import urllib.request
+import urllib.parse
 import uuid
 import zipfile
 from dataclasses import dataclass
@@ -29,13 +30,22 @@ from app_version import (
 )
 from i18n import t
 
-API_URL = (
+def _ascii_url(value):
+    """Percent-encode Unicode repository names without double-encoding URLs."""
+    return urllib.parse.quote(str(value), safe=":/?&=%")
+
+
+API_URL = _ascii_url(
     f"https://api.github.com/repos/{RELEASE_REPOSITORY}/releases?per_page=20"
 )
-DOWNLOAD_PREFIXES = tuple(
-    f"https://github.com/{repository}/releases/download/"
+DOWNLOAD_PREFIXES = tuple({
+    prefix
     for repository in (RELEASE_REPOSITORY, LEGACY_RELEASE_REPOSITORY)
-)
+    for prefix in (
+        f"https://github.com/{repository}/releases/download/",
+        _ascii_url(f"https://github.com/{repository}/releases/download/"),
+    )
+})
 BUNDLE_ID = "dev.dikte.app"
 LEGACY_BUNDLE_NAME = "Dikte.app"
 OFFICIAL_TEAM_ID = "PTQ5FN6P8U"
@@ -192,7 +202,7 @@ def _safe_archive(zip_path):
 
 def _download(release, destination):
     request = urllib.request.Request(
-        release.url,
+        _ascii_url(release.url),
         headers={"User-Agent": f"Dikte/{APP_VERSION}"},
     )
     digest = hashlib.sha256()

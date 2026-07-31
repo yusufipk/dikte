@@ -222,6 +222,16 @@ class MacUpdaterTests(unittest.TestCase):
             "0.3.11",
         )
 
+    def test_unicode_repository_urls_are_ascii_safe(self):
+        self.assertNotIn("İ", updater.API_URL)
+        self.assertIn("daakD%C4%B0KTE-macos", updater.API_URL)
+        self.assertEqual(
+            updater._ascii_url(
+                "https://github.com/benfirad/daakDİKTE-macos/"
+            ),
+            "https://github.com/benfirad/daakD%C4%B0KTE-macos/",
+        )
+
     def test_archive_path_traversal_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             archive = Path(directory) / "unsafe.zip"
