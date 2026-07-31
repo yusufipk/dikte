@@ -211,6 +211,17 @@ class MacUpdaterTests(unittest.TestCase):
         )
         self.assertIsNone(updater.release_from_payload(release))
 
+    def test_release_from_renamed_repository_is_accepted(self):
+        release = self._release("0.3.11")
+        release["assets"][0]["browser_download_url"] = (
+            "https://github.com/benfirad/daakDİKTE-macos/releases/download/"
+            "macos-v0.3.11/Dikte-macOS.zip"
+        )
+        self.assertEqual(
+            updater.release_from_payload(release).version,
+            "0.3.11",
+        )
+
     def test_archive_path_traversal_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:
             archive = Path(directory) / "unsafe.zip"

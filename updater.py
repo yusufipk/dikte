@@ -22,6 +22,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from app_version import (
     APP_BUNDLE_NAME,
     APP_VERSION,
+    LEGACY_RELEASE_REPOSITORY,
     RELEASE_ASSET,
     RELEASE_REPOSITORY,
     RELEASE_TAG_PREFIX,
@@ -31,8 +32,9 @@ from i18n import t
 API_URL = (
     f"https://api.github.com/repos/{RELEASE_REPOSITORY}/releases?per_page=20"
 )
-DOWNLOAD_PREFIX = (
-    f"https://github.com/{RELEASE_REPOSITORY}/releases/download/"
+DOWNLOAD_PREFIXES = tuple(
+    f"https://github.com/{repository}/releases/download/"
+    for repository in (RELEASE_REPOSITORY, LEGACY_RELEASE_REPOSITORY)
 )
 BUNDLE_ID = "dev.dikte.app"
 LEGACY_BUNDLE_NAME = "Dikte.app"
@@ -94,7 +96,7 @@ def release_from_payload(payload):
     url = str(asset.get("browser_download_url") or "")
     size = asset.get("size")
     digest = str(asset.get("digest") or "").lower()
-    if not url.startswith(DOWNLOAD_PREFIX):
+    if not url.startswith(DOWNLOAD_PREFIXES):
         return None
     if not isinstance(size, int) or not 0 < size <= MAX_UPDATE_BYTES:
         return None
