@@ -1,4 +1,9 @@
-# Dikte
+# daakDİKTE
+
+**daakDİKTE is the macOS adaptation of [Yusuf İpek's open-source Dikte
+project](https://github.com/yusufipk/dikte).** It keeps the original author,
+project and GPL-3.0 license visibly credited; the new name distinguishes this
+modified macOS edition. Linux builds retain the original **Dikte** name.
 
 Press `Ctrl+Space`, talk, press again. The recording is transcribed either
 locally with whisper.cpp (no API key) or through OpenAI/OpenRouter, then lands
@@ -10,7 +15,7 @@ AVFoundation for audio, native Carbon global hotkeys, and the system clipboard.
 *[Türkçe README](README.tr.md)*
 
 <p align="center">
-  <img src="docs/settings-general.webp" width="820" alt="Dikte settings, General tab">
+  <img src="docs/settings-general.webp" width="820" alt="daakDİKTE settings, General tab">
 </p>
 
 |  |  |
@@ -45,20 +50,20 @@ open dist
 
 Unzip `Dikte-macOS.zip`, then drag `Dikte.app` into `/Applications`. The first recording asks for Microphone
 permission. The first automatic paste asks for Accessibility permission; if it
-is not enabled automatically, add Dikte under **System
+is not enabled automatically, add daakDİKTE under **System
 Settings → Privacy & Security → Accessibility**.
 
-Dikte runs as the **🎙️** icon in the macOS menu bar. Choose another one from
+daakDİKTE runs as the **🎙️** icon in the macOS menu bar. Choose another one from
 **Settings → General → Menu bar emoji**, including a monochrome system-style
 microphone or a live analog clock, or type any emoji you like; it changes as
-soon as the settings are saved. **Start Dikte when I log in** is enabled by
-default and can be turned off on the same page. Dikte also checks GitHub
+soon as the settings are saved. **Start daakDİKTE when I log in** is enabled by
+default and can be turned off on the same page. daakDİKTE also checks GitHub
 Releases every six hours and
 automatically installs newer verified macOS builds. Turn this off, see the
 installed version, or run a manual check under **Settings → General → Updates**.
 Every download must match GitHub's declared size and SHA-256 digest, bundle ID,
-embedded version, and macOS code signature before Dikte replaces the app and
-restarts. Click the icon while Dikte is idle to open Settings directly. This
+embedded version, and macOS code signature before daakDİKTE replaces the app and
+restarts. Click the icon while daakDİKTE is idle to open Settings directly. This
 deliberately avoids Qt's native status-item context menu, which crashes on
 macOS 27 when AppKit opens it.
 
@@ -83,7 +88,7 @@ fully local raw transcription.
 
 For spoken questions and actions, Settings → Agent already supports the signed-in
 `codex exec` or `claude -p` CLI session. This needs no separately pasted API key:
-Local Whisper first turns speech into text, Dikte sends that text to the selected
+Local Whisper first turns speech into text, daakDİKTE sends that text to the selected
 CLI, and pastes its answer. Codex CLI does not accept audio input directly.
 
 The hosted alternative takes **OpenAI** and/or **OpenRouter** keys. Speech to text
@@ -107,7 +112,7 @@ stored in `~/.config/dikte/config.json` on Linux or
 
 An indicator in the screen corner shows a red dot, a live waveform and the
 elapsed time, then the stage it is on. It never takes focus. Pressing
-`Ctrl+Space` again while Dikte is still working does nothing; nothing queues up.
+`Ctrl+Space` again while daakDİKTE is still working does nothing; nothing queues up.
 A dictation and a command to the agent do wait on each other for the microphone,
 which is one device, but for nothing else: each has its own indicator, and the
 second one stacks above the first while both are up.

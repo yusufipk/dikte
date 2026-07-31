@@ -58,7 +58,8 @@ set_plist() {
   /usr/libexec/PlistBuddy -c "Add :$key $type $value" "$PLIST"
 }
 
-set_plist "CFBundleDisplayName" string "Dikte"
+set_plist "CFBundleDisplayName" string "daakDİKTE"
+set_plist "CFBundleName" string "daakDİKTE"
 APP_VERSION="$(PYTHONPATH="$ROOT_DIR" "$BUILD_VENV/bin/python" -c \
   'from app_version import APP_VERSION; print(APP_VERSION)')"
 set_plist "CFBundleShortVersionString" string "$APP_VERSION"
@@ -67,7 +68,7 @@ set_plist "LSUIElement" bool true
 set_plist "LSMinimumSystemVersion" string "13.0"
 set_plist "LSApplicationCategoryType" string "public.app-category.utilities"
 set_plist "NSMicrophoneUsageDescription" string \
-  "Dikte records your voice only when you start dictation."
+  "daakDİKTE records your voice only when you start dictation."
 
 # Editing Info.plist invalidates PyInstaller's signature. Release builds use a
 # stable identity so macOS Accessibility permission survives app updates; CI

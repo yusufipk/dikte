@@ -11,6 +11,7 @@ import assistant
 import autostart
 import dikte
 import hotkey
+import i18n
 import local_whisper
 import paste
 import updater
@@ -37,6 +38,29 @@ class TrayMenuPolicyTests(unittest.TestCase):
 
     def test_linux_keeps_the_native_context_menu(self):
         self.assertTrue(dikte._uses_native_tray_context_menu("linux"))
+
+
+class MacBrandingTests(unittest.TestCase):
+    def test_explicit_dikte_brand_is_replaced_on_macos(self):
+        previous = i18n.language()
+        try:
+            i18n.set_language("tr")
+            with mock.patch.object(i18n.sys, "platform", "darwin"):
+                self.assertEqual(
+                    i18n.t("Dikte Settings"),
+                    "daakDİKTE Ayarları",
+                )
+        finally:
+            i18n.set_language(previous)
+
+    def test_generic_dictation_translation_is_not_rebranded(self):
+        previous = i18n.language()
+        try:
+            i18n.set_language("tr")
+            with mock.patch.object(i18n.sys, "platform", "darwin"):
+                self.assertEqual(i18n.t("Dictation"), "Dikte")
+        finally:
+            i18n.set_language(previous)
 
 
 class AnalogClockTests(unittest.TestCase):

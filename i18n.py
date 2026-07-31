@@ -9,6 +9,8 @@ import os
 import subprocess
 import sys
 
+from app_version import APP_DISPLAY_NAME
+
 _lang = "en"
 
 
@@ -42,6 +44,11 @@ def language():
 
 def t(text, **kwargs):
     out = TR.get(text, text) if _lang == "tr" else text
+    # Preserve the original Dikte name on Linux. The macOS fork has its own
+    # visible brand while keeping the same bundle/config identities for safe
+    # updates and permission continuity.
+    if sys.platform == "darwin" and "Dikte" in text:
+        out = out.replace("Dikte", APP_DISPLAY_NAME)
     return out.format(**kwargs) if kwargs else out
 
 

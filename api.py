@@ -14,8 +14,9 @@ import secrets
 import urllib.error
 import urllib.request
 
-import local_whisper
+from app_version import APP_DISPLAY_NAME
 from i18n import t
+import local_whisper
 
 APP_URL = "https://github.com/yusufipk/dikte"
 USER_AGENT = f"dikte/1.0 (+{APP_URL})"
@@ -113,7 +114,7 @@ def _headers(provider, api_key, content_type=None):
     if provider == "openrouter":
         # What OpenRouter attributes the calls to on its app leaderboard.
         headers["HTTP-Referer"] = APP_URL
-        headers["X-Title"] = "Dikte"
+        headers["X-Title"] = APP_DISPLAY_NAME
     return headers
 
 

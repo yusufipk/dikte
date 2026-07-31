@@ -58,6 +58,7 @@ import i18n  # noqa: E402
 import meeting  # noqa: E402
 import paste  # noqa: E402
 import updater  # noqa: E402
+from app_version import APP_DISPLAY_NAME  # noqa: E402
 from i18n import t  # noqa: E402
 from meeting import MeetingPipeline  # noqa: E402
 from overlay import Overlay  # noqa: E402
@@ -424,7 +425,7 @@ class Dikte:
         self.conf["evdev_hotkey"] = False
         self.conf.save()
         self.tray.showMessage(
-            "Dikte",
+            APP_DISPLAY_NAME,
             t("The KDE shortcut is live now, so the built-in listener has been "
               "turned off. It was doubling every key press."),
             QSystemTrayIcon.MessageIcon.Information, 8000,
@@ -613,7 +614,7 @@ class Dikte:
         if not self.meetings.run(entry):
             self._set_meeting_state(M_IDLE)
             self.tray.showMessage(
-                "Dikte",
+                APP_DISPLAY_NAME,
                 t("Recording saved. The previous meeting is still being written "
                   "up, so start this one from Settings → Minutes when it is done."),
                 QSystemTrayIcon.MessageIcon.Information, 10000,
@@ -658,7 +659,7 @@ class Dikte:
         if self.meeting_state != M_RECORDING:
             return
         self.tray.showMessage(
-            "Dikte",
+            APP_DISPLAY_NAME,
             t("The recording stopped on its own; the sound device may have gone "
               "away. Keeping what was captured."),
             QSystemTrayIcon.MessageIcon.Warning, 10000,
@@ -733,7 +734,10 @@ class Dikte:
         first_line = message.strip().splitlines()[0]
         overlay.show_error(first_line)
         if len(message) > len(first_line):
-            self.tray.showMessage("Dikte", message, QSystemTrayIcon.MessageIcon.Warning, 8000)
+            self.tray.showMessage(
+                APP_DISPLAY_NAME, message,
+                QSystemTrayIcon.MessageIcon.Warning, 8000,
+            )
 
     # ---- settings ---------------------------------------------------------
 
@@ -817,8 +821,8 @@ class Dikte:
                 )
             except OSError as exc:
                 self.tray.showMessage(
-                    "Dikte",
-                    f"Dikte could not restart: {exc}",
+                    APP_DISPLAY_NAME,
+                    f"{APP_DISPLAY_NAME} could not restart: {exc}",
                     QSystemTrayIcon.MessageIcon.Warning,
                     8000,
                 )
@@ -1025,7 +1029,7 @@ def main():
         return 2
 
     app = QApplication(sys.argv)
-    app.setApplicationName("Dikte")
+    app.setApplicationName(APP_DISPLAY_NAME)
     app.setDesktopFileName("dikte")
     app.setQuitOnLastWindowClosed(False)
 

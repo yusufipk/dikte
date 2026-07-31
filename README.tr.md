@@ -1,4 +1,9 @@
-# Dikte
+# daakDİKTE
+
+**daakDİKTE, [Yusuf İpek'in açık kaynak Dikte
+projesinin](https://github.com/yusufipk/dikte) macOS uyarlamasıdır.** Orijinal
+yazar, proje ve GPL-3.0 lisansı açıkça belirtilmeye devam eder; yeni isim bu
+değiştirilmiş macOS sürümünü ayırır. Linux derlemesi özgün **Dikte** adını korur.
 
 `Ctrl+Space`'e bas, konuş, tekrar bas. Ses API anahtarı gerektirmeyen yerel
 whisper.cpp ile veya OpenAI/OpenRouter üzerinden yazıya çevrilir; sonuç panoya
@@ -11,7 +16,7 @@ kullanır.
 *[English README](README.md)*
 
 <p align="center">
-  <img src="docs/settings-general.webp" width="820" alt="Dikte ayarları, Genel sekmesi">
+  <img src="docs/settings-general.webp" width="820" alt="daakDİKTE ayarları, Genel sekmesi">
 </p>
 
 |  |  |
@@ -47,20 +52,20 @@ open dist
 klasörüne sürükle. İlk kayıtta Mikrofon
 izni, ilk otomatik yapıştırmada Erişilebilirlik izni sorulur. Otomatik
 açılmazsa **Sistem Ayarları → Gizlilik ve Güvenlik → Erişilebilirlik** altında
-Dikte'yi etkinleştir.
+daakDİKTE'yi etkinleştir.
 
-Dikte macOS menü çubuğunda **🎙️** simgesiyle çalışır. Başka bir hazır simgeyi
+daakDİKTE macOS menü çubuğunda **🎙️** simgesiyle çalışır. Başka bir hazır simgeyi
 **Ayarlar → Genel → Menü çubuğu emojisi** altında seçebilir, macOS'in diğer
 ikonlarına benzeyen tek renkli sistem mikrofonunu ya da canlı analog saati
 kullanabilir veya istediğin emojiyi yazabilirsin; ayarlar kaydedilince simge
 hemen değişir. Aynı sayfadaki
-**Oturum açtığımda Dikte'yi başlat** seçeneği varsayılan olarak açıktır. Dikte
+**Oturum açtığımda daakDİKTE'yi başlat** seçeneği varsayılan olarak açıktır. daakDİKTE
 ayrıca altı saatte bir GitHub Releases'ı denetler ve doğrulanmış yeni macOS
 derlemesini otomatik kurar. Bu davranışı kapatmak, kurulu sürümü görmek veya
 elle denetlemek için **Ayarlar → Genel → Güncellemeler** bölümünü kullan.
 İndirilen paketin GitHub'daki boyutu ve SHA-256 özeti, uygulama kimliği, gömülü
-sürümü ve macOS kod imzası doğrulanmadan Dikte değiştirilip yeniden başlatılmaz.
-Dikte boştayken simgeye tıklamak Ayarlar penceresini doğrudan açar. AppKit
+sürümü ve macOS kod imzası doğrulanmadan daakDİKTE değiştirilip yeniden başlatılmaz.
+daakDİKTE boştayken simgeye tıklamak Ayarlar penceresini doğrudan açar. AppKit
 açarken macOS 27'de çöken Qt yerel durum menüsü bu nedenle özellikle kullanılmaz.
 
 Resmî macOS sürümleri aynı Apple Development kimliğiyle imzalanır; böylece
@@ -84,7 +89,7 @@ transkript için temizlemeyi kapatabilirsin.
 
 Sesle soru sormak veya işlem yaptırmak için Ayarlar → Ajan sekmesi zaten giriş
 yaptığın `codex exec` ya da `claude -p` terminal oturumunu destekler. Ayrı bir
-API anahtarı yapıştırılmaz: Yerel Whisper sesi metne çevirir, Dikte metni seçilen
+API anahtarı yapıştırılmaz: Yerel Whisper sesi metne çevirir, daakDİKTE metni seçilen
 terminal aracına gönderir ve cevabı yapıştırır. Codex CLI ses dosyasını doğrudan
 girdi olarak kabul etmez.
 
@@ -109,8 +114,8 @@ Sesi yazıya çevirme ikisinden birinde, temizleme OpenRouter veya Codex CLI'da
 | Çık | Tepsi menüsü → *Çık*, ya da `dikte quit` |
 
 Ekranın köşesindeki gösterge kırmızı kayıt noktasını, canlı ses dalgasını ve
-süreyi, ardından hangi aşamada olduğunu gösterir. Odak almaz. Dikte çalışırken
-`Ctrl+Space`'e tekrar basmak bir şey yapmaz, sıraya da girmez. Dikte ile ajana
+süreyi, ardından hangi aşamada olduğunu gösterir. Odak almaz. daakDİKTE çalışırken
+`Ctrl+Space`'e tekrar basmak bir şey yapmaz, sıraya da girmez. daakDİKTE ile ajana
 verilen komut yalnızca mikrofon için birbirini bekler, o da tek aygıt olduğu
 için; başka hiçbir şeyde beklemezler. Her birinin kendi göstergesi var, ikisi
 birden ekrandayken ikincisi birincinin üstüne yerleşir.
@@ -137,10 +142,10 @@ birden ekrandayken ikincisi birincinin üstüne yerleşir.
   sonuç  Bugün Kubernetes üzerinde çalışan servisleri güncelledim. Sonra
          Grafana'da bir panel açtım ve PyQt ile arayüzü bitirdim.
   ```
-- **Başarısız temizleme sessizce geçmez.** Dikte kaybolmasın diye ham transkript
+- **Başarısız temizleme sessizce geçmez.** daakDİKTE kaybolmasın diye ham transkript
   yine yapıştırılır ama gösterge kehribar rengine döner ve nedenini söyler,
   normal bir çalışma gibi görünmez.
-- **Dikte bunun yerine bir komut da olabilir.** Kendi kısayolu transkripti
+- **daakDİKTE bunun yerine bir komut da olabilir.** Kendi kısayolu transkripti
   yapıştırmak yerine Claude Code'a (`claude -p`) gönderir ve oradan döneni
   yapıştırır: cevabı ya da ne yapıldığını söyleyen bir cümle. Kendi açacağın
   oturumun aynısıdır, yani skill'lerin ve bağlı servislerin oradadır; "bunu

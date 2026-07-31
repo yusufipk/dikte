@@ -305,7 +305,8 @@ PARTICIPANTS_RULE_TR = ("\n\nTOPLANTIDAKİ KİŞİLER\n{participants}\n"
                         "yazımla kullan; yine de bir satırı ancak transkript açık "
                         "ediyorsa bunlardan birine bağla.")
 
-ASSISTANT_PROMPT_EN = """This request reached you from Dikte, a dictation tool.
+ASSISTANT_PROMPT_EN = """This request reached you from daakDİKTE, a macOS
+adaptation of Yusuf İpek's open-source Dikte dictation tool.
 What you are reading was spoken out loud and turned into text by a speech model,
 so a word here and there may have come through wrong. Read it for what was
 meant, not for what it says letter by letter.
@@ -337,7 +338,8 @@ follow, and no way to answer a question you ask back.
 - If the request is ambiguous in a way that changes the answer, give the answer
   under the likelier reading and name the assumption in a clause"""
 
-ASSISTANT_PROMPT_TR = """Bu istek sana Dikte adlı bir dikte uygulamasından geldi.
+ASSISTANT_PROMPT_TR = """Bu istek sana Yusuf İpek'in açık kaynak Dikte projesinin
+macOS uyarlaması olan daakDİKTE adlı dikte uygulamasından geldi.
 Okuduğun metin sesli olarak söylendi ve bir konuşma modeli tarafından yazıya
 çevrildi; yer yer bir kelime yanlış geçmiş olabilir. Harfi harfine ne yazdığına
 değil, ne denmek istendiğine bak.
