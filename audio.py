@@ -11,6 +11,7 @@ import array
 import json
 import math
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -20,6 +21,7 @@ import wave
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+import platform_utils as plat
 from i18n import t
 
 RATE = 16000
@@ -34,6 +36,7 @@ class Recorder(QObject):
     """Runs pw-record as a child process and reads raw PCM from its stdout."""
 
     level = pyqtSignal(float)              # 0.0 - 1.0, for the waveform
+    started = pyqtSignal()                 # the first sample arrived
     stopped = pyqtSignal(str, float, object)  # wav path, duration (s), per-chunk RMS
     failed = pyqtSignal(str)
 
@@ -53,24 +56,50 @@ class Recorder(QObject):
     def start(self, target="", max_seconds=300):
         if self.active:
             return
-        if not shutil.which("pw-record"):
-            self.failed.emit(t("pw-record not found. Is pipewire-audio installed?"))
-            return
 
-        cmd = [
-            "pw-record",
-            "--raw",
-            f"--rate={RATE}",
-            f"--channels={CHANNELS}",
-            "--format=s16",
-        ]
-        if target:
-            cmd.append(f"--target={target}")
-        cmd.append("-")
+        if plat.IS_WINDOWS:
+            ffmpeg = shutil.which("ffmpeg")
+            if not ffmpeg:
+                self.failed.emit(t("ffmpeg not found. Install it to record audio."))
+                return
+            target = target or _win_default_input()
+            if not target:
+                self.failed.emit(t(
+                    "No microphone found. Check that one is plugged in and "
+                    "allowed under Windows Settings → Privacy → Microphone."
+                ))
+                return
+
+            cmd = [
+                ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error",
+                # DirectShow hands over a whole buffer at a time, and its
+                # default is a quarter of a second of one. Shortening it takes
+                # that much off the wait before the first sample arrives, which
+                # for something started by a key press is felt directly.
+                "-f", "dshow", "-audio_buffer_size", "50", "-i", f"audio={target}",
+                "-f", "s16le", "-ar", str(RATE), "-ac", str(CHANNELS), "-"
+            ]
+        else:
+            if not shutil.which("pw-record"):
+                self.failed.emit(t("pw-record not found. Is pipewire-audio installed?"))
+                return
+
+            pw_record = shutil.which("pw-record")
+            cmd = [
+                pw_record,
+                "--raw",
+                f"--rate={RATE}",
+                f"--channels={CHANNELS}",
+                "--format=s16",
+            ]
+            if target:
+                cmd.append(f"--target={target}")
+            cmd.append("-")
 
         try:
             self._proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0
+                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
+                **plat.no_window()
             )
         except OSError as exc:
             self.failed.emit(t("Could not start recording: {error}", error=exc))
@@ -85,11 +114,15 @@ class Recorder(QObject):
 
     def _pump(self):
         stdout = self._proc.stdout
+        opening = True
         try:
             while True:
                 chunk = stdout.read(CHUNK_BYTES)
                 if not chunk:
                     break
+                if opening:
+                    opening = False
+                    self.started.emit()
                 peak, rms = chunk_levels(chunk)
                 with self._lock:
                     self._buffer.extend(chunk)
@@ -106,13 +139,20 @@ class Recorder(QObject):
         proc = self._proc
         if proc and proc.poll() is None:
             try:
-                proc.send_signal(signal.SIGINT)
+                if plat.IS_WINDOWS:
+                    proc.terminate()
+                else:
+                    proc.send_signal(signal.SIGINT)
                 proc.wait(timeout=1.5)
             except (subprocess.TimeoutExpired, OSError):
                 try:
                     proc.kill()
                 except OSError:
                     pass
+            if proc.stdout:
+                proc.stdout.close()
+            if proc.stderr:
+                proc.stderr.close()
 
     def cancel(self):
         self._cancelled = True
@@ -195,25 +235,57 @@ class MeetingRecorder(QObject):
     def start(self, path, mic_target="", system_target="", max_seconds=14400):
         if self.active:
             return
-        if not shutil.which("ffmpeg"):
+        ffmpeg = shutil.which("ffmpeg")
+        if not ffmpeg:
             self.failed.emit(t("ffmpeg not found. Install it to record a meeting."))
             return
         if not system_target:
             system_target = default_monitor()
         if not system_target:
-            self.failed.emit(t("Could not work out which speaker output to record. "
-                               "Pick one in Settings → Meeting."))
+            # Windows only lets a program record the speakers through a
+            # loopback device the sound card has to offer, and most ship with
+            # it switched off. Say where the switch is rather than which
+            # setting is empty.
+            self.failed.emit(t(
+                "Windows has no device that records what the speakers are "
+                "playing. Turn on \"Stereo Mix\": right-click the speaker icon "
+                "→ Sound settings → More sound settings → Recording, "
+                "right-click in the list, show disabled devices, and enable it."
+            ) if plat.IS_WINDOWS else t(
+                "Could not work out which speaker output to record. "
+                "Pick one in Settings → Meeting."
+            ))
             return
+        if plat.IS_WINDOWS and not mic_target:
+            mic_target = _win_default_input()
+            if not mic_target:
+                self.failed.emit(t(
+                    "No microphone found. Check that one is plugged in and "
+                    "allowed under Windows Settings → Privacy → Microphone."
+                ))
+                return
 
         merge = (
             "[0:a]aresample={rate}:async=1,aformat=sample_fmts=s16:channel_layouts=mono[m];"
             "[1:a]aresample={rate}:async=1,aformat=sample_fmts=s16:channel_layouts=mono[s];"
             "[m][s]amerge=inputs=2[out]"
         ).format(rate=RATE)
-        cmd = [
-            "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error",
-            "-f", "pulse", "-thread_queue_size", "4096", "-i", mic_target or "default",
-            "-f", "pulse", "-thread_queue_size", "4096", "-i", system_target,
+
+        if plat.IS_WINDOWS:
+            inputs = [
+                "-f", "dshow", "-thread_queue_size", "4096",
+                "-audio_buffer_size", "80", "-i", f"audio={mic_target}",
+                "-f", "dshow", "-thread_queue_size", "4096",
+                "-audio_buffer_size", "80", "-i", f"audio={system_target}",
+            ]
+        else:
+            inputs = [
+                "-f", "pulse", "-thread_queue_size", "4096",
+                "-i", mic_target or "default",
+                "-f", "pulse", "-thread_queue_size", "4096",
+                "-i", system_target,
+            ]
+        cmd = [ffmpeg, "-hide_banner", "-nostdin", "-loglevel", "error"] + inputs + [
             "-filter_complex", merge, "-map", "[out]",
             "-f", "s16le", "-ar", str(RATE), "-",
         ]
@@ -228,7 +300,8 @@ class MeetingRecorder(QObject):
             # nobody drains would eventually block it, so it writes to a file.
             self._log = tempfile.TemporaryFile()
             self._proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=self._log, bufsize=0
+                cmd, stdout=subprocess.PIPE, stderr=self._log, bufsize=0,
+                **plat.no_window()
             )
         except (OSError, wave.Error) as exc:
             self._close_file()
@@ -280,7 +353,10 @@ class MeetingRecorder(QObject):
         proc = self._proc
         if proc and proc.poll() is None:
             try:
-                proc.send_signal(signal.SIGINT)
+                if plat.IS_WINDOWS:
+                    proc.terminate()
+                else:
+                    proc.send_signal(signal.SIGINT)
                 proc.wait(timeout=2)
             except (subprocess.TimeoutExpired, OSError):
                 try:
@@ -394,6 +470,9 @@ def _peak(samples):
 
 
 def _sources():
+    if plat.IS_WINDOWS:
+        return [{"name": open_name, "description": friendly}
+                for open_name, friendly in _win_audio_devices()]
     if not shutil.which("pactl"):
         return []
     try:
@@ -406,13 +485,26 @@ def _sources():
         return []
 
 
+def refresh_devices():
+    """Forget the remembered device list, so the next question asks the system."""
+    if plat.IS_WINDOWS:
+        _win_audio_devices(refresh=True)
+
+
+def _pairs(sources):
+    return [(src.get("name", ""), src.get("description") or src.get("name", ""))
+            for src in sources]
+
+
 def list_sources():
     """[(name, description)] for every real input source."""
-    return [
-        (src.get("name", ""), src.get("description") or src.get("name", ""))
-        for src in _sources()
-        if not src.get("name", "").endswith(".monitor")
-    ]
+    if plat.IS_WINDOWS:
+        # A loopback belongs under "what the speakers are playing", not under
+        # microphones, even though DirectShow lists the two together.
+        return [(name, description) for name, description in _pairs(_sources())
+                if not _is_loopback(name, description)]
+    return [(name, description) for name, description in _pairs(_sources())
+            if not name.endswith(".monitor")]
 
 
 def list_monitors():
@@ -421,15 +513,18 @@ def list_monitors():
     Recording a monitor is recording whatever is being played, which in a
     meeting is the other participants and nothing of your own microphone.
     """
-    return [
-        (src.get("name", ""), src.get("description") or src.get("name", ""))
-        for src in _sources()
-        if src.get("name", "").endswith(".monitor")
-    ]
+    if plat.IS_WINDOWS:
+        return [(name, description) for name, description in _pairs(_sources())
+                if _is_loopback(name, description)]
+    return [(name, description) for name, description in _pairs(_sources())
+            if name.endswith(".monitor")]
 
 
 def default_monitor():
     """The monitor of the output sound is currently going to, or ''."""
+    if plat.IS_WINDOWS:
+        monitors = list_monitors()
+        return monitors[0][0] if monitors else ""
     if not shutil.which("pactl"):
         return ""
     try:
@@ -444,3 +539,112 @@ def default_monitor():
     monitor = f"{sink}.monitor"
     names = {name for name, _ in list_monitors()}
     return monitor if not names or monitor in names else ""
+
+
+# --- Windows devices ------------------------------------------------------
+#
+# DirectShow is the only capture interface ffmpeg has on Windows, and it names
+# devices in the language Windows is installed in. Two things follow. A device
+# is opened by its "alternative name" — the GUID line ffmpeg prints under each
+# one — because friendly names longer than about 80 characters come back
+# truncated and then cannot be opened at all. And a loopback of the speakers
+# exists only if the sound card exposes one ("Stereo Mix", "Stereomix",
+# "Was Sie hören"), which most laptops ship with disabled.
+
+# Recording the speakers rather than the microphone. Matched case-insensitively
+# against both the friendly name and the driver's own, so a Turkish or German
+# Windows finds its own wording too.
+LOOPBACK_TERMS = (
+    "stereo mix", "stereomix", "stereo karışım", "stereo karisim",
+    "loopback", "what u hear", "what you hear", "wave out", "wave-out",
+    "was sie hören", "mezcla estéreo", "virtual-audio-capturer", "cable output",
+    "voicemeeter output", "vb-audio",
+)
+
+_win_device_cache = None
+
+
+def _win_audio_devices(refresh=False):
+    """[(open_name, friendly_name)] for every DirectShow audio device.
+
+    Listing them costs an ffmpeg process, and the settings window asks three
+    times over while it builds; the answer only changes when hardware is
+    plugged in, so it is remembered until something asks for it fresh.
+    """
+    global _win_device_cache  # pylint: disable=global-statement
+    if _win_device_cache is not None and not refresh:
+        return _win_device_cache
+
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        return []
+    try:
+        res = subprocess.run(
+            [ffmpeg, "-hide_banner", "-list_devices", "true",
+             "-f", "dshow", "-i", "dummy"],
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=15, check=False, **plat.no_window(),
+        )
+    except (subprocess.SubprocessError, OSError):
+        return []
+
+    _win_device_cache = _parse_dshow_devices(res.stderr or "")
+    return _win_device_cache
+
+
+def _parse_dshow_devices(text):
+    """[(open_name, friendly_name)] out of what `-list_devices` printed.
+
+    Newer ffmpeg tags each device "(audio)" or "(video)"; older builds print
+    them under a "DirectShow audio devices" heading instead, so both are read.
+    """
+    devices = []
+    section = ""       # what the last heading said these devices are
+    pending = ""       # a friendly name still waiting for its alternative name
+
+    def flush():
+        # No alternative name was printed, so the friendly one has to serve as
+        # both. That is what older ffmpeg does for some drivers.
+        nonlocal pending
+        if pending:
+            devices.append((pending, pending))
+            pending = ""
+
+    for line in text.splitlines():
+        stripped = re.sub(r"^\[[^\]]*\]\s*", "", line).strip()
+
+        heading = re.match(r"DirectShow (audio|video) devices", stripped)
+        if heading:
+            flush()
+            section = heading.group(1)
+            continue
+
+        alternative = re.match(r'Alternative name\s+"(.+)"$', stripped)
+        if alternative:
+            if pending:
+                devices.append((alternative.group(1), pending))
+                pending = ""
+            continue
+
+        named = re.match(r'"(.+?)"(?:\s+\((audio|video)\))?$', stripped)
+        if not named:
+            continue
+        flush()
+        kind = named.group(2) or section
+        if kind == "audio":
+            pending = named.group(1)
+
+    flush()
+    return devices
+
+
+def _is_loopback(*names):
+    return any(term in name.lower() for name in names if name for term in LOOPBACK_TERMS)
+
+
+def _win_default_input():
+    """The microphone to record when none was chosen, or ''."""
+    for open_name, friendly in _win_audio_devices():
+        if not _is_loopback(open_name, friendly):
+            return open_name
+    return ""

@@ -1,25 +1,30 @@
-"""Settings storage in ~/.config/dikte/config.json"""
+"""Settings storage: ~/.config/dikte/config.json, or %APPDATA%\\Dikte on Windows."""
 
 import hashlib
 import json
 import os
-import pathlib
 
 import api
 import i18n
+import platform_utils as plat
 
 
-def _xdg(var, default):
-    return pathlib.Path(os.environ.get(var) or os.path.expanduser(default))
-
-
-CONFIG_DIR = _xdg("XDG_CONFIG_HOME", "~/.config") / "dikte"
+CONFIG_DIR = plat.get_config_dir()
 CONFIG_FILE = CONFIG_DIR / "config.json"
-DATA_DIR = _xdg("XDG_DATA_HOME", "~/.local/share") / "dikte"
+DATA_DIR = plat.get_data_dir()
 HISTORY_FILE = DATA_DIR / "history.jsonl"
 RECORDINGS_DIR = DATA_DIR / "recordings"
 MEETINGS_DIR = DATA_DIR / "meetings"
 MEETINGS_FILE = DATA_DIR / "meetings.jsonl"
+
+# Ctrl+Space is the natural key for this and is what Linux uses, but on Windows
+# it belongs to the input-method switcher — the one that changes keyboard layout
+# — and RegisterHotKey will not hand it over. A layout switch is exactly the
+# kind of thing a bilingual user presses all day, so it is not a fight worth
+# picking: Windows gets the next combination along.
+LINUX_SHORTCUT = "Ctrl+Space"
+WINDOWS_SHORTCUT = "Ctrl+Shift+Space"
+DEFAULT_SHORTCUT = WINDOWS_SHORTCUT if plat.IS_WINDOWS else LINUX_SHORTCUT
 
 CLEANUP_PROMPT_EN = """You clean up dictation transcripts. You are given the raw
 text of something spoken out loud. Make it readable with MINIMAL interference.
@@ -384,8 +389,10 @@ DEFAULTS = {
     "speech_margin_db": 10.0,     # how far speech must rise above the noise floor
     "min_voiced_seconds": 0.3,
     "filter_hallucinations": True,
-    "shortcut": "Ctrl+Space",
-    "evdev_hotkey": False,
+    "shortcut": DEFAULT_SHORTCUT,
+    # Windows has no installation step to wait on: RegisterHotKey is the only
+    # route there is, so the listener is on from the first run.
+    "evdev_hotkey": plat.IS_WINDOWS,
     "overlay_corner": "bottom-left",
     "keep_audio": False,
     "history_limit": 200,
@@ -464,6 +471,11 @@ class Config:
         self.data["overlay_corner"] = _CORNER_MIGRATION.get(
             self.data["overlay_corner"], self.data["overlay_corner"]
         )
+        # A config written before the Windows default moved, or carried over
+        # from a Linux machine, still holds a combination Windows will not give
+        # out. Untouched means it was never chosen, so it can be moved along.
+        if plat.IS_WINDOWS and self.data["shortcut"] == LINUX_SHORTCUT:
+            self.data["shortcut"] = WINDOWS_SHORTCUT
         stored_prompt = self.data["cleanup_prompt"].strip()
         if stored_prompt and _fingerprint(stored_prompt) in LEGACY_PROMPTS:
             self.data["cleanup_prompt"] = ""
@@ -474,7 +486,9 @@ class Config:
         tmp = CONFIG_FILE.with_suffix(".json.tmp")
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(self.data, fh, ensure_ascii=False, indent=2)
-        os.chmod(tmp, 0o600)
+        # The file holds API keys. Windows has no mode bits worth setting here;
+        # the per-user AppData directory is the protection instead.
+        plat.safe_chmod(tmp, 0o600)
         tmp.replace(CONFIG_FILE)
         i18n.set_language(self.data["ui_language"])
 

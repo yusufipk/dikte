@@ -24,13 +24,13 @@ while they work.
 
 import json
 import os
-import shutil
 import subprocess
 import threading
 import time
 
 import api
 import config as cfg
+import platform_utils as plat
 from i18n import t
 
 SESSION_FILE = cfg.DATA_DIR / "assistant.json"
@@ -96,6 +96,12 @@ def provider(conf):
 def executable(name):
     """The CLI a provider runs, or "" when it needs none."""
     return {"claude": "claude", "codex": "codex"}.get(name, "")
+
+
+def executable_path(name):
+    """The argv prefix that starts a provider's CLI, or [] when it is absent."""
+    binary = executable(name)
+    return plat.resolve_binary(binary) if binary else []
 
 
 def display_name(conf):
@@ -186,11 +192,11 @@ def ask(prompt, conf, on_stage=None, should_stop=None):
     if name == "openrouter":
         return _ask_openrouter(prompt, conf, on_stage)
 
-    binary = executable(name)
-    if not shutil.which(binary):
+    argv = executable_path(name)
+    if not argv:
         raise AssistantError(t(
             "{binary} not found. Install it, or pick another provider under "
-            "Settings → Agent.", binary=binary,
+            "Settings → Agent.", binary=executable(name),
         ))
 
     run = _ask_claude if name == "claude" else _ask_codex
@@ -212,8 +218,8 @@ class _SessionGone(Exception):
 # --- Claude Code ----------------------------------------------------------
 
 def _ask_claude(prompt, conf, session, on_stage, should_stop):
-    cmd = [
-        "claude", "-p", prompt,
+    cmd = executable_path("claude") + [
+        "-p", prompt,
         "--output-format", "stream-json", "--verbose",
         "--model", conf["assistant_model"],
         "--permission-mode", conf["assistant_permission_mode"],
@@ -288,7 +294,8 @@ def _ask_codex(prompt, conf, session, on_stage, should_stop):
     if effort:
         settings += ["-c", f'model_reasoning_effort="{effort}"']
 
-    cmd = (["codex", "exec", "resume", session] if session else ["codex", "exec"])
+    codex = executable_path("codex")
+    cmd = codex + (["exec", "resume", session] if session else ["exec"])
     cmd += settings + [body]
 
     found = {"answer": "", "warning": "", "session": "", "failure": ""}
@@ -365,10 +372,11 @@ def _stream(cmd, conf, on_event, should_stop):
             cmd, cwd=working_dir(conf), stdin=subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, encoding="utf-8", errors="replace", bufsize=1,
+            **plat.no_window()
         )
     except OSError as exc:
         raise AssistantError(t("Could not run {binary}: {error}",
-                               binary=cmd[0], error=exc)) from exc
+                               binary=os.path.basename(cmd[0]), error=exc)) from exc
 
     # Reading the stream blocks between lines, and a model that thinks for a
     # minute sends none. So the clock and the stop button are watched from the

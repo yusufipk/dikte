@@ -54,7 +54,8 @@ class Pipeline(QObject):
             return
         self._stop.clear()
         self._thread = threading.Thread(
-            target=self._work, args=(wav_path, duration, list(rms_values), ask),
+            target=self._work, args=(
+                wav_path, duration, list(rms_values), ask),
             daemon=True,
         )
         self._thread.start()
@@ -76,12 +77,14 @@ class Pipeline(QObject):
         # Room tone only: don't spend an API call, and don't invite a
         # hallucinated sentence back.
         if conf["skip_silent"]:
-            stats = vad.analyse(rms_values, CHUNK_SECONDS, conf["speech_margin_db"])
+            stats = vad.analyse(rms_values, CHUNK_SECONDS,
+                                conf["speech_margin_db"])
             if vad.is_silent(stats, conf["silence_db"], conf["speech_margin_db"],
                              conf["min_voiced_seconds"]):
                 self._discard(wav_path)
                 self.failed.emit(
-                    t("No speech detected ({level} dB)", level=round(stats["speech_db"]))
+                    t("No speech detected ({level} dB)",
+                      level=round(stats["speech_db"]))
                 )
                 return
 
@@ -97,7 +100,8 @@ class Pipeline(QObject):
 
             if conf["filter_hallucinations"] and vad.looks_like_hallucination(raw, duration):
                 self._discard(wav_path)
-                self.failed.emit(t("Discarded a stock phrase: “{text}”", text=raw[:60]))
+                self.failed.emit(
+                    t("Discarded a stock phrase: “{phrase}”", phrase=raw[:60]))
                 return
 
             text = raw
@@ -136,7 +140,8 @@ class Pipeline(QObject):
                 warning = "\n".join(x for x in (warning, denied) if x)
 
             with _paste_lock:
-                previous = paste.read_clipboard() if conf["restore_clipboard"] else None
+                previous = paste.read_clipboard(
+                ) if conf["restore_clipboard"] else None
                 paste.copy(text)
 
                 if (conf["assistant_paste"] if ask else conf["auto_paste"]):
@@ -162,7 +167,8 @@ class Pipeline(QObject):
             try:
                 cfg.trim_history(conf["history_limit"])
             except OSError as exc:
-                print(f"dikte: could not trim the history: {exc}", file=sys.stderr)
+                print(
+                    f"dikte: could not trim the history: {exc}", file=sys.stderr)
             self.finished.emit(raw, text, warning)
 
         except assistant.Cancelled:
@@ -182,7 +188,8 @@ class Pipeline(QObject):
         if self.conf["keep_audio"]:
             try:
                 cfg.RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
-                shutil.move(wav_path, cfg.RECORDINGS_DIR / (time.strftime("%Y%m%d-%H%M%S") + ".wav"))
+                shutil.move(wav_path, cfg.RECORDINGS_DIR /
+                            (time.strftime("%Y%m%d-%H%M%S") + ".wav"))
                 return
             except OSError:
                 pass

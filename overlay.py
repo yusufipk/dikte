@@ -1,6 +1,7 @@
 """The small recording indicator that appears in a screen corner without taking focus."""
 
 import math
+import sys
 
 from PyQt6.QtCore import Qt, QTimer, QRectF, QPointF
 from PyQt6.QtGui import QColor, QCursor, QFont, QPainter, QPainterPath, QPen, QFontMetrics
@@ -54,13 +55,15 @@ class Overlay(QWidget):
         self._phase = 0.0
         self._concealed = True
 
-        self.setWindowFlags(
+        flags = (
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
             | Qt.WindowType.Tool
             | Qt.WindowType.WindowDoesNotAcceptFocus
-            | Qt.WindowType.X11BypassWindowManagerHint
         )
+        if sys.platform != 'win32':
+            flags |= Qt.WindowType.X11BypassWindowManagerHint
+        self.setWindowFlags(flags)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         # One that can be clicked away has to receive the click, which means it

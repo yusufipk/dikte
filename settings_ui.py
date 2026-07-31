@@ -1,7 +1,6 @@
 """Settings window."""
 
 import os
-import shutil
 import threading
 
 from PyQt6.QtCore import Qt, QUrl, pyqtSignal
@@ -20,10 +19,12 @@ import config as cfg
 import filetranscribe
 import hotkey
 import meeting
+import platform_utils as plat
 from filetranscribe import FileTranscriber
 from i18n import t
 
-UI_LANGUAGES = [("Automatic (system)", "auto"), ("Turkish", "tr"), ("English", "en")]
+UI_LANGUAGES = [("Automatic (system)", "auto"),
+                ("Turkish", "tr"), ("English", "en")]
 LANGUAGES = [
     ("Detect automatically", "auto"), ("Turkish", "tr"), ("English", "en"),
     ("German", "de"), ("French", "fr"), ("Spanish", "es"), ("Arabic", "ar"),
@@ -99,6 +100,13 @@ SHORTCUTS = [
     "Meta+A", "Meta+D", "Meta+M",
     "Ctrl+Alt+F1", "Ctrl+Alt+F2", "Ctrl+Alt+F3",
 ]
+if plat.IS_WINDOWS:
+    # Windows keeps these for itself: Ctrl+Space and Ctrl+Alt+Space switch the
+    # keyboard layout, and Meta+anything is the Start menu's. Offering them
+    # would only be offering a registration that fails.
+    SHORTCUTS = [combo for combo in SHORTCUTS
+                 if combo not in ("Ctrl+Space", "Ctrl+Alt+Space")
+                 and not combo.startswith("Meta+")]
 AUDIO_FILTER = ("*.mp3 *.wav *.m4a *.ogg *.opus *.flac *.aac *.wma "
                 "*.mp4 *.mkv *.webm *.mov *.avi")
 
@@ -127,6 +135,11 @@ class SettingsWindow(QDialog):
         self.setWindowTitle(t("Dikte Settings"))
         self.resize(680, 640)
 
+        # Three tabs below ask for the device list, and on Windows each answer
+        # costs an ffmpeg process. Pay for it once, here, where a microphone
+        # plugged in since the last time the window opened is picked up.
+        audio.refresh_devices()
+
         tabs = QTabWidget(self)
         tabs.addTab(self._general_tab(), t("General"))
         tabs.addTab(self._api_tab(), t("API and models"))
@@ -150,7 +163,8 @@ class SettingsWindow(QDialog):
         layout.addWidget(buttons)
 
         self._models_loaded.connect(self._on_models_loaded)
-        self._transcribe_models_loaded.connect(self._on_transcribe_models_loaded)
+        self._transcribe_models_loaded.connect(
+            self._on_transcribe_models_loaded)
         self._test_done.connect(self._on_test_done)
         self._or_test_done.connect(self._on_or_test_done)
         self.transcriber.progress.connect(self._on_file_progress)
@@ -187,7 +201,8 @@ class SettingsWindow(QDialog):
             self.language.addItem(t(label), code)
         form.addRow(t("Speech language"), self.language)
 
-        self.auto_paste = QCheckBox(t("Paste the text into the focused window"))
+        self.auto_paste = QCheckBox(
+            t("Paste the text into the focused window"))
         form.addRow("", self.auto_paste)
 
         self.paste_shortcut = QComboBox()
@@ -197,7 +212,8 @@ class SettingsWindow(QDialog):
         )
         form.addRow(t("Paste key"), self.paste_shortcut)
 
-        self.restore_clipboard = QCheckBox(t("Restore the previous clipboard after pasting"))
+        self.restore_clipboard = QCheckBox(
+            t("Restore the previous clipboard after pasting"))
         form.addRow("", self.restore_clipboard)
 
         self.corner = QComboBox()
@@ -210,7 +226,8 @@ class SettingsWindow(QDialog):
         self.max_seconds.setSuffix(t(" s"))
         form.addRow(t("Longest recording"), self.max_seconds)
 
-        self.skip_silent = QCheckBox(t("Skip silent recordings (don't call the API)"))
+        self.skip_silent = QCheckBox(
+            t("Skip silent recordings (don't call the API)"))
         form.addRow("", self.skip_silent)
 
         self.silence_db = QSpinBox()
@@ -232,7 +249,9 @@ class SettingsWindow(QDialog):
         )
         form.addRow("", self.filter_hallucinations)
 
-        self.keep_audio = QCheckBox(t("Keep audio files (~/.local/share/dikte/recordings)"))
+        self.keep_audio = QCheckBox(
+            t("Keep audio files ({path})", path=str(cfg.RECORDINGS_DIR))
+        )
         form.addRow("", self.keep_audio)
         return page
 
@@ -246,22 +265,26 @@ class SettingsWindow(QDialog):
         keys_form = QFormLayout(keys)
         self.openai_key = QLineEdit()
         self.openai_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self.openai_key.setPlaceholderText(t("sk-… (falls back to OPENAI_API_KEY)"))
+        self.openai_key.setPlaceholderText(
+            t("sk-… (falls back to OPENAI_API_KEY)"))
         self.test_button = QPushButton(t("Test"))
         self.test_button.clicked.connect(self._test_openai)
         self.test_label = QLabel("")
         self.test_label.setWordWrap(True)
-        keys_form.addRow("OpenAI", self._row(self.openai_key, self.test_button))
+        keys_form.addRow("OpenAI", self._row(
+            self.openai_key, self.test_button))
         keys_form.addRow("", self.test_label)
 
         self.openrouter_key = QLineEdit()
         self.openrouter_key.setEchoMode(QLineEdit.EchoMode.Password)
-        self.openrouter_key.setPlaceholderText(t("sk-or-… (falls back to OPENROUTER_API_KEY)"))
+        self.openrouter_key.setPlaceholderText(
+            t("sk-or-… (falls back to OPENROUTER_API_KEY)"))
         self.or_test_button = QPushButton(t("Test"))
         self.or_test_button.clicked.connect(self._test_openrouter)
         self.or_test_label = QLabel("")
         self.or_test_label.setWordWrap(True)
-        keys_form.addRow("OpenRouter", self._row(self.openrouter_key, self.or_test_button))
+        keys_form.addRow("OpenRouter", self._row(
+            self.openrouter_key, self.or_test_button))
         keys_form.addRow("", self.or_test_label)
         outer.addWidget(keys)
 
@@ -275,7 +298,8 @@ class SettingsWindow(QDialog):
         self.transcribe_model = QComboBox()
         self.transcribe_model.setEditable(True)
         self.refresh_transcribe_models = QPushButton(t("Fetch model list"))
-        self.refresh_transcribe_models.clicked.connect(self._load_transcribe_models)
+        self.refresh_transcribe_models.clicked.connect(
+            self._load_transcribe_models)
         stt_form.addRow(t("Model"),
                         self._row(self.transcribe_model, self.refresh_transcribe_models))
         # A spanning row: in the narrow field column a wrapped label gets a
@@ -283,12 +307,14 @@ class SettingsWindow(QDialog):
         self.transcribe_status = QLabel("")
         self.transcribe_status.setWordWrap(True)
         stt_form.addRow(self.transcribe_status)
-        self.transcribe_provider.currentIndexChanged.connect(self._provider_changed)
+        self.transcribe_provider.currentIndexChanged.connect(
+            self._provider_changed)
         outer.addWidget(stt)
 
         orr = QGroupBox(t("Transcript cleanup"))
         orr_form = QFormLayout(orr)
-        self.cleanup_enabled = QCheckBox(t("Clean the transcript with a model"))
+        self.cleanup_enabled = QCheckBox(
+            t("Clean the transcript with a model"))
         orr_form.addRow("", self.cleanup_enabled)
 
         self.cleanup_model = QComboBox()
@@ -296,7 +322,8 @@ class SettingsWindow(QDialog):
         self.cleanup_model.addItems(CLEANUP_MODELS)
         self.refresh_models = QPushButton(t("Fetch model list"))
         self.refresh_models.clicked.connect(self._load_models)
-        orr_form.addRow(t("Model"), self._row(self.cleanup_model, self.refresh_models))
+        orr_form.addRow(t("Model"), self._row(
+            self.cleanup_model, self.refresh_models))
 
         self.cleanup_reasoning = QComboBox()
         for label, value in REASONING_LEVELS:
@@ -368,12 +395,15 @@ class SettingsWindow(QDialog):
         how = QGroupBox(t("How it runs"))
         how_form = QFormLayout(how)
         self.assistant_shortcut = self._shortcut_box(t("none"))
-        install = QPushButton(t("Install as a KDE shortcut"))
-        install.clicked.connect(self._install_ask_shortcut)
-        remove = QPushButton(t("Remove"))
-        remove.clicked.connect(self._remove_ask_shortcut)
-        how_form.addRow(t("Shortcut"),
-                        self._row(self.assistant_shortcut, install, remove))
+        if not plat.IS_WINDOWS:
+            install = QPushButton(t("Install as a KDE shortcut"))
+            install.clicked.connect(self._install_ask_shortcut)
+            remove = QPushButton(t("Remove"))
+            remove.clicked.connect(self._remove_ask_shortcut)
+            how_form.addRow(t("Shortcut"),
+                            self._row(self.assistant_shortcut, install, remove))
+        else:
+            how_form.addRow(t("Shortcut"), self.assistant_shortcut)
         self.assistant_shortcut_status = QLabel("")
         self.assistant_shortcut_status.setWordWrap(True)
         how_form.addRow(self.assistant_shortcut_status)
@@ -478,7 +508,8 @@ class SettingsWindow(QDialog):
         self.assistant_session_minutes = QSpinBox()
         self.assistant_session_minutes.setRange(0, 1440)
         self.assistant_session_minutes.setSuffix(t(" min"))
-        self.assistant_session_minutes.setSpecialValueText(t("every command on its own"))
+        self.assistant_session_minutes.setSpecialValueText(
+            t("every command on its own"))
         thread_form.addRow(t("Carry on for"), self.assistant_session_minutes)
         thread_note = QLabel(t(
             "Commands within this long of each other are one conversation, so "
@@ -501,7 +532,8 @@ class SettingsWindow(QDialog):
             "It is copied to the clipboard either way."
         ))
         answer_form.addRow("", self.assistant_paste)
-        self.assistant_cleanup = QCheckBox(t("Clean the transcript up before sending it"))
+        self.assistant_cleanup = QCheckBox(
+            t("Clean the transcript up before sending it"))
         self.assistant_cleanup.setToolTip(t(
             "Off by default: Claude reads through “erm” and “you know” without "
             "help, and cleanup costs an API call and a second or two."
@@ -520,7 +552,8 @@ class SettingsWindow(QDialog):
         layout.addWidget(self.assistant_prompt, 1)
         reset_prompt = QPushButton(t("Reset to default"))
         reset_prompt.clicked.connect(
-            lambda: self.assistant_prompt.setPlainText(cfg.default_assistant_prompt())
+            lambda: self.assistant_prompt.setPlainText(
+                cfg.default_assistant_prompt())
         )
         layout.addWidget(reset_prompt, 0, Qt.AlignmentFlag.AlignRight)
 
@@ -630,18 +663,22 @@ class SettingsWindow(QDialog):
         recording_form.addRow("", self.meeting_keep_audio)
 
         self.meeting_shortcut = self._shortcut_box(t("none"))
-        install = QPushButton(t("Install as a KDE shortcut"))
-        install.clicked.connect(self._install_meeting_shortcut)
-        remove = QPushButton(t("Remove"))
-        remove.clicked.connect(self._remove_meeting_shortcut)
-        recording_form.addRow(t("Shortcut"),
-                              self._row(self.meeting_shortcut, install, remove))
+        if not plat.IS_WINDOWS:
+            install = QPushButton(t("Install as a KDE shortcut"))
+            install.clicked.connect(self._install_meeting_shortcut)
+            remove = QPushButton(t("Remove"))
+            remove.clicked.connect(self._remove_meeting_shortcut)
+            recording_form.addRow(t("Shortcut"),
+                                  self._row(self.meeting_shortcut, install, remove))
+        else:
+            recording_form.addRow(t("Shortcut"), self.meeting_shortcut)
         self.meeting_shortcut_status = QLabel("")
         self.meeting_shortcut_status.setWordWrap(True)
         recording_form.addRow(self.meeting_shortcut_status)
         layout.addWidget(recording)
 
-        prompt_label = QLabel(t("System instruction given to the minutes model."))
+        prompt_label = QLabel(
+            t("System instruction given to the minutes model."))
         prompt_label.setWordWrap(True)
         layout.addWidget(prompt_label)
         self.meeting_prompt = QPlainTextEdit()
@@ -649,7 +686,8 @@ class SettingsWindow(QDialog):
         layout.addWidget(self.meeting_prompt, 1)
         reset = QPushButton(t("Reset to default"))
         reset.clicked.connect(
-            lambda: self.meeting_prompt.setPlainText(cfg.default_meeting_prompt())
+            lambda: self.meeting_prompt.setPlainText(
+                cfg.default_meeting_prompt())
         )
         layout.addWidget(reset, 0, Qt.AlignmentFlag.AlignRight)
 
@@ -710,7 +748,8 @@ class SettingsWindow(QDialog):
     def _file_tab(self):
         page = QWidget()
         layout = QVBoxLayout(page)
-        intro = QLabel(t("Transcribe an existing audio or video file with the same models."))
+        intro = QLabel(
+            t("Transcribe an existing audio or video file with the same models."))
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
@@ -780,43 +819,60 @@ class SettingsWindow(QDialog):
         page = QWidget()
         layout = QVBoxLayout(page)
         form = QFormLayout()
-        self.shortcut = self._shortcut_box("Ctrl+Space")
+        self.shortcut = self._shortcut_box(cfg.DEFAULT_SHORTCUT)
         form.addRow(t("Shortcut"), self.shortcut)
         layout.addLayout(form)
 
-        install = QPushButton(t("Install as a KDE shortcut"))
-        install.clicked.connect(self._install_shortcut)
-        remove = QPushButton(t("Remove"))
-        remove.clicked.connect(self._remove_shortcut)
-        row = QHBoxLayout()
-        row.addWidget(install)
-        row.addWidget(remove)
-        row.addStretch(1)
-        layout.addLayout(row)
+        if not plat.IS_WINDOWS:
+            install = QPushButton(t("Install as a KDE shortcut"))
+            install.clicked.connect(self._install_shortcut)
+            remove = QPushButton(t("Remove"))
+            remove.clicked.connect(self._remove_shortcut)
+            row = QHBoxLayout()
+            row.addWidget(install)
+            row.addWidget(remove)
+            row.addStretch(1)
+            layout.addLayout(row)
 
         self.shortcut_status = QLabel("")
         self.shortcut_status.setWordWrap(True)
         layout.addWidget(self.shortcut_status)
 
-        self.evdev_enabled = QCheckBox(t(
-            "Use the built-in listener (/dev/input), for when the KDE shortcut is "
-            "not active yet"
-        ))
-        self.evdev_enabled.setToolTip(t(
-            "Works immediately, no session restart. The only difference: the key "
-            "combination also reaches the focused application."
-        ))
+        self.evdev_enabled = QCheckBox(
+            t("Use the built-in global hotkey listener") if plat.IS_WINDOWS else
+            t("Use the built-in listener (/dev/input), for when the KDE shortcut is "
+              "not active yet")
+        )
+        self.evdev_enabled.setToolTip(
+            t("Windows reserves the combination for Dikte while it runs, so the "
+              "focused application never sees it.") if plat.IS_WINDOWS else
+            t("Works immediately, no session restart. The only difference: the key "
+              "combination also reaches the focused application.")
+        )
         layout.addWidget(self.evdev_enabled)
 
-        note = QLabel(t(
-            "KWin only reads shortcut settings at startup. After 'Install' the "
-            "shortcut shows up under System Settings → Shortcuts, but it will not "
-            "fire until you log out and back in. Until then, use the built-in listener."
-        ))
-        note.setWordWrap(True)
-        layout.addWidget(note)
+        if plat.IS_WINDOWS:
+            # Nothing here is installed anywhere, so the three status lines are
+            # only ever as true as the boxes above them.
+            self.evdev_enabled.toggled.connect(self._refresh_all_shortcut_status)
+            for box in (self.shortcut, self.meeting_shortcut,
+                        self.assistant_shortcut):
+                box.currentTextChanged.connect(self._refresh_all_shortcut_status)
+        else:
+            note = QLabel(t(
+                "KWin only reads shortcut settings at startup. After 'Install' the "
+                "shortcut shows up under System Settings → Shortcuts, but it will not "
+                "fire until you log out and back in. Until then, use the built-in listener."
+            ))
+            note.setWordWrap(True)
+            layout.addWidget(note)
         layout.addStretch(1)
         return page
+
+    def _refresh_all_shortcut_status(self, *_):
+        self._refresh_shortcut_status()
+        self._refresh_meeting_shortcut_status()
+        self._refresh_ask_shortcut_status()
 
     def _history_tab(self):
         page = QWidget()
@@ -826,7 +882,8 @@ class SettingsWindow(QDialog):
         self.history.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection
         )
-        self.history.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.history.setContextMenuPolicy(
+            Qt.ContextMenuPolicy.CustomContextMenu)
         self.history.customContextMenuRequested.connect(self._history_menu)
         delete_key = QShortcut(QKeySequence.StandardKey.Delete, self.history)
         delete_key.setContext(Qt.ShortcutContext.WidgetShortcut)
@@ -924,12 +981,14 @@ class SettingsWindow(QDialog):
         self._models = {"openai": conf["transcribe_model"],
                         "openrouter": conf["openrouter_transcribe_model"]}
         self._shown_provider = ""
-        self._select_data(self.transcribe_provider, conf["transcribe_provider"])
+        self._select_data(self.transcribe_provider,
+                          conf["transcribe_provider"])
         self._provider_changed()  # selecting index 0 fires no signal
         self.cleanup_enabled.setChecked(conf["cleanup_enabled"])
         self.cleanup_model.setCurrentText(conf["cleanup_model"])
         self._select_data(self.cleanup_reasoning, conf["cleanup_reasoning"])
-        self.cleanup_prompt.setPlainText(conf["cleanup_prompt"] or cfg.default_cleanup_prompt())
+        self.cleanup_prompt.setPlainText(
+            conf["cleanup_prompt"] or cfg.default_cleanup_prompt())
         self.file_cleanup_prompt.setPlainText(
             conf["file_cleanup_prompt"] or cfg.default_file_cleanup_prompt()
         )
@@ -938,15 +997,21 @@ class SettingsWindow(QDialog):
         self.assistant_shortcut.setCurrentText(conf["assistant_shortcut"])
         self._select_data(self.assistant_provider, conf["assistant_provider"])
         self.assistant_model.setCurrentText(conf["assistant_model"])
-        self._select_data(self.assistant_permission, conf["assistant_permission_mode"])
-        self.assistant_codex_model.setCurrentText(conf["assistant_codex_model"])
-        self._select_data(self.assistant_codex_sandbox, conf["assistant_codex_sandbox"])
-        self.assistant_openrouter_model.setCurrentText(conf["assistant_openrouter_model"])
+        self._select_data(self.assistant_permission,
+                          conf["assistant_permission_mode"])
+        self.assistant_codex_model.setCurrentText(
+            conf["assistant_codex_model"])
+        self._select_data(self.assistant_codex_sandbox,
+                          conf["assistant_codex_sandbox"])
+        self.assistant_openrouter_model.setCurrentText(
+            conf["assistant_openrouter_model"])
         self._assistant_provider_changed()  # selecting index 0 fires no signal
-        self._select_data(self.assistant_reasoning, conf["assistant_reasoning"])
+        self._select_data(self.assistant_reasoning,
+                          conf["assistant_reasoning"])
         self.assistant_dir.setText(conf["assistant_dir"])
         self.assistant_timeout.setValue(int(conf["assistant_timeout"]))
-        self.assistant_session_minutes.setValue(int(conf["assistant_session_minutes"]))
+        self.assistant_session_minutes.setValue(
+            int(conf["assistant_session_minutes"]))
         self.assistant_paste.setChecked(conf["assistant_paste"])
         self.assistant_cleanup.setChecked(conf["assistant_cleanup"])
         self.assistant_prompt.setPlainText(
@@ -962,7 +1027,8 @@ class SettingsWindow(QDialog):
         self._select_data(self.meeting_reasoning, conf["meeting_reasoning"])
         self._select_data(self.meeting_language, conf["meeting_language"])
         self.meeting_cleanup.setChecked(conf["meeting_cleanup"])
-        self.meeting_max_minutes.setValue(max(5, int(conf["meeting_max_seconds"]) // 60))
+        self.meeting_max_minutes.setValue(
+            max(5, int(conf["meeting_max_seconds"]) // 60))
         self.meeting_keep_audio.setChecked(conf["meeting_keep_audio"])
         self.meeting_shortcut.setCurrentText(conf["meeting_shortcut"])
         self.meeting_prompt.setPlainText(
@@ -1071,7 +1137,7 @@ class SettingsWindow(QDialog):
         conf["file_timestamps"] = self.file_timestamps.isChecked()
         conf["file_cleanup"] = self.file_cleanup.isChecked()
 
-        conf["shortcut"] = self.shortcut.currentText().strip() or "Ctrl+Space"
+        conf["shortcut"] = self.shortcut.currentText().strip() or cfg.DEFAULT_SHORTCUT
         conf["evdev_hotkey"] = self.evdev_enabled.isChecked()
         conf["history_limit"] = self.history_limit.value()
         conf.save()
@@ -1082,7 +1148,8 @@ class SettingsWindow(QDialog):
             print(f"dikte: could not trim the history ({exc})")
         self._load_history()  # the trim may just have dropped rows from the list
         self.applied.emit()
-        QMessageBox.information(self, t("Dikte Settings"), t("Saved successfully."))
+        QMessageBox.information(
+            self, t("Dikte Settings"), t("Saved successfully."))
 
     @staticmethod
     def _select_data(combo, value):
@@ -1094,7 +1161,8 @@ class SettingsWindow(QDialog):
     def _provider_changed(self):
         """Swap the model box over to the newly chosen provider's own model."""
         if self._shown_provider:
-            self._models[self._shown_provider] = self.transcribe_model.currentText().strip()
+            self._models[self._shown_provider] = self.transcribe_model.currentText(
+            ).strip()
         provider = self.transcribe_provider.currentData() or "openai"
         self._shown_provider = provider
         self.transcribe_model.clear()
@@ -1125,13 +1193,15 @@ class SettingsWindow(QDialog):
     def _on_transcribe_models_loaded(self, models, error):
         self.refresh_transcribe_models.setEnabled(True)
         if error:
-            self.transcribe_status.setText(t("Could not fetch the list: {error}", error=error))
+            self.transcribe_status.setText(
+                t("Could not fetch the list: {error}", error=error))
             return
         current = self.transcribe_model.currentText()
         self.transcribe_model.clear()
         self.transcribe_model.addItems(models)
         self.transcribe_model.setCurrentText(current)
-        self.transcribe_status.setText(t("{count} models loaded.", count=len(models)))
+        self.transcribe_status.setText(
+            t("{count} models loaded.", count=len(models)))
 
     def _load_models(self):
         self.refresh_models.setEnabled(False)
@@ -1149,14 +1219,16 @@ class SettingsWindow(QDialog):
     def _on_models_loaded(self, models, error):
         self.refresh_models.setEnabled(True)
         if error:
-            self.models_label.setText(t("Could not fetch the list: {error}", error=error))
+            self.models_label.setText(
+                t("Could not fetch the list: {error}", error=error))
             return
         for combo in (self.cleanup_model, self.meeting_model):
             current = combo.currentText()
             combo.clear()
             combo.addItems(models)
             combo.setCurrentText(current)
-        self.models_label.setText(t("{count} models loaded.", count=len(models)))
+        self.models_label.setText(
+            t("{count} models loaded.", count=len(models)))
 
     def _test_openai(self):
         self.test_button.setEnabled(False)
@@ -1168,7 +1240,8 @@ class SettingsWindow(QDialog):
             try:
                 models = api.openai_models(key, base)
                 self._test_done.emit(
-                    True, t("Connection works. {count} audio models visible.", count=len(models))
+                    True, t(
+                        "Connection works. {count} audio models visible.", count=len(models))
                 )
             except api.ApiError as exc:
                 self._test_done.emit(False, str(exc))
@@ -1233,7 +1306,8 @@ class SettingsWindow(QDialog):
         self.file_output.setPlainText(text)
         self.file_segments = segments
         self.file_save_srt.setEnabled(bool(segments))
-        self.file_status.setText(t("Done: {chars} characters.", chars=len(text)))
+        self.file_status.setText(
+            t("Done: {chars} characters.", chars=len(text)))
         self._file_idle()
 
     def _on_file_failed(self, error):
@@ -1252,14 +1326,16 @@ class SettingsWindow(QDialog):
         srt = filetranscribe.to_srt(self.file_output.toPlainText(),
                                     getattr(self, "file_segments", []))
         if not srt:
-            self.file_status.setText(t("No timestamped lines to turn into subtitles."))
+            self.file_status.setText(
+                t("No timestamped lines to turn into subtitles."))
             return
         self._write_transcript(srt, ".srt", f"{t('Subtitle files')} (*.srt)")
 
     def _write_transcript(self, text, suffix, file_filter):
         if not text:
             return
-        base = os.path.splitext(os.path.basename(getattr(self, "file_path", "")))[0]
+        base = os.path.splitext(os.path.basename(
+            getattr(self, "file_path", "")))[0]
         start = os.path.join(self.conf["file_last_dir"] or os.path.expanduser("~"),
                              f"{base or 'transcript'}{suffix}")
         path, _ = QFileDialog.getSaveFileName(
@@ -1279,7 +1355,7 @@ class SettingsWindow(QDialog):
     # ---- shortcut --------------------------------------------------------
 
     def _install_shortcut(self):
-        combo = self.shortcut.currentText().strip() or "Ctrl+Space"
+        combo = self.shortcut.currentText().strip() or cfg.DEFAULT_SHORTCUT
         clashes = hotkey.conflicting_shortcuts(combo)
         if clashes:
             answer = QMessageBox.question(
@@ -1301,11 +1377,24 @@ class SettingsWindow(QDialog):
         self._refresh_shortcut_status()
 
     def _refresh_shortcut_status(self):
+        if plat.IS_WINDOWS:
+            combo = self.shortcut.currentText().strip()
+            self.shortcut_status.setText(self._windows_shortcut_status(combo))
+            return
         current = hotkey.kde_shortcut_status()
         self.shortcut_status.setText(
             t("Registered in KDE: {shortcut}", shortcut=current) if current
             else t("No KDE shortcut installed.")
         )
+
+    def _windows_shortcut_status(self, combo, idle=""):
+        """On Windows there is nothing to install: the listener owns the key."""
+        if not combo:
+            return idle or t("No shortcut set. The tray menu does the same job.")
+        if not self.evdev_enabled.isChecked():
+            return t("{shortcut} will do nothing until the global hotkey "
+                     "listener below is turned on.", shortcut=combo)
+        return t("{shortcut} is live as soon as you save.", shortcut=combo)
 
     def _install_meeting_shortcut(self):
         combo = self.meeting_shortcut.currentText().strip()
@@ -1313,7 +1402,8 @@ class SettingsWindow(QDialog):
             QMessageBox.information(self, t("Shortcut"),
                                     t("Type a key combination first."))
             return
-        clashes = hotkey.conflicting_shortcuts(combo, hotkey.MEETING_DESKTOP_ID)
+        clashes = hotkey.conflicting_shortcuts(
+            combo, hotkey.MEETING_DESKTOP_ID)
         if clashes:
             answer = QMessageBox.question(
                 self, t("Shortcut conflict"),
@@ -1337,6 +1427,12 @@ class SettingsWindow(QDialog):
         self._refresh_meeting_shortcut_status()
 
     def _refresh_meeting_shortcut_status(self):
+        if plat.IS_WINDOWS:
+            self.meeting_shortcut_status.setText(self._windows_shortcut_status(
+                self.meeting_shortcut.currentText().strip(),
+                idle=t("No shortcut set. The tray menu starts a meeting too."),
+            ))
+            return
         current = hotkey.kde_shortcut_status(hotkey.MEETING_DESKTOP_ID)
         self.meeting_shortcut_status.setText(
             t("Registered in KDE: {shortcut}", shortcut=current) if current
@@ -1375,6 +1471,12 @@ class SettingsWindow(QDialog):
         self._refresh_ask_shortcut_status()
 
     def _refresh_ask_shortcut_status(self):
+        if plat.IS_WINDOWS:
+            self.assistant_shortcut_status.setText(self._windows_shortcut_status(
+                self.assistant_shortcut.currentText().strip(),
+                idle=t("No shortcut set. The tray menu asks it too."),
+            ))
+            return
         current = hotkey.kde_shortcut_status(hotkey.ASK_DESKTOP_ID)
         self.assistant_shortcut_status.setText(
             t("Registered in KDE: {shortcut}", shortcut=current) if current
@@ -1391,7 +1493,8 @@ class SettingsWindow(QDialog):
     def _refresh_assistant_status(self):
         provider = self.assistant_provider.currentData() or "claude"
         binary = assistant.executable(provider)
-        found = shutil.which(binary) if binary else ""
+        argv = assistant.executable_path(provider)
+        found = argv[-1] if argv else ""
         if not binary:
             self.assistant_found.setText(
                 t("Needs no program installed, only the OpenRouter key.")
@@ -1452,14 +1555,16 @@ class SettingsWindow(QDialog):
             return
         doc_path, _wav = cfg.meeting_paths(row["base"])
         try:
-            self.minutes_view.setPlainText(doc_path.read_text(encoding="utf-8"))
+            self.minutes_view.setPlainText(
+                doc_path.read_text(encoding="utf-8"))
         except OSError:
             self.minutes_view.setPlainText(
                 row.get("error") or t("Nothing has been written yet.")
             )
         busy = self.meetings is not None and self.meetings.busy
         self.minutes_retry.setEnabled(
-            self.meetings is not None and not busy and row.get("status") != "done"
+            self.meetings is not None and not busy and row.get(
+                "status") != "done"
         )
 
     def _retry_minutes(self):
@@ -1487,7 +1592,8 @@ class SettingsWindow(QDialog):
         try:
             cfg.delete_meetings([row["base"]])
         except OSError as exc:
-            QMessageBox.warning(self, t("Minutes"), t("Failed: {error}", error=exc))
+            QMessageBox.warning(self, t("Minutes"), t(
+                "Failed: {error}", error=exc))
         self._load_minutes()
 
     def _on_minutes_progress(self, _base, message):
@@ -1513,7 +1619,8 @@ class SettingsWindow(QDialog):
             if row.get("mode") == "ask":
                 # The text of an answer says nothing about what was asked, and
                 # out of that context half of them read like non sequiturs.
-                asked = (row.get("question") or row.get("raw") or "").replace("\n", " ")
+                asked = (row.get("question") or row.get(
+                    "raw") or "").replace("\n", " ")
                 header += t("  ·  asked Claude: {question}",
                             question=asked[:60] + ("…" if len(asked) > 60 else ""))
             item = QListWidgetItem(f"{header}\n{preview}")
@@ -1563,7 +1670,8 @@ class SettingsWindow(QDialog):
         try:
             action()
         except OSError as exc:
-            QMessageBox.warning(self, t("History"), t("Failed: {error}", error=exc))
+            QMessageBox.warning(self, t("History"), t(
+                "Failed: {error}", error=exc))
         self._load_history()
 
     def _history_menu(self, pos):

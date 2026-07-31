@@ -4,18 +4,14 @@ Source strings are English; Turkish translations live in the TR table below.
 No gettext, no .mo files; the string table is small enough to keep in code.
 """
 
-import os
+from platform_utils import resolve_locale
 
 _lang = "en"
 
 
 def resolve(code):
-    """'auto' -> language guessed from the locale environment."""
-    if code in ("tr", "en"):
-        return code
-    env = (os.environ.get("LC_ALL") or os.environ.get("LC_MESSAGES")
-           or os.environ.get("LANG") or "")
-    return "tr" if env.lower().startswith("tr") else "en"
+    """'auto' -> the language the system is set to."""
+    return resolve_locale(code)
 
 
 def set_language(code):
@@ -83,7 +79,8 @@ TR = {
         "Her tuşa basışı ikiye katlıyordu.",
     "No speech detected": "Ses algılanmadı",
     "No speech detected ({level} dB)": "Ses algılanmadı ({level} dB)",
-    "Discarded a stock phrase: “{text}”": "Kalıp cümle atıldı: “{text}”",
+    "Discarded a stock phrase: “{phrase}”": "Kalıp cümle atıldı: “{phrase}”",
+    "Opening the microphone…": "Mikrofon açılıyor…",
     "Discard stock phrases models invent for near-silent audio":
         "Sessize yakın seste modelin uydurduğu kalıp cümleleri at",
     "Whisper answers silence with things like “Thanks for watching”.":
@@ -111,6 +108,30 @@ TR = {
     "Could not run ydotool: {error}": "ydotool çalıştırılamadı: {error}",
     "ydotool failed: {error}\nIs ydotoold running? (systemctl --user status ydotool)":
         "ydotool hatası: {error}\nydotoold çalışıyor mu? (systemctl --user status ydotool)",
+
+    # --- audio / paste errors: Windows ---------------------------------
+    "ffmpeg not found. Install it to record audio.":
+        "ffmpeg bulunamadı. Ses kaydı için kur.",
+    "No microphone found. Check that one is plugged in and allowed under "
+    "Windows Settings → Privacy → Microphone.":
+        "Mikrofon bulunamadı. Takılı olduğundan ve Windows Ayarlar → Gizlilik → "
+        "Mikrofon altında izinli olduğundan emin ol.",
+    "Windows has no device that records what the speakers are playing. Turn "
+    "on \"Stereo Mix\": right-click the speaker icon → Sound settings → More "
+    "sound settings → Recording, right-click in the list, show disabled "
+    "devices, and enable it.":
+        "Windows'ta hoparlörden çıkanı kaydeden bir cihaz yok. \"Stereo Mix\"i "
+        "aç: hoparlör simgesine sağ tıkla → Ses ayarları → Diğer ses ayarları → "
+        "Kayıt sekmesi, listede sağ tıklayıp devre dışı cihazları göster ve "
+        "etkinleştir.",
+    "Could not open clipboard.": "Pano açılamadı.",
+    "Could not allocate memory for clipboard.": "Pano için bellek ayrılamadı.",
+    "Could not lock clipboard memory.": "Pano belleği kilitlenemedi.",
+    "Could not set clipboard data.": "Pano içeriği yazılamadı.",
+    "Windows blocked the paste. The focused window is probably running as "
+    "administrator; press {shortcut} yourself, the text is on the clipboard.":
+        "Windows yapıştırmayı engelledi. Odaktaki pencere büyük ihtimalle "
+        "yönetici olarak çalışıyor; {shortcut} tuşuna kendin bas, metin panoda.",
 
     # --- api errors ----------------------------------------------------
     "{service} API key is empty. Add it in Settings.":
@@ -160,8 +181,7 @@ TR = {
     "Skip silent recordings (don't call the API)":
         "Sessiz kayıtları atla (API'ye gönderme)",
     "Silence threshold": "Sessizlik eşiği",
-    "Keep audio files (~/.local/share/dikte/recordings)":
-        "Ses kayıtlarını sakla (~/.local/share/dikte/recordings)",
+    "Keep audio files ({path})": "Ses kayıtlarını sakla ({path})",
 
     # --- settings: api --------------------------------------------------
     "Keys": "Anahtarlar",
@@ -296,6 +316,33 @@ TR = {
     "  sudo usermod -aG input $USER   (then log out and back in)":
         "/dev/input okunamıyor. Kullanıcının 'input' grubunda olması gerekir:\n"
         "  sudo usermod -aG input $USER   (sonra oturumu yeniden aç)",
+
+    # --- settings: shortcut, Windows ----------------------------------------
+    "Not available on Windows": "Windows'ta kullanılamaz",
+    "kwriteconfig6 not found, so the shortcut could not be registered with KDE.":
+        "kwriteconfig6 bulunamadı, kısayol KDE'ye kaydedilemedi.",
+    "{shortcut} is already taken by another program, so Dikte cannot use it. "
+    "Pick a different combination.":
+        "{shortcut} başka bir program tarafından kullanılıyor, Dikte bunu "
+        "alamıyor. Başka bir kombinasyon seç.",
+    "Use the built-in global hotkey listener":
+        "Yerleşik global kısayol dinleyicisini kullan",
+    "Windows reserves the combination for Dikte while it runs, so the focused "
+    "application never sees it.":
+        "Dikte çalışırken Windows kombinasyonu ona ayırır, odaktaki uygulama "
+        "tuşu hiç görmez.",
+    "{shortcut} is live as soon as you save.":
+        "{shortcut} kaydeder kaydetmez çalışır.",
+    "{shortcut} will do nothing until the global hotkey listener below is "
+    "turned on.":
+        "Aşağıdaki global kısayol dinleyicisi açılmadan {shortcut} hiçbir şey "
+        "yapmaz.",
+    "No shortcut set. The tray menu does the same job.":
+        "Kısayol atanmamış. Tepsi menüsü de aynı işi görür.",
+    "No shortcut set. The tray menu starts a meeting too.":
+        "Kısayol atanmamış. Toplantıyı tepsi menüsünden de başlatabilirsin.",
+    "No shortcut set. The tray menu asks it too.":
+        "Kısayol atanmamış. Tepsi menüsünden de sorabilirsin.",
 
     # --- settings: history --------------------------------------------------
     "Copy selected to clipboard": "Seçiliyi panoya kopyala",

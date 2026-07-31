@@ -1,12 +1,12 @@
 # Dikte
 
-`Ctrl+Space`'e bas, konuş, tekrar bas. Ses OpenAI'ye ya da OpenRouter'a gidip
+`Ctrl+Space`'e (Windows'ta `Ctrl+Shift+Space`) bas, konuş, tekrar bas. Ses OpenAI'ye ya da OpenRouter'a gidip
 yazıya çevrilir, OpenRouter'daki bir model transkripti temizler (ıı'lar,
 tekrarlar, eksik noktalama), sonuç panoya kopyalanır ve o an yazdığın pencereye
 yapıştırılır.
 
-KDE Plasma 6 / Wayland için yazıldı. Sistem paketleri dışında bağımlılığı yok:
-sadece Python standart kütüphanesi ve PyQt6.
+KDE Plasma 6 / Wayland ve Windows 10/11 için yazıldı. Sistem paketleri dışında
+bağımlılığı yok: sadece Python standart kütüphanesi, PyQt6 ve FFmpeg.
 
 *[English README](README.md)*
 
@@ -21,6 +21,8 @@ sadece Python standart kütüphanesi ve PyQt6.
 
 ## Kurulum
 
+### Linux (Wayland/KDE)
+
 ```sh
 sudo pacman -S --needed pipewire-audio wl-clipboard ydotool ffmpeg python-pyqt6
 systemctl --user enable --now ydotool     # otomatik yapıştırma için
@@ -31,6 +33,27 @@ dikte                        # ilk açılışta ayarlar penceresi gelir
 
 `install.sh` `dikte` komutunu, menü girdisini, oturum açılışında otomatik
 başlatmayı ve KDE kısayolunu kurar.
+
+### Windows
+
+1. [Python 3](https://www.python.org/downloads/) ve FFmpeg
+   (`winget install Gyan.FFmpeg`) kur. İkisi de `PATH` üzerinde olmalı; FFmpeg
+   olmadan Dikte hiç kayıt alamaz.
+2. Bu klasördeki `install.ps1` dosyasına sağ tıklayıp **PowerShell ile Çalıştır**
+   seçeneğini seç. PyQt6'yı kurar, Başlat menüsü ve açılış kısayollarını oluşturur.
+3. Dikte'yi Başlat menüsünden aç. İlk açılışta ayarlar penceresi gelir.
+
+Kısayol `Ctrl+Space` değil `Ctrl+Shift+Space`, çünkü Windows `Ctrl+Space`'i
+klavye düzeni değiştirmek için kendine ayırır ve bırakmaz. Windows'un zaten
+tuttuğu bir kombinasyon kabul edilmez; Dikte hiçbir şey yapmayan bir tuş
+bağlamak yerine bunu tepsi bildirimiyle söyler.
+
+Burada iki şey farklı çalışır. Mikrofonu DirectShow üzerinden açmak yaklaşık bir
+saniye sürdüğü için gösterge, ilk ses gelene kadar *Mikrofon açılıyor…* der —
+sayaç da kayda giren de oradan başlar. Toplantı kaydı ise hoparlörden çıkanı
+yakalayan bir cihaz ister: *Ses ayarları → Diğer ses ayarları → Kayıt* altında
+**Stereo Mix**'i aç (önce listeye sağ tıklayıp devre dışı cihazları göster) ya da
+sanal ses kablosu kur. Diktenin kendisi bunların hiçbirine ihtiyaç duymaz.
 
 Ayarlar penceresinde iki anahtar istenir: **OpenAI** ve **OpenRouter**. Sesi
 yazıya çevirme ikisinden birinde çalışır (varsayılan `gpt-4o-transcribe`),
@@ -44,7 +67,7 @@ yapıştırılır; modelin yanındaki kutudan düşünme seviyesini de seçebili
 
 | Ne | Nasıl |
 | --- | --- |
-| Kaydı başlat / bitir | `Ctrl+Space`, ya da tepsi simgesine tıkla |
+| Kaydı başlat / bitir | `Ctrl+Space` (Windows'ta `Ctrl+Shift+Space`), ya da tepsi simgesine tıkla |
 | Kaydı iptal et | Tepsi menüsü → *Kaydı iptal et*, ya da `dikte cancel` |
 | Ajana sesle komut ver | Tepsi menüsü → *Claude'a sor*, ya da `dikte ask` |
 | Toplantıyı başlat / bitir | Tepsi menüsü → *Toplantı kaydet*, ya da `dikte meeting` |
@@ -110,7 +133,7 @@ birden ekrandayken ikincisi birincinin üstüne yerleşir.
   silebilirsin.
 - **Türkçe ve İngilizce arayüz**, varsayılan olarak sistem dilini izler.
 
-## Global kısayol için bir kez oturum kapatmak gerekir
+## Global kısayol için bir kez oturum kapatmak gerekir (yalnızca Linux)
 
 KWin `kglobalshortcutsrc` dosyasını yalnızca açılışta okur, yani `install.sh`'ın
 yazdığı kısayol oturumu yeniden açana kadar tetiklenmez. O zamana kadar Ayarlar →
@@ -118,6 +141,11 @@ Kısayol → **yerleşik dinleyici** `/dev/input` üzerinden kombinasyonu kendis
 yakalar. Tek farkı: tuşu yutmaz, yani `Ctrl+Space` odaktaki uygulamaya da iletilir
 (bazı editörlerde otomatik tamamlama açılabilir). Dinleyici kullanıcının `input`
 grubunda olmasını gerektirir: `sudo usermod -aG input $USER`.
+
+Windows'ta böyle bir bekleme yok: kısayol `RegisterHotKey` ile anında kaydedilir
+ve tuşu yutar, odaktaki uygulama görmez. Karşılığında, Windows'un kendine ayırdığı
+bir kombinasyon hiç verilmez — `Ctrl+Space` (klavye düzeni) ve `Win+H` (Windows
+dikte) bunlardan. Böyle bir durumda Dikte tepsiden uyarır.
 
 ## Dosyalar
 
@@ -133,7 +161,8 @@ filetranscribe.py dosyadan transkript: ffmpeg, parçalama, zaman damgaları
 overlay.py        köşedeki gösterge
 settings_ui.py    ayarlar penceresi
 hotkey.py         KDE kısayol kurulumu ve evdev dinleyici
-paste.py          wl-clipboard ve ydotool sarmalayıcıları
+paste.py          pano ve tuş gönderimi: wl-clipboard/ydotool, Windows'ta Win32
+platform_utils.py  platform farkları: dizinler, dil, konsolsuz alt süreç
 i18n.py           metin tablosu
 ```
 

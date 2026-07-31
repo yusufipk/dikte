@@ -1,12 +1,12 @@
 # Dikte
 
-Press `Ctrl+Space`, talk, press again. The recording goes to OpenAI or OpenRouter
-for transcription, a model on OpenRouter cleans it up (dropping the *uh*s, the
+Press `Ctrl+Space` (`Ctrl+Shift+Space` on Windows), talk, press again. The
+recording goes to OpenAI or OpenRouter for transcription, a model on OpenRouter cleans it up (dropping the *uh*s, the
 restarts, the missing punctuation), and the result lands in your clipboard and
 is pasted into whatever window you were typing in.
 
-Built for KDE Plasma 6 on Wayland. No dependencies beyond system packages:
-just the Python standard library and PyQt6.
+Built for KDE Plasma 6 on Wayland, and for Windows 10/11. No dependencies
+beyond system packages: just the Python standard library, PyQt6 and FFmpeg.
 
 *[Türkçe README](README.tr.md)*
 
@@ -21,6 +21,8 @@ just the Python standard library and PyQt6.
 
 ## Install
 
+### Linux (Wayland/KDE)
+
 ```sh
 sudo pacman -S --needed pipewire-audio wl-clipboard ydotool ffmpeg python-pyqt6
 systemctl --user enable --now ydotool     # needed for auto-paste
@@ -31,6 +33,28 @@ dikte                        # the settings window opens on first run
 
 `install.sh` adds the `dikte` command, a menu entry, an autostart entry and the
 KDE shortcut.
+
+### Windows
+
+1. Install [Python 3](https://www.python.org/downloads/) and FFmpeg
+   (`winget install Gyan.FFmpeg`). Both must be on your `PATH`; without FFmpeg
+   Dikte cannot record at all.
+2. Right-click `install.ps1` in this folder and choose **Run with PowerShell**.
+   It installs PyQt6 and creates a Start Menu and a startup shortcut.
+3. Launch Dikte from the Start Menu. The settings window opens on the first run.
+
+The shortcut is `Ctrl+Shift+Space` rather than `Ctrl+Space`, because Windows
+keeps `Ctrl+Space` for switching keyboard layout and will not give it up. Any
+combination Windows has already taken is refused outright, and Dikte says so in
+a tray message rather than binding a key that does nothing.
+
+Two things work differently here. Opening the microphone through DirectShow
+takes about a second, so the indicator says *Opening the microphone…* until the
+first sample lands — the clock starts there, and so does what gets recorded.
+And recording a meeting needs a device that captures what the speakers are
+playing: turn on **Stereo Mix** under *Sound settings → More sound settings →
+Recording* (right-click the list and show disabled devices first), or install a
+virtual audio cable. Dictation itself needs none of this.
 
 Two keys go in the settings window: **OpenAI** and **OpenRouter**. Speech to text
 runs on either one (`gpt-4o-transcribe` by default), cleanup always on
@@ -44,7 +68,7 @@ set next to it.
 
 | What | How |
 | --- | --- |
-| Start / stop recording | `Ctrl+Space`, or click the tray icon |
+| Start / stop recording | `Ctrl+Space` (`Ctrl+Shift+Space` on Windows), or click the tray icon |
 | Cancel a recording | Tray menu → *Cancel recording*, or `dikte cancel` |
 | Speak a command to an agent | Tray menu → *Ask Claude*, or `dikte ask` |
 | Start / end a meeting | Tray menu → *Record a meeting*, or `dikte meeting` |
@@ -112,7 +136,7 @@ second one stacks above the first while both are up.
   right-click to delete.
 - **Turkish and English interface**, following the system locale by default.
 
-## The global shortcut needs one logout
+## The global shortcut needs one logout (Linux only)
 
 KWin only reads `kglobalshortcutsrc` at startup, so the shortcut `install.sh`
 writes will not fire until you log out and back in. Until then, Settings →
@@ -120,6 +144,12 @@ Shortcut → **built-in listener** reads `/dev/input` and catches the combinatio
 itself. The difference: it does not swallow the key, so `Ctrl+Space` also reaches
 the focused application (some editors will pop up autocomplete). The listener
 needs your user in the `input` group: `sudo usermod -aG input $USER`.
+
+Windows has no such wait: the shortcut is registered through `RegisterHotKey`
+the moment you save, and it does swallow the key, so the focused application
+never sees it. The trade is that a combination Windows has kept for itself is
+never handed over — `Ctrl+Space` (keyboard layout) and `Win+H` (Windows' own
+dictation) among them. Dikte says so in a tray message when that happens.
 
 ## Layout
 
@@ -134,13 +164,16 @@ vad.py            deciding whether a recording holds speech at all
 filetranscribe.py file transcription: ffmpeg, chunking, timestamps
 overlay.py        the corner indicator
 settings_ui.py    settings window
-hotkey.py         KDE shortcut installation and the evdev listener
-paste.py          wl-clipboard and ydotool wrappers
+hotkey.py         KDE shortcut and evdev listener, or RegisterHotKey on Windows
+paste.py          clipboard and key injection: wl-clipboard/ydotool, or Win32
+platform_utils.py what the two platforms disagree on: paths, locale, subprocess
 i18n.py           the string table
 ```
 
 The indicator is drawn through XWayland, because a Wayland client cannot place a
-window in a screen corner; `dikte.py` sets `QT_QPA_PLATFORM=xcb` for that.
+window in a screen corner; `dikte.py` sets `QT_QPA_PLATFORM=xcb` for that. On
+Windows it is an ordinary always-on-top tool window, and `dikte.py` hands itself
+over to `pythonw.exe` so that no console comes up behind the tray icon.
 
 ## License
 

@@ -15,16 +15,41 @@ Usage:
   dikte.py quit          shut the application down
 """
 
+import math
 import os
+import shutil
+import subprocess
 import sys
+
+import platform_utils as plat
+
+
+def relaunch_without_console():
+    """Hand over to pythonw.exe, which has no console to show. True if it did.
+
+    A console window flashing up behind a tray application is noise, and under
+    python.exe it stays for as long as the program runs. Done from main()
+    rather than on import, so that importing this module — a test, a tool —
+    does not quietly spawn a second copy of the program.
+    """
+    if not plat.IS_WINDOWS or sys.executable.lower().endswith("pythonw.exe"):
+        return False
+    pythonw = sys.executable.replace("python.exe", "pythonw.exe")
+    if not os.path.exists(pythonw):
+        pythonw = shutil.which("pythonw.exe")
+    if not pythonw:
+        return False
+    subprocess.Popen([pythonw, os.path.abspath(__file__)] + sys.argv[1:],
+                     creationflags=plat.NO_WINDOW)
+    return True
+
 
 # A Wayland client cannot place a window in a screen corner, so the indicator
 # is drawn through XWayland.
-if os.environ.get("XDG_SESSION_TYPE") == "wayland" and os.environ.get("DISPLAY"):
-    os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
+plat.setup_qt_platform()
 
-from PyQt6.QtCore import QTimer, QElapsedTimer  # noqa: E402
-from PyQt6.QtGui import QAction, QIcon  # noqa: E402
+from PyQt6.QtCore import Qt, QTimer, QElapsedTimer  # noqa: E402
+from PyQt6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap  # noqa: E402
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon  # noqa: E402
 
@@ -40,8 +65,22 @@ from overlay import Overlay  # noqa: E402
 from settings_ui import SettingsWindow  # noqa: E402
 from worker import Pipeline  # noqa: E402
 
-SERVER_NAME = "dikte-" + str(os.getuid())
+SERVER_NAME = plat.get_server_name()
+
+def _asset(*parts):
+    """A file that ships with the program, or "" when it does not."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), *parts)
+    return path if os.path.exists(path) else ""
+
+
+ICON_ICO = _asset("docs", "icon.ico")
+ICON_PNG = _asset("docs", "icon.png")
+
 IDLE, RECORDING, BUSY = "idle", "recording", "busy"
+# Whether opening the microphone is slow enough to be worth telling the user
+# about. pw-record is ready in a few milliseconds; DirectShow takes over a
+# second, every time, and there is no way around it from out here.
+OPENS_SLOWLY = plat.IS_WINDOWS
 # Dictation and a command for the agent are two runs of the same machinery, kept
 # apart so that neither waits on the other: an agent can spend a minute thinking,
 # and having dictation blocked for that minute is the whole problem. They share
@@ -86,9 +125,10 @@ class Dikte:
         self.ask_pipeline = Pipeline(self.conf)
         self.meeting_recorder = audio.MeetingRecorder()
         self.meetings = MeetingPipeline(self.conf)
-        self.evdev = hotkey.EvdevHotkey()
+        self.evdev = hotkey.create_hotkey_listener()
 
         self.recorder.level.connect(self._on_level)
+        self.recorder.started.connect(self._on_recording_started)
         self.recorder.stopped.connect(self._on_recorded)
         self.recorder.failed.connect(self._on_recorder_error)
         self.pipeline.stage.connect(self.overlay.show_busy)
@@ -118,6 +158,11 @@ class Dikte:
         self.meeting_ticker = QTimer()
         self.meeting_ticker.setInterval(500)
         self.meeting_ticker.timeout.connect(self._meeting_tick)
+
+        self.tray_anim = QTimer()
+        self.tray_anim.setInterval(100)
+        self.tray_anim.timeout.connect(self._tray_tick)
+        self._tray_phase = 0.0
 
         self.tray = QSystemTrayIcon()
         self._apply_settings()
@@ -194,10 +239,52 @@ class Dikte:
             self._toggle()
 
     def _set_icon(self, name):
+        if name == "dikte-icon" and ICON_ICO:
+            self.tray.setIcon(QIcon(ICON_ICO))
+            return
+
         icon = QIcon.fromTheme(name)
         if icon.isNull():
-            icon = QIcon.fromTheme("audio-input-microphone")
+            # Windows ships no icon theme, so the three states are drawn here
+            # rather than looked up.
+            icon = self._drawn_icon(name) if plat.IS_WINDOWS \
+                else QIcon.fromTheme("audio-input-microphone")
         self.tray.setIcon(icon)
+
+    def _drawn_icon(self, name):
+        """A microphone in the colour of the state, pulsing while it records."""
+        colours = {"media-record": QColor(255, 60, 60),
+                   "view-refresh": QColor(60, 150, 255)}
+        base_color = colours.get(name, QColor(200, 200, 200))
+
+        pixmap = QPixmap(32, 32)
+        pixmap.fill(QColor(0, 0, 0, 0))
+        painter = QPainter(pixmap)
+        try:
+            painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+            if name == "media-record" and (self.recording
+                                           or self.meeting_state == M_RECORDING):
+                pulse = 0.5 + 0.5 * math.sin(self._tray_phase * math.pi)
+                glow = QColor(base_color)
+                glow.setAlphaF(0.4 * pulse)
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(glow)
+                painter.drawEllipse(2, 2, 28, 28)
+
+            pen = QPen(base_color, 2.0)
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+
+            painter.drawRoundedRect(12, 4, 8, 14, 4, 4)     # the capsule
+            painter.drawArc(8, 10, 16, 14, 0, -180 * 16)    # the cradle
+            painter.drawLine(16, 24, 16, 28)                # the stem
+            painter.drawLine(10, 28, 22, 28)                # the foot
+        finally:
+            painter.end()
+        return QIcon(pixmap)
 
     # ---- state ----------------------------------------------------------
 
@@ -226,8 +313,15 @@ class Dikte:
         self._refresh_tray()
 
     def _refresh_tray(self):
+        if self.recording or self.meeting_state == M_RECORDING:
+            if not self.tray_anim.isActive():
+                self.tray_anim.start()
+        else:
+            self.tray_anim.stop()
+            self._tray_phase = 0.0
+
         labels = {
-            IDLE: ("Start recording", "audio-input-microphone", "Dikte: ready"),
+            IDLE: ("Start recording", "dikte-icon", "Dikte: ready"),
             RECORDING: ("Stop and transcribe", "media-record", "Dikte: recording"),
             BUSY: ("Working…", "view-refresh", "Dikte: working"),
         }
@@ -307,8 +401,11 @@ class Dikte:
         # that same press. Its lateness is also the proof we were waiting for
         # that the shortcut is live, which leaves the listener with nothing to
         # do but double every press.
+        # Windows has no second route in to echo the first: RegisterHotKey is
+        # the system's own table, so there is nothing to retire.
         timer = self.last_evdev.get(name)
-        if self.evdev.running and timer is not None and timer.elapsed() < ECHO_MS:
+        if (not plat.IS_WINDOWS and self.evdev.running
+                and timer is not None and timer.elapsed() < ECHO_MS):
             self._retire_listener()
             return
         handler()
@@ -360,23 +457,39 @@ class Dikte:
     def start(self):
         if self.state != IDLE or self.recording:
             return
-        self.overlay.show_recording()
         self._begin_recording(DICTATION)
         self._set_state(RECORDING)
 
     def start_ask(self):
         if self.ask_state != IDLE or self.recording:
             return
-        self.ask_overlay.show_recording(asking=True)
         self._begin_recording(ASK)
         self._set_ask_state(RECORDING)
 
     def _begin_recording(self, owner):
         """One microphone, so one of the two holds it at a time."""
         self.recorder_owner = owner
+        overlay = self.ask_overlay if owner == ASK else self.overlay
+        if OPENS_SLOWLY:
+            # DirectShow takes over a second to hand the microphone over, and a
+            # ribbon that says "recording" before then invites the first words
+            # of the sentence to be spoken into nothing. Say what is actually
+            # happening until the first sample lands.
+            overlay.show_busy(t("Opening the microphone…"))
+        else:
+            overlay.show_recording(asking=owner == ASK)
         self.elapsed.restart()
         self.ticker.start()
         self.recorder.start(self.conf["mic_target"], self.conf["max_seconds"])
+
+    def _on_recording_started(self):
+        """The microphone is live: from here the clock and the bars mean something."""
+        if not OPENS_SLOWLY or not self.recording:
+            return
+        asking = self.recorder_owner == ASK
+        overlay = self.ask_overlay if asking else self.overlay
+        overlay.show_recording(asking=asking)
+        self.elapsed.restart()
 
     def stop(self):
         if self.state != RECORDING:
@@ -489,6 +602,12 @@ class Dikte:
 
     def _on_meeting_levels(self, mine, theirs):
         self.overlay.push_levels(mine, theirs)
+
+    def _tray_tick(self):
+        self._tray_phase += 0.2
+        if self._tray_phase > 1000.0:
+            self._tray_phase = 0.0
+        self._refresh_tray()
 
     def _meeting_tick(self):
         seconds = self.meeting_elapsed.elapsed() / 1000.0
@@ -647,7 +766,7 @@ class Dikte:
             )
             self.settings_window.applied.connect(self._apply_settings)
             self.settings_window.finished.connect(self._settings_closed)
-        self.settings_window.show()
+        self.settings_window.showNormal()
         self.settings_window.raise_()
         self.settings_window.activateWindow()
 
@@ -674,6 +793,11 @@ class Dikte:
         self.shutdown()
         QLocalServer.removeServer(SERVER_NAME)
         script = os.path.realpath(__file__)
+        if plat.IS_WINDOWS:
+            # No execv worth the name here: the replacement would inherit the
+            # server socket this process has only just given up.
+            subprocess.Popen([sys.executable, script], **plat.no_window())
+            sys.exit(0)
         os.execv(sys.executable, [sys.executable, script])
 
     def shutdown(self):
@@ -730,6 +854,9 @@ def send_command(command, timeout=800):
 
 
 def main():
+    if relaunch_without_console():
+        return 0
+
     args = [a for a in sys.argv[1:] if not a.startswith("-")]
     command = args[0] if args else ""
 
@@ -741,8 +868,10 @@ def main():
 
     app = QApplication(sys.argv)
     app.setApplicationName("Dikte")
-    app.setDesktopFileName("dikte")
+    if ICON_PNG:
+        app.setWindowIcon(QIcon(ICON_PNG))
     app.setQuitOnLastWindowClosed(False)
+    app.setDesktopFileName("dikte")
 
     # No command and an instance already running: bring its settings forward.
     if send_command(command or "settings"):
