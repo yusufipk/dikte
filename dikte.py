@@ -1101,6 +1101,11 @@ def main():
     if not server.listen(SERVER_NAME):
         print(f"dikte: could not open the IPC socket: {server.errorString()}")
 
+    # Keep both the socket and its Python callbacks alive until Qt has finished
+    # dispatching the disconnect event. Otherwise a short-lived CLI command can
+    # leave Qt calling an already-collected Python closure and crash the app.
+    ipc_connections = {}
+
     def on_connection():
         conn = server.nextPendingConnection()
         if conn is None:
@@ -1126,7 +1131,15 @@ def main():
                 handler()
             conn.disconnectFromServer()
 
+        def release():
+            QTimer.singleShot(
+                0,
+                lambda connection=conn: ipc_connections.pop(connection, None),
+            )
+
+        ipc_connections[conn] = (read, release)
         conn.readyRead.connect(read)
+        conn.disconnected.connect(release)
 
     server.newConnection.connect(on_connection)
     app.aboutToQuit.connect(dikte.shutdown)
