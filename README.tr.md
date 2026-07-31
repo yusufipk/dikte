@@ -49,7 +49,9 @@ open dist
 ```
 
 `Dikte-macOS.zip` dosyasını açıp `Dikte.app` dosyasını `/Applications`
-klasörüne sürükle. İlk kayıtta Mikrofon
+klasörüne sürükle. İlk açılışta uygulama Finder'da görünen adını güvenle
+`daakDİKTE.app` yapar; arşivdeki eski ad kurulu otomatik güncelleyicilerle
+uyumluluk için korunur. İlk kayıtta Mikrofon
 izni, ilk otomatik yapıştırmada Erişilebilirlik izni sorulur. Otomatik
 açılmazsa **Sistem Ayarları → Gizlilik ve Güvenlik → Erişilebilirlik** altında
 daakDİKTE'yi etkinleştir.

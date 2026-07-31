@@ -16,6 +16,7 @@ Usage:
 """
 
 import os
+import pathlib
 import subprocess
 import sys
 import time
@@ -58,7 +59,7 @@ import i18n  # noqa: E402
 import meeting  # noqa: E402
 import paste  # noqa: E402
 import updater  # noqa: E402
-from app_version import APP_DISPLAY_NAME  # noqa: E402
+from app_version import APP_BUNDLE_NAME, APP_DISPLAY_NAME  # noqa: E402
 from i18n import t  # noqa: E402
 from meeting import MeetingPipeline  # noqa: E402
 from overlay import Overlay  # noqa: E402
@@ -876,6 +877,50 @@ def _restart_helper_arguments(executable, old_pid):
     return [str(executable), "finish-restart", str(int(old_pid))]
 
 
+def _macos_bundle_rename_paths(executable, platform_name=None, frozen=None):
+    """Return legacy/current bundle paths when a packaged app needs renaming."""
+    platform_name = platform_name or sys.platform
+    frozen = getattr(sys, "frozen", False) if frozen is None else frozen
+    if platform_name != "darwin" or not frozen:
+        return None
+    legacy = updater.packaged_app_path(executable)
+    if (
+        legacy is None
+        or legacy.parent != pathlib.Path("/Applications")
+        or legacy.name != updater.LEGACY_BUNDLE_NAME
+    ):
+        return None
+    current = legacy.with_name(APP_BUNDLE_NAME)
+    new_executable = current / "Contents/MacOS/Dikte"
+    return legacy, current, new_executable
+
+
+def _migrate_macos_bundle_name(executable=None):
+    """Give Finder the visible macOS name without changing signed identity."""
+    paths = _macos_bundle_rename_paths(executable or sys.executable)
+    if paths is None:
+        return False
+    legacy, current, new_executable = paths
+    if current.exists():
+        return False
+    try:
+        legacy.rename(current)
+        os.execve(
+            str(new_executable),
+            [str(new_executable)],
+            dict(os.environ),
+        )
+    except OSError:
+        # If relaunching under the new path fails, restore the working bundle.
+        try:
+            if current.exists() and not legacy.exists():
+                current.rename(legacy)
+        except OSError:
+            pass
+        return False
+    return True
+
+
 def _finish_restart(arguments):
     """Wait for the old AppKit process to exit, then become a clean Dikte."""
     if len(arguments) != 1:
@@ -1012,6 +1057,8 @@ def send_command(command, timeout=800):
 
 def main():
     raw_args = sys.argv[1:]
+    if not raw_args:
+        _migrate_macos_bundle_name()
     if raw_args and raw_args[0] == "check-accessibility":
         return 0 if paste.macos_accessibility_trusted() else 1
     if raw_args and raw_args[0] == "finish-update":

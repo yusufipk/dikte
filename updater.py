@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from app_version import (
+    APP_BUNDLE_NAME,
     APP_VERSION,
     RELEASE_ASSET,
     RELEASE_REPOSITORY,
@@ -34,6 +35,7 @@ DOWNLOAD_PREFIX = (
     f"https://github.com/{RELEASE_REPOSITORY}/releases/download/"
 )
 BUNDLE_ID = "dev.dikte.app"
+LEGACY_BUNDLE_NAME = "Dikte.app"
 OFFICIAL_TEAM_ID = "PTQ5FN6P8U"
 OFFICIAL_CODE_REQUIREMENT = (
     f'=identifier "{BUNDLE_ID}" and anchor apple generic '
@@ -151,6 +153,15 @@ def packaged_app_path(executable=None):
     return app
 
 
+def supported_target_app(path):
+    """Updates can replace both legacy and user-visible bundle filenames."""
+    path = pathlib.Path(path)
+    return path.suffix == ".app" and path.name in {
+        LEGACY_BUNDLE_NAME,
+        APP_BUNDLE_NAME,
+    }
+
+
 def _safe_archive(zip_path):
     with zipfile.ZipFile(zip_path) as archive:
         for item in archive.infolist():
@@ -229,8 +240,8 @@ def verify_bundle(bundle, expected_version):
 def prepare_update(release, target_app):
     """Download, verify and stage a release on the target app's filesystem."""
     target_app = pathlib.Path(target_app).resolve()
-    if target_app.name != "Dikte.app" or target_app.suffix != ".app":
-        raise RuntimeError("Dikte must be installed as Dikte.app")
+    if not supported_target_app(target_app):
+        raise RuntimeError("the application has an unsupported bundle name")
     stage_root = None
     try:
         with tempfile.TemporaryDirectory(prefix="dikte-download-") as directory:

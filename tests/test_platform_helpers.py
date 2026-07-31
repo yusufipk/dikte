@@ -62,6 +62,29 @@ class MacBrandingTests(unittest.TestCase):
         finally:
             i18n.set_language(previous)
 
+    def test_legacy_app_gets_user_visible_finder_name(self):
+        self.assertEqual(
+            dikte._macos_bundle_rename_paths(
+                "/Applications/Dikte.app/Contents/MacOS/Dikte",
+                platform_name="darwin",
+                frozen=True,
+            ),
+            (
+                Path("/Applications/Dikte.app"),
+                Path("/Applications/daakDİKTE.app"),
+                Path("/Applications/daakDİKTE.app/Contents/MacOS/Dikte"),
+            ),
+        )
+
+    def test_source_and_linux_builds_do_not_rename_the_bundle(self):
+        executable = "/Applications/Dikte.app/Contents/MacOS/Dikte"
+        self.assertIsNone(dikte._macos_bundle_rename_paths(
+            executable, platform_name="linux", frozen=True
+        ))
+        self.assertIsNone(dikte._macos_bundle_rename_paths(
+            executable, platform_name="darwin", frozen=False
+        ))
+
 
 class AnalogClockTests(unittest.TestCase):
     def test_hand_angles_show_half_past_twelve(self):
@@ -204,6 +227,17 @@ class MacUpdaterTests(unittest.TestCase):
             Path("/Applications/Dikte.app"),
         )
         self.assertIsNone(updater.packaged_app_path("/usr/bin/python3"))
+
+    def test_updates_accept_legacy_and_visible_bundle_names(self):
+        self.assertTrue(updater.supported_target_app(
+            "/Applications/Dikte.app"
+        ))
+        self.assertTrue(updater.supported_target_app(
+            "/Applications/daakDİKTE.app"
+        ))
+        self.assertFalse(updater.supported_target_app(
+            "/Applications/Other.app"
+        ))
 
     def test_update_signature_requirement_is_pinned_to_official_team(self):
         self.assertIn('identifier "dev.dikte.app"', updater.OFFICIAL_CODE_REQUIREMENT)

@@ -48,8 +48,11 @@ chmod +x build-macos.sh
 open dist
 ```
 
-Unzip `Dikte-macOS.zip`, then drag `Dikte.app` into `/Applications`. The first recording asks for Microphone
-permission. The first automatic paste asks for Accessibility permission; if it
+Unzip `Dikte-macOS.zip`, then drag `Dikte.app` into `/Applications`. On first
+launch it safely adopts the Finder-visible name `daakDİKTE.app`; the legacy
+archive name remains compatible with installed auto-updaters. The first
+recording asks for Microphone permission. The first automatic paste asks for
+Accessibility permission; if it
 is not enabled automatically, add daakDİKTE under **System
 Settings → Privacy & Security → Accessibility**.
 
