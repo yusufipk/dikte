@@ -78,6 +78,19 @@ history and the meetings are there beside them. `dikte --help` lists them, they
 all take `--json`, and only the ones needing the microphone need the application
 running.
 
+### Android companion pattern
+
+Dikte's CLI can also be used as the processing side of an Android voice inbox.
+The phone records with an Android-native speech input, sends the reviewed text
+to a signed-in `codex` session on the Dikte computer over a private Tailscale SSH
+connection, and lets the user choose the final destination. The reference DAAK
+NODE integration routes a capture to daakREMEMBER, Obsidian, both, or a plain
+Codex session without embedding an API key in the phone. See
+[the Android companion guide](docs/android-companion.md).
+
+This is a companion architecture, not a claim that the PyQt desktop interface
+runs natively on Android.
+
 ## What it does
 
 - **It all runs on this machine by default.** Speech to text on whisper.cpp and

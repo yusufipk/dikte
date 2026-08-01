@@ -78,6 +78,19 @@ geçmiş ve toplantılar da yanlarında durur. Hepsini `dikte --help` sayar, hep
 `--json` kabul eder, yalnızca mikrofona ihtiyacı olanlar uygulamanın açık
 olmasını ister.
 
+### Android eşlikçi modeli
+
+Dikte'nin CLI katmanı bir Android sesli gelen kutusunun işlem tarafı olarak da
+kullanılabilir. Telefon Android'e yerel bir ses girişiyle kaydeder, onaylanan
+metni özel bir Tailscale SSH bağlantısı üzerinden Dikte bilgisayarındaki giriş
+yapılmış `codex` oturumuna gönderir ve son hedefi kullanıcıya seçtirir. DAAK NODE
+referans entegrasyonu telefona API anahtarı gömmeden kaydı daakREMEMBER'a,
+Obsidian'a, ikisine birden veya düz bir Codex oturumuna yönlendirir. Ayrıntılar
+için [Android eşlikçi rehberine](docs/android-companion.md) bakın.
+
+Bu bir eşlikçi mimarisidir; PyQt masaüstü arayüzünün Android'de yerel olarak
+çalıştığı anlamına gelmez.
+
 ## Neler yapıyor
 
 - **Her şey varsayılan olarak bu makinede çalışır.** Sesi yazıya çevirme
