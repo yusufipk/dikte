@@ -7,11 +7,18 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python: ["3.11", "3.12", "3.13"]
+        # One macOS run rather than three: what it covers is the platform half
+        # (avfoundation, pbcopy, osascript, Carbon), and that half does not
+        # change from one Python version to the next.
+        include:
+          - os: macos-latest
+            python: "3.13"
 
     steps:
       - uses: actions/checkout@v4
@@ -23,8 +30,9 @@ jobs:
       # PyQt6 ships Qt itself, but Qt still loads these from the system, even
       # for the offscreen platform the tests run on. QtNetwork wants the Kerberos
       # library, and the widgets want fontconfig, whether or not anything is
-      # ever drawn.
+      # ever drawn. macOS needs none of it: the frameworks are already there.
       - name: Install the Qt runtime libraries
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \

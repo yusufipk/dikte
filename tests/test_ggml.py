@@ -20,7 +20,7 @@ from unittest import mock
 import ggml
 import hub
 from tests.support import (DikteTest, fake_urlopen, http_error, json_body,
-                           linux_only, url_error)
+                           linux_only, macos_only, url_error)
 
 
 def body(data, length=None):
@@ -176,6 +176,12 @@ class Download(Local):
 class InstallProgram(Local):
     def setUp(self):
         super().setUp()
+        # Which asset gets picked is settled in WhichBuild below; everything
+        # here is about what happens to one once it has been picked, so the
+        # choice is pinned rather than left to follow whichever platform the
+        # tests are running on.
+        self.patch_attr(ggml, "_wanted_assets",
+                        lambda program: ("bin-ubuntu-x64.tar.gz",))
         # Built once, because the release listing has to publish its checksum
         # and a tarball is not the same bytes twice.
         self.archive = tarball({
@@ -210,10 +216,13 @@ class InstallProgram(Local):
         self.assertTrue(urls[1].endswith("whisper-bin-ubuntu-x64.tar.gz"))
 
     def test_a_release_with_nothing_for_this_machine_says_so(self):
+        # llama.cpp rather than whisper.cpp: a whisper release with nothing in
+        # it for this machine is the everyday state of affairs on macOS, and it
+        # is answered there by pointing at Homebrew instead.
         self.patch_attr(ggml, "_arch", lambda: "x64")
-        with fake_urlopen(self.release("whisper-bin-Win32.zip")):
+        with fake_urlopen(self.release("llama-bin-win-cuda-x64.zip")):
             with self.assertRaises(ggml.LocalError) as caught:
-                ggml.install_program(ggml.WHISPER)
+                ggml.install_program(ggml.LLAMA)
         self.assertIn("this machine", str(caught.exception))
 
     def test_what_was_installed_is_remembered(self):
@@ -294,16 +303,52 @@ class InstallProgram(Local):
             with self.subTest(url=url):
                 self.assertTrue(url.startswith("https://"))
 
-    def test_llama_takes_the_vulkan_build_when_there_is_a_loader(self):
+
+class WhichBuild(Local):
+    """Which of a release's assets this machine is owed.
+
+    Split out from the class above because it is the one thing there that has
+    to see the real platform: ggml-org publishes a different set of builds for
+    each, and picking the wrong one is a download that unpacks into a binary
+    the machine cannot run.
+    """
+
+    def setUp(self):
+        super().setUp()
         self.patch_attr(ggml, "_arch", lambda: "x64")
+
+    @linux_only
+    def test_llama_takes_the_vulkan_build_when_there_is_a_loader(self):
         self.patch_attr(ggml, "_has_vulkan", lambda: True)
         self.assertEqual(ggml._wanted_assets(ggml.LLAMA)[0],
                          "bin-ubuntu-vulkan-x64.tar.gz")
 
+    @linux_only
     def test_llama_falls_back_to_the_plain_build_without_one(self):
-        self.patch_attr(ggml, "_arch", lambda: "x64")
         self.patch_attr(ggml, "_has_vulkan", lambda: False)
         self.assertEqual(ggml._wanted_assets(ggml.LLAMA), ("bin-ubuntu-x64.tar.gz",))
+
+    @macos_only
+    def test_the_macos_build_is_the_only_one_offered_there(self):
+        """One build, and it already reaches the graphics card through Metal,
+        so there is no second choice to fall back to."""
+        self.assertEqual(ggml._wanted_assets(ggml.LLAMA), ("bin-macos-x64.tar.gz",))
+
+    @macos_only
+    def test_whisper_has_nothing_to_fetch_on_a_mac(self):
+        """whisper.cpp publishes no macOS build at all; Homebrew's is what runs
+        here, and program_path() prefers a system copy anyway."""
+        self.assertEqual(ggml._wanted_assets(ggml.WHISPER), ())
+
+    @macos_only
+    def test_asking_for_it_anyway_says_where_to_get_it(self):
+        listing = {"tag_name": "v1.9.1", "assets": [
+            {"name": "whisper-bin-ubuntu-x64.tar.gz", "size": 10,
+             "browser_download_url": "https://example.invalid/w.tar.gz"}]}
+        with serving(listing, b""):
+            with self.assertRaises(ggml.LocalError) as caught:
+                ggml.install_program(ggml.WHISPER)
+        self.assertIn("brew install whisper-cpp", str(caught.exception))
 
 
 class WhichCopyRuns(Local):

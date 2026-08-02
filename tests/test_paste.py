@@ -16,7 +16,8 @@ from typing import ClassVar
 from unittest import mock
 
 import paste
-from tests.support import DikteTest, FakeCompleted, linux_only, only_these_tools
+from tests.support import (DikteTest, FakeCompleted, linux_only, macos_only,
+                           only_these_tools)
 
 
 @linux_only
@@ -230,6 +231,55 @@ class X11(DesktopContract, DikteTest):
         with self.assertRaises(paste.PasteError) as caught:
             self.press("ctrl+v", FakeCompleted(returncode=1, stderr="bad keysym"))
         self.assertNotIn("ydotoold", str(caught.exception))
+
+
+@macos_only
+class MacOS(DesktopContract, DikteTest):
+    """The third group, and it owes the same list as the other two.
+
+    What it does differently is press the key: AppleScript has no press and
+    release to spell out, only a keystroke and the modifiers it is held down
+    with, so the command is one string rather than a sequence of codes.
+    """
+
+    here = paste.MACOS
+
+    def test_the_session_variables_change_nothing_here(self):
+        """A Mac has no XDG_SESSION_TYPE, and something that set one anyway
+        would otherwise send the clipboard to a wl-copy that is not there."""
+        with mock.patch.dict(os.environ, {"XDG_SESSION_TYPE": "x11",
+                                          "DISPLAY": ":0"}, clear=True):
+            self.assertIs(paste.desktop(), paste.MACOS)
+
+    def test_the_modifiers_are_held_down_around_one_keystroke(self):
+        self.assertEqual(
+            self.press("cmd+v"),
+            ["osascript", "-e", 'tell application "System Events" to '
+                                'keystroke "v" using {command down}'])
+
+    def test_three_keys(self):
+        self.assertIn("using {command down, shift down}", self.press("cmd+shift+v")[-1])
+
+    def test_command_is_the_key_linux_calls_super(self):
+        self.assertEqual(self.press("cmd+v"), self.press("super+v"))
+        self.assertEqual(self.press("command+v"), self.press("meta+v"))
+
+    def test_a_key_that_cannot_be_typed_goes_in_by_its_code(self):
+        """AppleScript types characters; Return is not one, so it is pressed."""
+        self.assertIn("key code 36 using {command down}", self.press("cmd+return")[-1])
+
+    def test_a_combination_with_no_key_in_it_is_refused(self):
+        with self.assertRaises(paste.PasteError) as caught:
+            paste.MACOS.key_command("cmd+shift")
+        self.assertIn("cmd+shift", str(caught.exception))
+
+    def test_a_failure_points_at_the_permission_it_needs(self):
+        """osascript is always installed, so a failure is never a missing
+        program: it is macOS refusing to let it type."""
+        with self.assertRaises(paste.PasteError) as caught:
+            self.press("cmd+v", FakeCompleted(
+                returncode=1, stderr="osascript is not allowed to send keystrokes"))
+        self.assertIn("Accessibility", str(caught.exception))
 
 
 if __name__ == "__main__":

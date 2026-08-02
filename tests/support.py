@@ -40,6 +40,14 @@ linux_only = unittest.skipUnless(
     "covers the Linux desktop stack (PipeWire, wl-clipboard, ydotool, KDE)",
 )
 
+# Its twin, and the reason the sentence above says "another desktop" rather
+# than naming one: avfoundation, pbcopy, osascript and Carbon are as
+# unreachable from a Linux machine as ydotool is from here.
+macos_only = unittest.skipUnless(
+    sys.platform == "darwin",
+    "covers the macOS stack (avfoundation, pbcopy, osascript, Carbon)",
+)
+
 
 def _no_network(*args, **kwargs):
     raise AssertionError(

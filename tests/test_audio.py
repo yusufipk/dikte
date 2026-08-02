@@ -15,11 +15,14 @@ import unittest
 import wave
 from unittest import mock
 
+import sys
+
 import audio
 from tests.support import (
     DikteTest,
     FakeCompleted,
     linux_only,
+    macos_only,
     only_these_tools,
     pcm,
     silence,
@@ -191,11 +194,129 @@ class Devices(DikteTest):
                              "alsa_output.usb-something.monitor")
 
 
-class FakeProcess:
-    """A pw-record that hands over a fixed buffer and then ends."""
+# What ffmpeg prints when it is asked to list avfoundation's devices: the video
+# ones first, then the audio ones, all of it on stderr behind a prefix, and the
+# whole thing ending in the error that made it print at all.
+AVFOUNDATION_LISTING = """\
+[AVFoundation indev @ 0x14f605010] AVFoundation video devices:
+[AVFoundation indev @ 0x14f605010] [0] FaceTime HD Camera
+[AVFoundation indev @ 0x14f605010] [1] Capture screen 0
+[AVFoundation indev @ 0x14f605010] AVFoundation audio devices:
+[AVFoundation indev @ 0x14f605010] [0] MacBook Pro Microphone
+[AVFoundation indev @ 0x14f605010] [1] Someone's iPhone Microphone
+[in#0 @ 0x14f604e00] Error opening input: Input/output error
+Error opening input file .
+"""
 
-    def __init__(self, data):
-        self.stdout = io.BytesIO(data)
+
+@macos_only
+class MacDevices(DikteTest):
+    """The same list, read out of ffmpeg's complaints instead of pactl's JSON."""
+
+    @contextlib.contextmanager
+    def ffmpeg(self, stderr=AVFOUNDATION_LISTING, tools=("ffmpeg",)):
+        with only_these_tools(*tools), \
+                mock.patch.object(subprocess, "run",
+                                  return_value=FakeCompleted(returncode=1,
+                                                             stderr=stderr)):
+            yield
+
+    def test_no_ffmpeg_installed(self):
+        with only_these_tools():
+            self.assertEqual(audio.list_sources(), [])
+
+    def test_the_audio_devices_are_the_ones_listed(self):
+        """The video half is on the same stderr, under its own heading."""
+        with self.ffmpeg():
+            names = [name for name, _ in audio.list_sources()]
+        self.assertEqual(names, ["MacBook Pro Microphone",
+                                 "Someone's iPhone Microphone"])
+
+    def test_the_name_is_shown_as_well_as_stored(self):
+        """macOS has no second, friendlier name to put beside it."""
+        with self.ffmpeg():
+            self.assertTrue(all(name == shown
+                                for name, shown in audio.list_sources()))
+
+    def test_ffmpeg_saying_something_else_entirely(self):
+        with self.ffmpeg(stderr="ffmpeg: command not understood\n"):
+            self.assertEqual(audio.list_sources(), [])
+
+    def test_ffmpeg_that_will_not_run(self):
+        with only_these_tools("ffmpeg"), \
+                mock.patch.object(subprocess, "run", side_effect=OSError("nope")):
+            self.assertEqual(audio.list_sources(), [])
+
+    def test_there_is_no_speaker_output_to_offer(self):
+        """macOS hands out no loopback device, so a meeting cannot be recorded
+        and the tab says so rather than listing something that will not work."""
+        with self.ffmpeg():
+            self.assertEqual(audio.list_monitors(), [])
+            self.assertEqual(audio.default_monitor(), "")
+
+    def test_a_meeting_says_what_is_missing_rather_than_failing_oddly(self):
+        recorder = audio.MeetingRecorder()
+        failures = []
+        recorder.failed.connect(failures.append)
+        recorder.start(self.path("meeting.wav"))
+        self.assertIn("macOS", failures[0])
+        self.assertFalse(recorder.active)
+
+
+@macos_only
+class MacRecordingCommand(DikteTest):
+    """ffmpeg is the recorder here; there is no sound server to ask."""
+
+    def test_nothing_to_record_with(self):
+        with only_these_tools():
+            self.assertEqual(audio.recording_command(), [])
+
+    def test_what_to_install_names_homebrew(self):
+        self.assertIn("brew install ffmpeg", audio.missing_recorder_message())
+
+    def test_the_format_is_the_one_the_rest_of_the_code_expects(self):
+        with only_these_tools("ffmpeg"):
+            cmd = audio.recording_command()
+        self.assertEqual(cmd[cmd.index("-f") + 1], "avfoundation")
+        self.assertEqual(cmd[cmd.index("-ar") + 1], str(audio.RATE))
+        self.assertEqual(cmd[cmd.index("-ac") + 1], str(audio.CHANNELS))
+        self.assertEqual(cmd[-2:], ["s16le", "-"])
+
+    def test_the_video_half_of_the_input_is_left_empty(self):
+        """avfoundation takes `video:audio`, and asking for a camera as well
+        would open one and record nothing extra worth having."""
+        with only_these_tools("ffmpeg"):
+            cmd = audio.recording_command("Some Microphone")
+        self.assertEqual(cmd[cmd.index("-i") + 1], ":Some Microphone")
+
+
+# The program the recorder shells out to on this platform, which is the one
+# only_these_tools() has to leave standing for recording_command() to find.
+RECORDER = "ffmpeg" if sys.platform == "darwin" else "pw-record"
+
+
+class Trickle(io.BytesIO):
+    """A pipe that hands over less than it was asked for, as ffmpeg's does.
+
+    `read(n)` on an unbuffered pipe returns what has arrived rather than what
+    was wanted, and the amount is nobody's to promise. A recorder that took
+    each piece for a chunk would count a two-second recording as fifteen
+    seconds of level readings.
+    """
+
+    def __init__(self, data, piece=100):
+        super().__init__(data)
+        self.piece = piece
+
+    def read(self, size=-1):
+        return super().read(size if size < 0 else min(size, self.piece))
+
+
+class FakeProcess:
+    """A recorder that hands over a fixed buffer and then ends."""
+
+    def __init__(self, data, stream=None):
+        self.stdout = (stream or io.BytesIO)(data)
         self.stderr = io.BytesIO(b"")
         self.signals = []
         self.returncode = 0
@@ -270,24 +391,24 @@ class RecordingCommand(DikteTest):
                                   if arg.startswith(flag)])
 
 
-@linux_only
 class RecorderChain(DikteTest):
-    """Start to WAV, with pw-record faked out."""
+    """Start to WAV, with the platform's recorder faked out."""
 
-    def record(self, data, target="", max_seconds=300):
+    def record(self, data, target="", max_seconds=300, stream=None):
         recorder = audio.Recorder()
         results = []
         failures = []
         recorder.stopped.connect(lambda *args: results.append(args))
         recorder.failed.connect(failures.append)
-        proc = FakeProcess(data)
-        with only_these_tools("pw-record"), \
+        proc = FakeProcess(data, stream=stream)
+        with only_these_tools(RECORDER), \
                 mock.patch.object(subprocess, "Popen", return_value=proc) as popen:
             recorder.start(target=target, max_seconds=max_seconds)
             recorder._thread.join(timeout=5)
             recorder.stop()
         return recorder, results, failures, popen
 
+    @linux_only
     def test_the_capture_format_is_what_the_rest_of_the_code_expects(self):
         _, _, _, popen = self.record(silence(1.0))
         cmd = popen.call_args.args[0]
@@ -297,14 +418,54 @@ class RecorderChain(DikteTest):
         self.assertIn("--format=s16", cmd)
         self.assertEqual(cmd[-1], "-")
 
+    @linux_only
     def test_no_target_means_no_target_flag(self):
         _, _, _, popen = self.record(silence(0.5))
         self.assertFalse([arg for arg in popen.call_args.args[0]
                           if arg.startswith("--target=")])
 
+    @linux_only
     def test_a_chosen_microphone_is_passed_on(self):
         _, _, _, popen = self.record(silence(0.5), target="alsa_input.usb")
         self.assertIn("--target=alsa_input.usb", popen.call_args.args[0])
+
+    @macos_only
+    def test_the_capture_format_ffmpeg_is_asked_for(self):
+        _, _, _, popen = self.record(silence(1.0))
+        cmd = popen.call_args.args[0]
+        self.assertEqual(cmd[0], "ffmpeg")
+        self.assertIn("avfoundation", cmd)
+        self.assertEqual(cmd[cmd.index("-ar") + 1], str(audio.RATE))
+        self.assertEqual(cmd[cmd.index("-ac") + 1], str(audio.CHANNELS))
+        self.assertIn("s16le", cmd)
+        self.assertEqual(cmd[-1], "-")
+
+    @macos_only
+    def test_no_microphone_named_means_the_system_default(self):
+        _, _, _, popen = self.record(silence(0.5))
+        cmd = popen.call_args.args[0]
+        self.assertEqual(cmd[cmd.index("-i") + 1], ":default")
+
+    @macos_only
+    def test_a_chosen_microphone_goes_in_by_name(self):
+        """Its name and not its index: indexes move when a device is plugged
+        in, and a setting that means a different microphone tomorrow is worse
+        than one that stops matching anything."""
+        _, _, _, popen = self.record(silence(0.5), target="MacBook Pro Microphone")
+        cmd = popen.call_args.args[0]
+        self.assertEqual(cmd[cmd.index("-i") + 1], ":MacBook Pro Microphone")
+
+    def test_a_pipe_that_hands_over_pieces_still_reads_in_chunks(self):
+        """One RMS reading per chunk of a known length, however the bytes
+        arrive: vad.analyse() multiplies the count by that length, so a piece
+        counted as a chunk is a silent recording reported as speech."""
+        _, results, failures, _ = self.record(tone(1.0), stream=Trickle)
+        self.assertEqual(failures, [])
+        _path, duration, rms = results[0]
+        self.addCleanup(os.unlink, results[0][0])
+        self.assertAlmostEqual(duration, 1.0, places=2)
+        # A second is fifteen whole chunks and the beginning of a sixteenth.
+        self.assertEqual(len(rms), -(-audio.RATE // audio.CHUNK_FRAMES))
 
     def test_a_recording_ends_as_a_wav_with_its_duration_and_levels(self):
         _, results, failures, _ = self.record(tone(1.0))
@@ -327,7 +488,7 @@ class RecorderChain(DikteTest):
         results = []
         recorder.stopped.connect(lambda *args: results.append(args))
         proc = FakeProcess(tone(1.0))
-        with only_these_tools("pw-record"), \
+        with only_these_tools(RECORDER), \
                 mock.patch.object(subprocess, "Popen", return_value=proc):
             recorder.start()
             recorder._thread.join(timeout=5)
@@ -342,13 +503,16 @@ class RecorderChain(DikteTest):
         self.assertLessEqual(duration, 1.1)
 
     def test_a_recorder_that_is_not_installed_at_all(self):
+        """Said once, and it names what to install on the platform it is said
+        on: a Mac told to install pulseaudio-utils is being sent nowhere."""
         recorder = audio.Recorder()
         failures = []
         recorder.failed.connect(failures.append)
         with only_these_tools():
             recorder.start()
         self.assertEqual(len(failures), 1)
-        self.assertIn("pulseaudio-utils", failures[0])
+        self.assertIn("ffmpeg" if sys.platform == "darwin" else "pulseaudio-utils",
+                      failures[0])
 
     def pump(self, data=b"", stderr=b"", stopping=False, cancelled=False):
         """Run the pump in this thread, where a queued signal would need an
@@ -397,7 +561,7 @@ class RecorderChain(DikteTest):
         recorder = audio.Recorder()
         failures = []
         recorder.failed.connect(failures.append)
-        with only_these_tools("pw-record"), \
+        with only_these_tools(RECORDER), \
                 mock.patch.object(subprocess, "Popen", side_effect=OSError("nope")):
             recorder.start()
         self.assertEqual(len(failures), 1)

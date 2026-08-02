@@ -29,7 +29,9 @@ CHANGED = {
     "ui_language": "tr",
     "language": "tr",
     "auto_paste": False,
-    "paste_shortcut": "ctrl+shift+v",
+    # The paste box is the one shortcut field that is not editable, so the
+    # value has to be on the platform's own list to survive being loaded.
+    "paste_shortcut": "cmd+shift+v" if cfg.MACOS else "ctrl+shift+v",
     "restore_clipboard": True,
     "overlay_corner": "top-right",
     "max_seconds": 120,
@@ -177,7 +179,7 @@ class Settings(DikteTest):
         for box, _status, _missing in window._shortcut_rows.values():
             box.setCurrentText("")
         window._save()
-        self.assertEqual(conf["shortcut"], "Ctrl+Space")
+        self.assertEqual(conf["shortcut"], hotkey.SHORTCUTS["toggle"].fallback)
         self.assertEqual(conf["cancel_shortcut"], "")
         self.assertEqual(conf["assistant_shortcut"], "")
         self.assertEqual(conf["meeting_shortcut"], "")
