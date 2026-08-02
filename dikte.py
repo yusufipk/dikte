@@ -33,6 +33,7 @@ import ggml  # noqa: E402
 import hotkey  # noqa: E402
 import i18n  # noqa: E402
 import ipc  # noqa: E402
+import macos  # noqa: E402
 import meeting  # noqa: E402
 from i18n import t  # noqa: E402
 from meeting import MeetingPipeline  # noqa: E402
@@ -818,6 +819,10 @@ class Dikte:
         self.settings_window.show()
         self.settings_window.raise_()
         self.settings_window.activateWindow()
+        # The one window that is meant to have the keyboard. An accessory
+        # application is not activated by putting a window up — which is what
+        # keeps the indicator from stealing focus — so this one asks.
+        macos.come_to_the_front()
 
     def _settings_closed(self, *_):
         # Don't drop the object while its own signal is still being delivered.
@@ -962,6 +967,11 @@ def run_app(args):
     app.setApplicationName("Dikte")
     app.setDesktopFileName("dikte")
     app.setQuitOnLastWindowClosed(False)
+    # Straight after the QApplication and before any window: Dikte is its tray
+    # icon, and an application macOS thinks otherwise about comes to the front
+    # to show the indicator, taking the keyboard out of whatever was being
+    # typed into. Nothing happens on the other platforms.
+    macos.live_in_the_menu_bar()
     # Before Dikte is built, because building it is what may start a server, and
     # a signal arriving in the middle of that would otherwise take the default
     # action and leave the server behind. A signal this early lands in the

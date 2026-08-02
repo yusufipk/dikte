@@ -191,6 +191,7 @@ worker.py         transkript → temizleme → pano → yapıştırma
 vad.py            kayıtta gerçekten konuşma var mı kararı
 filetranscribe.py dosyadan transkript: ffmpeg, parçalama, zaman damgaları
 overlay.py        köşedeki gösterge
+macos.py          macOS'a söylenmesi gereken şeyler, ctypes ile
 settings_ui.py    ayarlar penceresi
 hotkey.py         KDE ve GNOME kısayolları, evdev dinleyici, Carbon
 paste.py          wl-clipboard, xclip, pbcopy ve her birinin tuş basımı
@@ -201,8 +202,8 @@ Gösterge XWayland üzerinden çizilir; Wayland'da bir pencereyi belirli bir kö
 yerleştirmenin yolu yok, `dikte.py` bu yüzden `QT_QPA_PLATFORM=xcb` ayarlar.
 macOS'ta buna gerek yok, orada o satır atlanır.
 
-Üç platform var ve platforma özgü yarı dört dosyada: `audio.py`, `paste.py`,
-`hotkey.py` ve `ggml.py` içindeki dosya adları. Her biri platform başına bir
+Üç platform var ve platforma özgü yarı beş dosyada: `audio.py`, `paste.py`,
+`hotkey.py`, `macos.py` ve `ggml.py` içindeki dosya adları. Her biri platform başına bir
 grup ve aralarından seçen tek bir satır tutuyor; her fonksiyonun içinde bir
 dallanma yok. `tests/support.py` içinde bu yarılardan birini sabitleyen
 testler için `linux_only` ve `macos_only` var; geri kalan her testin her

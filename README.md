@@ -195,6 +195,7 @@ worker.py         transcribe → clean up → clipboard → paste
 vad.py            deciding whether a recording holds speech at all
 filetranscribe.py file transcription: ffmpeg, chunking, timestamps
 overlay.py        the corner indicator
+macos.py          the four things macOS has to be told, through ctypes
 settings_ui.py    settings window
 hotkey.py         KDE and GNOME shortcuts, the evdev listener, Carbon
 paste.py          wl-clipboard, xclip, pbcopy, and the key press beside each
@@ -205,8 +206,8 @@ The indicator is drawn through XWayland, because a Wayland client cannot place a
 window in a screen corner; `dikte.py` sets `QT_QPA_PLATFORM=xcb` for that. macOS
 needs no such thing, and the line is skipped there.
 
-Three platforms, and the platform-specific half is four files: `audio.py`,
-`paste.py`, `hotkey.py` and the asset names in `ggml.py`. Each holds a group per
+Three platforms, and the platform-specific half is five files: `audio.py`,
+`paste.py`, `hotkey.py`, `macos.py` and the asset names in `ggml.py`. Each holds a group per
 platform and one line that chooses between them, rather than a branch inside
 every function. `tests/support.py` has `linux_only` and `macos_only` for the
 tests that pin one of those halves; everything else is expected to pass

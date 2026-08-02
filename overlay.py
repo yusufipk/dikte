@@ -1,13 +1,12 @@
 """The small recording indicator that appears in a screen corner without taking focus."""
 
-import ctypes
-import ctypes.util
 import math
-import sys
 
 from PyQt6.QtCore import Qt, QTimer, QRectF, QPointF
 from PyQt6.QtGui import QColor, QCursor, QFont, QPainter, QPainterPath, QPen, QFontMetrics
 from PyQt6.QtWidgets import QWidget, QApplication
+
+import macos
 
 BARS = 22
 HEIGHT = 56
@@ -32,62 +31,6 @@ ASK = QColor(150, 140, 255)    # recording a command rather than a dictation
 STATE_COLORS = {"recording": REC, "asking": ASK, "meeting": REC, "busy": BUSY,
                 "done": OK, "warning": WARN, "error": ERR}
 LIVE = ("recording", "asking", "meeting")
-
-# NSWindowCollectionBehavior: on every desktop, and beside a full-screen window
-# rather than being one.
-NS_CAN_JOIN_ALL_SPACES = 1 << 0
-NS_FULL_SCREEN_AUXILIARY = 1 << 8
-_objc = None
-
-
-def _msg_send(receiver, selector, restype=ctypes.c_void_p, argtypes=(), *args):
-    """[receiver selector:args], through the Objective-C runtime.
-
-    objc_msgSend is variadic and ctypes cannot call a variadic function on
-    arm64 without being told the argument types, so each call declares its own.
-    """
-    global _objc
-    if _objc is None:
-        _objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
-        _objc.sel_registerName.restype = ctypes.c_void_p
-        _objc.sel_registerName.argtypes = [ctypes.c_char_p]
-    _objc.objc_msgSend.restype = restype
-    _objc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p, *argtypes]
-    return _objc.objc_msgSend(receiver, _objc.sel_registerName(selector), *args)
-
-
-def keep_visible_off_screen_focus(widget):
-    """Stop macOS from taking the indicator away whenever Dikte is not in front.
-
-    Given the Tool flag, Qt asks Cocoa for a utility panel, and Cocoa hides a
-    utility panel the moment its application stops being the active one — which
-    is every moment that matters here, the indicator's whole job being to be
-    visible while you are typing in some other window. It stays put instead,
-    and joins whichever desktop you are on rather than the one Dikte started
-    on.
-
-    Nothing to do anywhere else: X11 and Wayland hand a window's visibility to
-    the window manager, not to whether its application has focus.
-
-    The platform is asked for by name, not guessed at from the operating
-    system: winId() is an NSView only under the cocoa plugin, and offscreen —
-    which is what the tests run on — hands back a handle that is not an object
-    at all. Sending it a message would take the process with it.
-    """
-    if sys.platform != "darwin" or QApplication.platformName() != "cocoa":
-        return
-    try:
-        window = _msg_send(ctypes.c_void_p(int(widget.winId())), b"window")
-        if not window:
-            return
-        _msg_send(window, b"setHidesOnDeactivate:", None, [ctypes.c_bool], False)
-        _msg_send(window, b"setCollectionBehavior:", None, [ctypes.c_ulong],
-                  NS_CAN_JOIN_ALL_SPACES | NS_FULL_SCREEN_AUXILIARY)
-    except (OSError, AttributeError, TypeError, ValueError):
-        # A Qt that hands out something other than an NSView, or a macOS that
-        # has stopped answering to these. An indicator that hides too eagerly
-        # is worth less than one that is there; neither is worth a crash.
-        pass
 
 
 class Overlay(QWidget):
@@ -228,10 +171,10 @@ class Overlay(QWidget):
         self._reposition()
         if not self.isVisible():
             self.show()
-            # After show(), which is when there is a native window to speak to,
-            # and only then: winId() before it would build one Qt goes on to
-            # replace.
-            keep_visible_off_screen_focus(self)
+            # After show(), which is when there is a native window to speak
+            # to, and only then: winId() before it would build one Qt goes on
+            # to replace.
+            macos.keep_visible_without_focus(self)
         if self._concealed:
             self.raise_()
             self._concealed = False

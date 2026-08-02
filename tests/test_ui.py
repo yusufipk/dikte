@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 import cleanup
 import config as cfg
 import hotkey
+import macos
 import overlay as overlay_module
 import settings_ui
 from tests.support import DikteTest, only_these_tools
@@ -320,13 +321,18 @@ class Overlay(DikteTest):
         self.assertTrue(flags & Qt.WindowType.WindowDoesNotAcceptFocus)
         self.assertTrue(flags & Qt.WindowType.WindowStaysOnTopHint)
 
-    def test_the_cocoa_call_is_skipped_on_a_platform_that_is_not_cocoa(self):
+    def test_the_cocoa_calls_are_skipped_on_a_platform_that_is_not_cocoa(self):
         """winId() is an NSView under the cocoa plugin and a handle that is not
         an object anywhere else; sending that a message takes the process with
-        it, which a test discovers as a run that stops mid-line."""
+        it, which a test discovers as a run that stops mid-line rather than as
+        a failure. Every call in macos.py is guarded by the same check, so they
+        are all run here."""
         widget = self.overlay()
         widget.show_recording()
-        overlay_module.keep_visible_off_screen_focus(widget)   # must be a no-op
+        self.assertFalse(macos.available())
+        self.assertFalse(macos.keep_visible_without_focus(widget))
+        self.assertFalse(macos.live_in_the_menu_bar())
+        self.assertFalse(macos.come_to_the_front())
 
     def test_recording_then_working_then_done(self):
         widget = self.overlay()
