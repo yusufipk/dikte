@@ -63,6 +63,13 @@ değiştirmeye ait; macOS kendi kısayollarından birinin kullandığı bir
 kombinasyonu kabul eder ama hiç iletmez, yani hiçbir şey yapmayan bir tuş hata
 değil, değiştirilecek bir tuştur.
 
+Metnin yerine ulaşmasının ikinci bir yolu daha var, Ayarlar → Genel altında:
+yapıştırmak yerine **yazdırmak**. Karakterler metni taşıyan tuş olayları olarak
+gider; yani pano hiç ödünç alınmaz — kopyaladığın şey kopyalı kalır — ve o
+pencerede herhangi bir kombinasyonun "yapıştır" anlamına gelmesi gerekmez, ki
+terminal, uzak masaüstü ya da sanal makine bunda hemfikir olmayabilir. Uzun
+metinde daha yavaş olduğu için varsayılan hâlâ yapıştırma. Üç platformda da var.
+
 **Toplantı kaydı yalnızca Linux'ta.** Hoparlörden çıkan sesi gerektiriyor ve
 macOS bunu kimseye vermiyor. Geri kalan her şey çalışır: dikte, ajan, ses ve
 video dosyaları, başka yerde alınmış bir kaydın yazıya dökülmesi.

@@ -1,17 +1,29 @@
-"""The few things macOS has to be told, through the Objective-C runtime.
+"""What macOS has to be told, and what it will not tell you.
 
-Three of them, and each is a default that suits an application with a window
-and a Dock icon rather than one that lives in the menu bar:
+Every default here suits an application with a window and a Dock icon rather
+than one that lives in the menu bar and appears while you are typing somewhere
+else:
 
   * an application that has not said otherwise comes to the front when it puts
-    a window on screen, which for the indicator means taking the keyboard away
-    from whatever was being typed into — the one thing it must never do;
+    a window on screen, taking the keyboard with it — the one thing an
+    indicator must never do;
   * a utility panel is hidden while its application is not the active one,
     which is every moment the indicator is for;
-  * and a window belongs to the desktop its application started on.
+  * a window belongs to the desktop its application started on;
+  * and showing any window at all leaves the window that had the keyboard no
+    longer holding it. Not the focus — the application stays frontmost and
+    nothing moves on screen — but the key window, which is where a typed
+    character actually arrives. There is no flag that prevents this: not a
+    panel that cannot become key, not an accessory application, not
+    WA_ShowWithoutActivating, not NSWindowStyleMaskNonactivatingPanel. So the
+    keyboard is noted before and handed back after.
+
+And one thing it lies about: told to press a key it has not been allowed to,
+macOS reports that it did. Nothing fails, nothing is logged, the key reaches
+nobody. Hence trusted_to_type(), asked before rather than after.
 
 Reached through ctypes rather than PyObjC because the whole of Dikte is the
-standard library and PyQt6, and this is four messages.
+standard library and PyQt6, and this is a handful of messages.
 """
 
 import ctypes

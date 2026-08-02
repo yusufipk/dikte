@@ -63,6 +63,14 @@ first paste asks. And the **default shortcut is `Ctrl+Alt+Space`** rather than
 combination one of its own shortcuts already uses and then never delivers it,
 so a key that does nothing is a key to change rather than a bug.
 
+There is a second way for the transcript to arrive, under Settings → General:
+**type it out** instead of pasting it. The characters go out as key events
+carrying the text, so the clipboard is never borrowed — what you had copied
+stays copied — and no combination has to mean paste in the window receiving it,
+which a terminal, a remote desktop or a virtual machine may not agree on. It is
+slower on a long transcript, which is why pasting is still the default. Works on
+all three platforms.
+
 **Recording a meeting is Linux-only.** It needs what comes out of the speakers,
 and macOS hands that to nobody. Everything else works: dictation, the agent,
 audio and video files, and writing up a recording made elsewhere.
