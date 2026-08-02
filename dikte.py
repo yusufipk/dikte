@@ -141,6 +141,11 @@ class Dikte:
         self.tray = QSystemTrayIcon()
         self._apply_settings()
         self.tray.show()
+        # Both indicators go up empty now rather than in the middle of the
+        # first dictation, which is when putting a window on screen would have
+        # taken the keyboard out of whatever was being typed into.
+        for overlay in (self.overlay, self.ask_overlay):
+            overlay.prepare()
         # After the tray icon, since that is where it is said.
         QTimer.singleShot(1200, self._check_permission_to_paste)
 

@@ -164,6 +164,26 @@ class Overlay(QWidget):
     def set_seconds(self, seconds):
         self.seconds = seconds
 
+    def prepare(self):
+        """Put the window on screen empty, before anybody is waiting for it.
+
+        The first show() is the one that costs. macOS brings the application
+        forward to put a new window up — even an accessory one, even a panel
+        that does not accept focus — and the whole point of the indicator is
+        that it appears while you are typing somewhere else. So the first
+        dictation was the one that took the keyboard away, and only the first.
+
+        Every later appearance is a repaint of a window that is already mapped,
+        which is what _conceal() deliberately keeps it as. Doing that first
+        show at startup, with nothing painted in it, costs a moment nobody is
+        in the middle of and leaves the rest to be free of it.
+        """
+        self._resize_to_content()
+        self._reposition()
+        self.show()
+        macos.keep_visible_without_focus(self)
+        self._conceal()
+
     # ---- internals -----------------------------------------------------
 
     def _appear(self):
