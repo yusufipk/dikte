@@ -5,8 +5,8 @@ machine by default, a model cleans it up (dropping the *uh*s, the restarts, the
 missing punctuation), and the result lands in your clipboard and is pasted into
 whatever window you were typing in.
 
-Built for KDE Plasma 6 on Wayland. No dependencies beyond system packages:
-just the Python standard library and PyQt6.
+Built for KDE Plasma 6 on Wayland, and it runs on macOS too. No dependencies
+beyond system packages: just the Python standard library and PyQt6.
 
 *[Türkçe README](README.tr.md)*
 
@@ -37,10 +37,35 @@ tools instead:
 sudo apt install pulseaudio-utils xclip xdotool ffmpeg
 ```
 
+On macOS:
+
+```sh
+brew install ffmpeg whisper-cpp python@3.13
+python3.13 -m pip install PyQt6
+
+./install.sh                 # or:  ./install.sh "Ctrl+Alt+Space" "Ctrl+Alt+D"
+dikte
+```
+
 `install.sh` adds the `dikte` command, a menu entry, an autostart entry and the
 two global shortcuts, whose keys are its two arguments. `./update.sh` pulls and
 puts all of that back, keeping the keys you chose; `./uninstall.sh` takes it away
 again and leaves your settings and dictations alone unless you pass `--purge`.
+On macOS the menu entry is `~/Applications/Dikte.app` and the autostart entry a
+launch agent; if PyQt6 lives in a virtualenv, point `DIKTE_PYTHON` at its
+`python3` before running any of the three.
+
+Two things on macOS need a word. **Auto-paste** presses Cmd+V through System
+Events, so the application running Dikte has to be allowed to control the
+computer, under System Settings → Privacy & Security → Accessibility — the
+first paste asks. And the **default shortcut is `Ctrl+Alt+Space`** rather than
+`Ctrl+Space`, which belongs to the input source switcher there; macOS accepts a
+combination one of its own shortcuts already uses and then never delivers it,
+so a key that does nothing is a key to change rather than a bug.
+
+**Recording a meeting is Linux-only.** It needs what comes out of the speakers,
+and macOS hands that to nobody. Everything else works: dictation, the agent,
+audio and video files, and writing up a recording made elsewhere.
 
 Speech to text and cleanup each pick a provider in the settings window, and both
 run here by default, on models of your own. The cloud is the other option:
@@ -84,8 +109,10 @@ running.
   cleanup on llama.cpp, neither installed beforehand: the settings window fetches
   the program and the model, verifies the sha256 and refuses a download published
   without one, then keeps a server alive while you dictate. The graphics card is
-  reached through CUDA, ROCm or Vulkan where the build allows. No key, no
-  account, nothing leaving the machine.
+  reached through CUDA, ROCm or Vulkan where the build allows, and through
+  Metal on a Mac. No key, no account, nothing leaving the machine.
+  (whisper.cpp publishes no macOS build, so there it comes from Homebrew:
+  `brew install whisper-cpp`. llama.cpp is downloaded as everywhere else.)
 - **Silence never reaches the API.** Handed near-silence, a transcription model
   invents a sentence instead of returning nothing ("Thanks for watching", or in
   Turkish "Altyazı M.K."). A recording is dropped when nothing rose 10 dB above
@@ -120,7 +147,7 @@ running.
   for a machine with neither CLI on it. Provider, model, permissions and working
   directory are under Settings → Agent, and commands close together stay in one
   conversation.
-- **Meetings** are recorded from the microphone and the speaker output at the
+- **Meetings** (Linux only) are recorded from the microphone and the speaker output at the
   same time, which settles who said what by the channel a voice arrived on
   instead of guessing at it. The two sides are transcribed separately and
   interleaved into one timestamped transcript, and a second model, configured
@@ -137,7 +164,7 @@ running.
   right-click to delete.
 - **Turkish and English interface**, following the system locale by default.
 
-## The global shortcuts need one logout
+## The global shortcuts need one logout, on Linux
 
 KWin only reads `kglobalshortcutsrc` at startup, so the shortcuts `install.sh`
 writes will not fire until you log out and back in. Until then, Settings →
@@ -146,13 +173,18 @@ itself. The difference: it does not swallow the key, so `Ctrl+Space` also reache
 the focused application (some editors will pop up autocomplete). The listener
 needs your user in the `input` group: `sudo usermod -aG input $USER`.
 
+None of which applies on macOS: Carbon binds the combination to the running
+application, it is live the moment Dikte starts, it swallows the key, and it
+asks for no permission at all. There is nothing to wait for and no listener to
+turn on, so that box is not on the tab there.
+
 ## Layout
 
 ```
 dikte.py          entry point, tray icon, state machine
 cli.py            the command line: every verb, and what it answers with
 ipc.py            one request and one reply over the local socket
-audio.py          PCM capture: pw-record for dictation, ffmpeg for a meeting
+audio.py          PCM capture: pw-record or avfoundation, ffmpeg for a meeting
 meeting.py        channel split, speaker labelling, cleanup, minutes
 assistant.py      running a dictation through Claude Code, Codex or OpenRouter
 api.py            transcription and cleanup requests (stdlib only)
@@ -164,13 +196,21 @@ vad.py            deciding whether a recording holds speech at all
 filetranscribe.py file transcription: ffmpeg, chunking, timestamps
 overlay.py        the corner indicator
 settings_ui.py    settings window
-hotkey.py         KDE shortcut installation and the evdev listener
-paste.py          wl-clipboard and ydotool wrappers
+hotkey.py         KDE and GNOME shortcuts, the evdev listener, Carbon
+paste.py          wl-clipboard, xclip, pbcopy, and the key press beside each
 i18n.py           the string table
 ```
 
 The indicator is drawn through XWayland, because a Wayland client cannot place a
-window in a screen corner; `dikte.py` sets `QT_QPA_PLATFORM=xcb` for that.
+window in a screen corner; `dikte.py` sets `QT_QPA_PLATFORM=xcb` for that. macOS
+needs no such thing, and the line is skipped there.
+
+Three platforms, and the platform-specific half is four files: `audio.py`,
+`paste.py`, `hotkey.py` and the asset names in `ggml.py`. Each holds a group per
+platform and one line that chooses between them, rather than a branch inside
+every function. `tests/support.py` has `linux_only` and `macos_only` for the
+tests that pin one of those halves; everything else is expected to pass
+everywhere.
 
 ## License
 

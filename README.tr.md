@@ -4,8 +4,8 @@
 çevrilir, bir model transkripti temizler (ıı'lar, tekrarlar, eksik noktalama),
 sonuç panoya kopyalanır ve o an yazdığın pencereye yapıştırılır.
 
-KDE Plasma 6 / Wayland için yazıldı. Sistem paketleri dışında bağımlılığı yok:
-sadece Python standart kütüphanesi ve PyQt6.
+KDE Plasma 6 / Wayland için yazıldı, macOS'ta da çalışır. Sistem paketleri
+dışında bağımlılığı yok: sadece Python standart kütüphanesi ve PyQt6.
 
 *[English README](README.md)*
 
@@ -36,11 +36,36 @@ araçlarıyla çalışır:
 sudo apt install pulseaudio-utils xclip xdotool ffmpeg
 ```
 
+macOS için:
+
+```sh
+brew install ffmpeg whisper-cpp python@3.13
+python3.13 -m pip install PyQt6
+
+./install.sh                 # ya da:  ./install.sh "Ctrl+Alt+Space" "Ctrl+Alt+D"
+dikte
+```
+
 `install.sh` `dikte` komutunu, menü girdisini, oturum açılışında otomatik
 başlatmayı ve iki global kısayolu kurar; tuşları da iki argümanı. `./update.sh`
 son sürümü çeker ve bunları senin seçtiğin tuşlarla yerine koyar;
 `./uninstall.sh` hepsini geri alır, `--purge` demedikçe ayarlarına ve
-diktelerine dokunmaz.
+diktelerine dokunmaz. macOS'ta menü girdisi `~/Applications/Dikte.app`, otomatik
+başlatma ise bir launch agent; PyQt6 bir sanal ortamdaysa üçünü de çalıştırmadan
+önce `DIKTE_PYTHON` değişkenini o ortamın `python3`'üne yönlendir.
+
+macOS'ta iki noktanın söylenmesi gerekiyor. **Otomatik yapıştırma** Cmd+V'yi
+System Events üzerinden basar, bu yüzden Dikte'yi çalıştıran uygulamanın
+bilgisayarı kontrol etme izni olmalı: Sistem Ayarları → Gizlilik ve Güvenlik →
+Erişilebilirlik — ilk yapıştırmada zaten sorulur. Ve **varsayılan kısayol
+`Ctrl+Space` değil `Ctrl+Alt+Space`**, çünkü orada `Ctrl+Space` girdi kaynağı
+değiştirmeye ait; macOS kendi kısayollarından birinin kullandığı bir
+kombinasyonu kabul eder ama hiç iletmez, yani hiçbir şey yapmayan bir tuş hata
+değil, değiştirilecek bir tuştur.
+
+**Toplantı kaydı yalnızca Linux'ta.** Hoparlörden çıkan sesi gerektiriyor ve
+macOS bunu kimseye vermiyor. Geri kalan her şey çalışır: dikte, ajan, ses ve
+video dosyaları, başka yerde alınmış bir kaydın yazıya dökülmesi.
 
 Sesi yazıya çevirme ve temizleme, ayarlar penceresinde ayrı ayrı sağlayıcı
 seçer; ikisi de varsayılan olarak burada, kendi modellerinle çalışır. Bulutu
@@ -84,7 +109,7 @@ olmasını ister.
   whisper.cpp, temizleme llama.cpp üzerinde; ikisini de önceden kurman gerekmez:
   ayarlar penceresi programı ve modeli indirir, sha256'sını doğrular,
   checksum'suz yayınlanmış bir indirmeyi reddeder, sen dikte ettikçe sunucuyu
-  ayakta tutar. Derleme destekliyorsa ekran kartına CUDA, ROCm ya da Vulkan
+  ayakta tutar. Mac'te Metal, başka yerde derleme destekliyorsa CUDA, ROCm ya da Vulkan
   üzerinden ulaşılır. Anahtar yok, hesap yok, makineden çıkan bir şey yok.
 - **Sessizlik API'ye gitmez.** Sessize yakın bir ses verildiğinde model boş dize
   döndürmez, bir cümle uydurur ("Altyazı M.K.", "Thanks for watching"). *O
@@ -118,7 +143,7 @@ olmasını ister.
   OpenRouter ise ikisi de kurulu olmayan bir makinede düz soru cevap için
   duruyor. Sağlayıcı, model, izinler ve çalışma dizini Ayarlar → Ajan
   sekmesinde; arka arkaya verilen komutlar tek bir konuşmada kalır.
-- **Toplantılar** mikrofonla hoparlör çıkışından aynı anda kaydedilir; kimin ne
+- **Toplantılar** (yalnızca Linux) mikrofonla hoparlör çıkışından aynı anda kaydedilir; kimin ne
   dediği tahmin edilmez, sesin hangi kanaldan geldiğiyle belli olur. İki taraf
   ayrı ayrı yazıya çevrilip tek bir zaman damgalı transkriptte birleştirilir,
   ardından Ayarlar → Toplantı sekmesinden seçtiğin ikinci bir model kendi
@@ -144,13 +169,18 @@ yakalar. Tek farkı: tuşu yutmaz, yani `Ctrl+Space` odaktaki uygulamaya da ilet
 (bazı editörlerde otomatik tamamlama açılabilir). Dinleyici kullanıcının `input`
 grubunda olmasını gerektirir: `sudo usermod -aG input $USER`.
 
+macOS'ta bunların hiçbiri geçerli değil: Carbon kombinasyonu çalışan
+uygulamaya bağlar, Dikte açılır açılmaz etkindir, tuşu yutar ve hiçbir izin
+istemez. Beklenecek bir şey ve açılacak bir dinleyici olmadığı için o kutu
+orada sekmede yok.
+
 ## Dosyalar
 
 ```
 dikte.py          giriş noktası, tepsi simgesi, durum makinesi
 cli.py            komut satırı: bütün fiiller ve verdikleri cevap
 ipc.py            yerel sokette bir istek, bir cevap
-audio.py          PCM kaydı: diktede pw-record, toplantıda ffmpeg
+audio.py          PCM kaydı: pw-record ya da avfoundation, toplantıda ffmpeg
 meeting.py        kanal ayırma, konuşmacı etiketi, temizleme, tutanak
 assistant.py      dikteyi Claude Code, Codex ya da OpenRouter'dan geçirme
 api.py            transkript ve temizleme istekleri (yalnız stdlib)
@@ -162,13 +192,21 @@ vad.py            kayıtta gerçekten konuşma var mı kararı
 filetranscribe.py dosyadan transkript: ffmpeg, parçalama, zaman damgaları
 overlay.py        köşedeki gösterge
 settings_ui.py    ayarlar penceresi
-hotkey.py         KDE kısayol kurulumu ve evdev dinleyici
-paste.py          wl-clipboard ve ydotool sarmalayıcıları
+hotkey.py         KDE ve GNOME kısayolları, evdev dinleyici, Carbon
+paste.py          wl-clipboard, xclip, pbcopy ve her birinin tuş basımı
 i18n.py           metin tablosu
 ```
 
 Gösterge XWayland üzerinden çizilir; Wayland'da bir pencereyi belirli bir köşeye
 yerleştirmenin yolu yok, `dikte.py` bu yüzden `QT_QPA_PLATFORM=xcb` ayarlar.
+macOS'ta buna gerek yok, orada o satır atlanır.
+
+Üç platform var ve platforma özgü yarı dört dosyada: `audio.py`, `paste.py`,
+`hotkey.py` ve `ggml.py` içindeki dosya adları. Her biri platform başına bir
+grup ve aralarından seçen tek bir satır tutuyor; her fonksiyonun içinde bir
+dallanma yok. `tests/support.py` içinde bu yarılardan birini sabitleyen
+testler için `linux_only` ve `macos_only` var; geri kalan her testin her
+yerde geçmesi bekleniyor.
 
 ## Lisans
 
