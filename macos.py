@@ -247,6 +247,58 @@ def press_keys(modifiers, key_code):
     return True
 
 
+_front_before = 0
+
+
+def remember_the_front():
+    """Note which application has the keyboard, before the indicator goes up.
+
+    Putting any window on screen — a panel that cannot become key, belonging
+    to an accessory application, shown without activating — still leaves the
+    window that had the keyboard no longer holding it. The application stays
+    frontmost, so nothing looks different, but a typed character now arrives
+    nowhere. Which is exactly what a dictation ends by doing.
+
+    So who it was is written down here, and give_the_keyboard_back() hands it
+    over again before the transcript is typed.
+    """
+    if not available():
+        return 0
+    global _front_before
+    try:
+        workspace = _send(_runtime().objc_getClass(b"NSWorkspace"),
+                          b"sharedWorkspace")
+        app = _send(workspace, b"frontmostApplication")
+        _front_before = _send(app, b"processIdentifier", ctypes.c_int) if app else 0
+    except (OSError, AttributeError, TypeError, ValueError):
+        _front_before = 0
+    return _front_before
+
+
+def give_the_keyboard_back():
+    """Make that application key again, so what is typed reaches it.
+
+    It is already the frontmost one, so nothing moves on screen and nothing
+    the user did is undone: this only restores the part macOS quietly took
+    when the indicator appeared.
+    """
+    if not available() or not _front_before:
+        return False
+
+    def call():
+        cls = _runtime().objc_getClass(b"NSRunningApplication")
+        app = _send(cls, b"runningApplicationWithProcessIdentifier:",
+                    ctypes.c_void_p, [ctypes.c_int], _front_before)
+        if not app:
+            raise ValueError("that application is gone")
+        # NSApplicationActivateIgnoringOtherApps, so the window that was there
+        # before the indicator gets the keyboard rather than whatever Dikte's
+        # own activation would hand it to.
+        _send(app, b"activateWithOptions:", ctypes.c_bool, [ctypes.c_ulong], 1 << 1)
+
+    return _try("activateWithOptions:", call)
+
+
 def type_text(text, chunk=16):
     """Send `text` to whatever has the keyboard, as if it had been typed.
 

@@ -518,6 +518,8 @@ class Dikte:
     def start(self):
         if self.state != IDLE or self.recording:
             return
+        # Before the indicator, which is what costs the keyboard.
+        macos.remember_the_front()
         self.overlay.show_recording()
         self._begin_recording(DICTATION)
         self._set_state(RECORDING)
@@ -525,6 +527,7 @@ class Dikte:
     def start_ask(self):
         if self.ask_state != IDLE or self.recording:
             return
+        macos.remember_the_front()
         self.ask_overlay.show_recording(asking=True)
         self._begin_recording(ASK)
         self._set_ask_state(RECORDING)

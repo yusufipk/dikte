@@ -258,6 +258,10 @@ def type_out(text, delay=0.12):
 
     time.sleep(delay)
     if here is MACOS:
+        # The indicator took the keyboard off whatever window had it, without
+        # moving anything on screen. Handed back here, or the characters go
+        # out to nobody.
+        macos.give_the_keyboard_back()
         if not macos.type_text(text):
             raise PasteError(t("Could not type the transcript."))
         return
@@ -285,6 +289,7 @@ def press(shortcut="ctrl+v", delay=0.12):
 
     time.sleep(delay)  # let the selection settle and focus come back
     if here is MACOS:
+        macos.give_the_keyboard_back()
         _press_here(shortcut)
     else:
         _press_through_tool(here, shortcut)
