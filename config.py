@@ -421,6 +421,12 @@ DEFAULTS = {
     "local_llm_reasoning": "none",
     "cleanup_prompt": "",           # empty -> language-specific default
     "auto_paste": True,
+    # How the transcript gets there: pressing paste, or typing it out. Typing
+    # leaves the clipboard alone — what you had copied is still there
+    # afterwards — and needs no key combination to mean paste in the window
+    # receiving it. It is slower on a long transcript, which is the only reason
+    # it is not the default.
+    "type_instead_of_pasting": False,
     "paste_shortcut": "cmd+v" if MACOS else "ctrl+v",
     "restore_clipboard": False,
     "mic_target": "",

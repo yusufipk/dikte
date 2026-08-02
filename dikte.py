@@ -758,7 +758,9 @@ class Dikte:
                 QSystemTrayIcon.MessageIcon.Warning, 10000,
             )
         else:
-            action = t("Pasted") if self.conf["auto_paste"] else t("Copied")
+            action = (t("Copied") if not self.conf["auto_paste"]
+                      else t("Typed") if self.conf["type_instead_of_pasting"]
+                      else t("Pasted"))
             self.overlay.show_done(
                 t("{action}: {preview}", action=action, preview=_preview(text))
             )

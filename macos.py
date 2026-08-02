@@ -17,6 +17,7 @@ standard library and PyQt6, and this is four messages.
 import ctypes
 import ctypes.util
 import sys
+import time
 
 from PyQt6.QtWidgets import QApplication
 
@@ -242,6 +243,57 @@ def press_keys(modifiers, key_code):
             core.CFRelease(event)
     except (OSError, AttributeError, TypeError, ValueError) as exc:
         print(f"dikte: could not press the key ({exc})", file=sys.stderr)
+        return False
+    return True
+
+
+def type_text(text, chunk=16):
+    """Send `text` to whatever has the keyboard, as if it had been typed.
+
+    No clipboard and no Cmd+V: the characters travel in the event itself, so
+    nothing anybody had copied is overwritten and no key combination has to
+    mean paste in the window receiving it.
+
+    A few characters at a time, because a single event carrying a paragraph is
+    dropped by some applications. Each pair is a press and a release of the one
+    key that carries a string, which is how macOS delivers text that has no key
+    of its own.
+    """
+    if not available() or not text:
+        return False
+    services = _services()
+    if services is None:
+        return False
+    try:
+        services.CGEventCreateKeyboardEvent.restype = ctypes.c_void_p
+        services.CGEventCreateKeyboardEvent.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint16, ctypes.c_bool]
+        services.CGEventKeyboardSetUnicodeString.argtypes = [
+            ctypes.c_void_p, ctypes.c_ulong, ctypes.c_void_p]
+        services.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
+        core = ctypes.cdll.LoadLibrary(ctypes.util.find_library("CoreFoundation"))
+        core.CFRelease.argtypes = [ctypes.c_void_p]
+
+        for start in range(0, len(text), chunk):
+            piece = text[start:start + chunk]
+            # UTF-16, which is what a UniChar is, and surrogate pairs count as
+            # the two units they are rather than the one character they spell.
+            units = piece.encode("utf-16-le")
+            buffer = ctypes.create_string_buffer(units, len(units))
+            for down in (True, False):
+                event = services.CGEventCreateKeyboardEvent(None, 0, down)
+                if not event:
+                    return False
+                services.CGEventKeyboardSetUnicodeString(
+                    event, len(units) // 2, buffer)
+                services.CGEventPost(CG_HID_EVENT_TAP, event)
+                core.CFRelease(event)
+            # Posted faster than this, a run of events arrives at some
+            # applications with pieces missing: the tail of a sentence, usually,
+            # which is the half nobody notices is gone.
+            time.sleep(0.004)
+    except (OSError, AttributeError, TypeError, ValueError) as exc:
+        print(f"dikte: could not type the text ({exc})", file=sys.stderr)
         return False
     return True
 

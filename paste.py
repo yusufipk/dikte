@@ -88,7 +88,8 @@ Desktop = collections.namedtuple(
     "Desktop",
     # The two programs, the packages to install them from, how to build the key
     # press, and what else to say when the key press fails.
-    "clipboard keyboard packages read_command copy_command key_command key_hint",
+    "clipboard keyboard packages read_command copy_command key_command "
+    "type_command key_hint",
 )
 
 WAYLAND = Desktop(
@@ -98,6 +99,9 @@ WAYLAND = Desktop(
     read_command=["wl-paste", "--no-newline"],
     copy_command=["wl-copy"],
     key_command=_ydotool_command,
+    # `--` so that a transcript beginning with a dash is text and not a flag,
+    # and no delay between keys: this is a paragraph, not a demonstration.
+    type_command=["ydotool", "type", "--key-delay", "0", "--"],
     key_hint="Is ydotoold running? (systemctl --user status ydotool)",
 )
 
@@ -108,6 +112,7 @@ X11 = Desktop(
     read_command=["xclip", "-selection", "clipboard", "-out"],
     copy_command=["xclip", "-selection", "clipboard", "-in"],
     key_command=_xdotool_command,
+    type_command=["xdotool", "type", "--clearmodifiers", "--"],
     key_hint="",
 )
 
@@ -123,6 +128,8 @@ MACOS = Desktop(
     read_command=["pbpaste"],
     copy_command=["pbcopy"],
     key_command=_quartz_keys,
+    # Not a program: macos.type_text carries the characters in the event.
+    type_command=[],
     key_hint="Allow the application running Dikte to control your computer, "
              "under System Settings → Privacy & Security → Accessibility.",
 )
@@ -220,6 +227,43 @@ def _press_through_tool(here, shortcut):
     command = here.key_command(shortcut)
     try:
         res = subprocess.run(command, capture_output=True, text=True, timeout=10)
+    except (subprocess.SubprocessError, OSError) as exc:
+        raise PasteError(t("Could not run {tool}: {error}",
+                           tool=here.keyboard, error=exc)) from exc
+    if res.returncode != 0:
+        message = t("{tool} failed: {error}", tool=here.keyboard,
+                    error=res.stderr.strip() or "unknown error")
+        raise PasteError(f"{message}\n{t(here.key_hint)}" if here.key_hint
+                         else message)
+
+
+def type_out(text, delay=0.12):
+    """Put `text` where the keyboard is, without going through the clipboard.
+
+    The other way round from press(): instead of copying and asking the window
+    to paste, the characters are sent as if they had been typed. Nothing
+    anybody had copied is lost, no key combination has to mean paste in the
+    window receiving it, and there is no clipboard left holding a dictation
+    afterwards.
+
+    Slower for a long transcript, which is why it is a setting rather than the
+    way it works.
+    """
+    here = desktop()
+    if not paste_ready():
+        raise PasteError(
+            f"{t('Dikte is not allowed to press keys.')}\n{t(here.key_hint)}"
+            if here is MACOS else
+            t("{tool} not found, cannot paste automatically.", tool=here.keyboard))
+
+    time.sleep(delay)
+    if here is MACOS:
+        if not macos.type_text(text):
+            raise PasteError(t("Could not type the transcript."))
+        return
+    try:
+        res = subprocess.run([*here.type_command, text],
+                             capture_output=True, text=True, timeout=30)
     except (subprocess.SubprocessError, OSError) as exc:
         raise PasteError(t("Could not run {tool}: {error}",
                            tool=here.keyboard, error=exc)) from exc
