@@ -3,8 +3,26 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PY="$(command -v python3 || true)"
 USER_NAME="$(id -un)"
+
+MACOS=0
+[[ "$(uname -s)" == "Darwin" ]] && MACOS=1
+
+# install.sh's search, repeated here because this script talks to dikte.py too.
+find_python() {
+  local candidate found
+  for candidate in "${DIKTE_PYTHON:-}" "$DIR/.venv/bin/python3" \
+                   python3 python3.13 python3.12 python3.11; do
+    [[ -n "$candidate" ]] || continue
+    found="$(command -v "$candidate" 2>/dev/null)" || continue
+    if "$found" -c 'import PyQt6.QtWidgets' 2>/dev/null; then
+      printf '%s' "$found"
+      return 0
+    fi
+  done
+  command -v python3 || true
+}
+PY="$(find_python)"
 
 say()  { printf '  %s\n' "$1"; }
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; }
@@ -82,8 +100,13 @@ echo
 # writing them.
 shortcut="$(setting shortcut)"
 cancel_shortcut="$(setting cancel_shortcut)"
+if ((MACOS)); then
+  default_shortcut="Ctrl+Alt+Space"    # Ctrl+Space switches the input source
+else
+  default_shortcut="Ctrl+Space"
+fi
 # Positional, so a chosen discard key cannot be passed without the other one.
-"$DIR/install.sh" "${shortcut:-Ctrl+Space}" "${cancel_shortcut:-}"
+"$DIR/install.sh" "${shortcut:-$default_shortcut}" "${cancel_shortcut:-}"
 
 # 5. The running instance ---------------------------------------------------
 # It is still running the code from before the pull.
