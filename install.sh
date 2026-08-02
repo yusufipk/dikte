@@ -11,6 +11,7 @@ MACOS=0
 [[ "$(uname -s)" == "Darwin" ]] && MACOS=1
 MAC_APP="$HOME/Applications/Dikte.app"
 LAUNCH_AGENT="$HOME/Library/LaunchAgents/com.github.yusufipk.dikte.plist"
+LOG_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/dikte.log"
 
 # Ctrl+Space belongs to the input source switcher on macOS: a key pressed there
 # never reaches Dikte, so the default is one modifier along.
@@ -103,9 +104,10 @@ fi
 # bundle to have been allowed to control the computer. Neither can be arranged
 # from a script, so both are said out loud.
 if ((MACOS)); then
-  say  "Auto-paste presses Cmd+V through System Events, which needs permission:"
+  say  "Auto-paste presses Cmd+V itself, which macOS grants per application:"
   say  "System Settings → Privacy & Security → Accessibility → allow Dikte"
-  say  "(or the terminal you start it from). The first paste asks for it."
+  say  "(or the terminal you start it from). Dikte asks on its first run, and"
+  say  "says so in the menu bar when it has not been allowed."
 elif [[ "${XDG_SESSION_TYPE:-}" != "x11" ]] && command -v ydotool >/dev/null; then
   if systemctl --user is-active --quiet ydotool 2>/dev/null \
      || systemctl --user is-active --quiet ydotoold 2>/dev/null; then
@@ -162,14 +164,16 @@ if ((MACOS)); then
 </dict>
 </plist>
 EOF
+  # --gui, because LaunchServices starts this with no arguments and dikte.py
+  # with none of those is the command line looking for an instance to talk to.
   cat > "$MAC_APP/Contents/MacOS/dikte" <<EOF
 #!/bin/sh
-exec "$PY" "$DIR/dikte.py" "\$@"
+exec "$PY" "$DIR/dikte.py" --gui "\$@"
 EOF
   chmod +x "$MAC_APP/Contents/MacOS/dikte"
   ok "Application bundle: $MAC_APP"
 
-  mkdir -p "$(dirname "$LAUNCH_AGENT")"
+  mkdir -p "$(dirname "$LAUNCH_AGENT")" "$(dirname "$LOG_FILE")"
   cat > "$LAUNCH_AGENT" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -183,6 +187,10 @@ EOF
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><false/>
   <key>ProcessType</key><string>Interactive</string>
+  <!-- Started by launchd, so there is no terminal for it to complain to.
+       Without these, a Dikte that dies on startup does so in silence. -->
+  <key>StandardOutPath</key><string>$LOG_FILE</string>
+  <key>StandardErrorPath</key><string>$LOG_FILE</string>
 </dict>
 </plist>
 EOF

@@ -122,6 +122,14 @@ TR = {
     "the macOS command line tools": "macOS komut satırı araçlarını",
     "{shortcut} is not one key and its modifiers.":
         "{shortcut} bir tuş ve değiştiricilerinden oluşmuyor.",
+    "Dikte is not allowed to press keys.": "Dikte'nin tuşlara basma izni yok.",
+    "Could not press {shortcut}.": "{shortcut} basılamadı.",
+    "Dikte may not press keys yet, so what you dictate will be copied but not "
+    "pasted. Allow it under System Settings → Privacy & Security → "
+    "Accessibility, then restart Dikte.":
+        "Dikte'nin henüz tuşlara basma izni yok; dikte ettiğin metin panoya "
+        "kopyalanır ama yapıştırılmaz. Sistem Ayarları → Gizlilik ve Güvenlik → "
+        "Erişilebilirlik altından izin ver, sonra Dikte'yi yeniden başlat.",
     "Allow the application running Dikte to control your computer, "
     "under System Settings → Privacy & Security → Accessibility.":
         "Sistem Ayarları → Gizlilik ve Güvenlik → Erişilebilirlik altında, "

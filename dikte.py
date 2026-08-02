@@ -35,6 +35,7 @@ import i18n  # noqa: E402
 import ipc  # noqa: E402
 import macos  # noqa: E402
 import meeting  # noqa: E402
+import paste  # noqa: E402
 from i18n import t  # noqa: E402
 from meeting import MeetingPipeline  # noqa: E402
 from overlay import Overlay  # noqa: E402
@@ -140,6 +141,8 @@ class Dikte:
         self.tray = QSystemTrayIcon()
         self._apply_settings()
         self.tray.show()
+        # After the tray icon, since that is where it is said.
+        QTimer.singleShot(1200, self._check_permission_to_paste)
 
     # ---- tray ----------------------------------------------------------
 
@@ -471,6 +474,10 @@ class Dikte:
             "agent": assistant.display_name(self.conf),
             "provider": assistant.provider(self.conf),
             "listener": self.listener.running,
+            # Whether a paste would land. Asked of the running instance rather
+            # than worked out by whoever is asking: macOS grants this to one
+            # application at a time, and `dikte status` is a different one.
+            "can_paste": paste.paste_ready(),
         }
 
     def reload_settings(self):
@@ -861,6 +868,26 @@ class Dikte:
 
         if wanted:
             threading.Thread(target=warm, daemon=True).start()
+
+    def _check_permission_to_paste(self):
+        """Say, once at startup, if a paste would go nowhere.
+
+        macOS grants the right to press a key per application and answers a
+        press it did not allow by reporting that it went through. Left alone,
+        that is a dictation which transcribes correctly, says it pasted, and
+        puts nothing anywhere — with no error to look up. So it is asked
+        beforehand, and asking with the prompt opens the pane that grants it.
+        """
+        if not cfg.MACOS or not self.conf["auto_paste"] or paste.paste_ready():
+            return
+        macos.trusted_to_type(ask=True)
+        self.tray.showMessage(
+            "Dikte",
+            t("Dikte may not press keys yet, so what you dictate will be copied "
+              "but not pasted. Allow it under System Settings → Privacy & "
+              "Security → Accessibility, then restart Dikte."),
+            QSystemTrayIcon.MessageIcon.Warning, 12000,
+        )
 
     def _apply_settings(self):
         self.overlay.corner = self.conf["overlay_corner"]

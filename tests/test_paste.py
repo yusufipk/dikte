@@ -15,6 +15,7 @@ import unittest
 from typing import ClassVar
 from unittest import mock
 
+import hotkey
 import paste
 from tests.support import (DikteTest, FakeCompleted, linux_only, macos_only,
                            only_these_tools)
@@ -48,8 +49,8 @@ class Chooser(DikteTest):
         self.assertIs(self.under(), paste.WAYLAND)
 
 
-class DesktopContract:
-    """What both desktops owe. Each of them subclasses this once, below."""
+class ClipboardContract:
+    """What all three owe for the clipboard. Each subclasses it once, below."""
 
     env: ClassVar[dict] = {}
     here = None
@@ -139,7 +140,13 @@ class DesktopContract:
             paste.copy_bytes(b"\x89PNG\r\n")
         self.assertEqual(run.call_args.kwargs["input"], b"\x89PNG\r\n")
 
-    # ---- pressing the key -------------------------------------------------
+
+class KeyToolContract(ClipboardContract):
+    """What a desktop that presses keys by running a program owes on top.
+
+    macOS is not one of them: it posts the event itself, because permission to
+    press a key belongs to whoever posts it. Its half of this is below.
+    """
 
     def press(self, shortcut, result=None):
         with only_these_tools(self.here.keyboard), \
@@ -183,7 +190,7 @@ class DesktopContract:
 
 
 @linux_only
-class Wayland(DesktopContract, DikteTest):
+class Wayland(KeyToolContract, DikteTest):
     env: ClassVar[dict] = {"XDG_SESSION_TYPE": "wayland",
                            "WAYLAND_DISPLAY": "wayland-0"}
     here = paste.WAYLAND
@@ -210,7 +217,7 @@ class Wayland(DesktopContract, DikteTest):
 
 
 @linux_only
-class X11(DesktopContract, DikteTest):
+class X11(KeyToolContract, DikteTest):
     env: ClassVar[dict] = {"XDG_SESSION_TYPE": "x11", "DISPLAY": ":0"}
     here = paste.X11
 
@@ -234,15 +241,26 @@ class X11(DesktopContract, DikteTest):
 
 
 @macos_only
-class MacOS(DesktopContract, DikteTest):
-    """The third group, and it owes the same list as the other two.
+class MacOS(ClipboardContract, DikteTest):
+    """The third group. The clipboard half is the same promise as the other two;
+    the key press is not a program at all.
 
-    What it does differently is press the key: AppleScript has no press and
-    release to spell out, only a keystroke and the modifiers it is held down
-    with, so the command is one string rather than a sequence of codes.
+    Dikte posts the event itself, because macOS gives permission to press a key
+    to whoever posts it — a helper it shelled out to would be judged by an
+    application nobody has allowed, and, worse, told to press a key it may not,
+    macOS answers that it did. So the check happens before the press.
     """
 
     here = paste.MACOS
+
+    def setUp(self):
+        super().setUp()
+        self.pressed = []
+        self.trusted = True
+        self.patch_attr(paste.macos, "trusted_to_type", lambda: self.trusted)
+        self.patch_attr(paste.macos, "press_keys",
+                        lambda mods, key: self.pressed.append((mods, key)) or True)
+        self.patch_attr(paste.time, "sleep", lambda seconds: None)
 
     def test_the_session_variables_change_nothing_here(self):
         """A Mac has no XDG_SESSION_TYPE, and something that set one anyway
@@ -251,35 +269,61 @@ class MacOS(DesktopContract, DikteTest):
                                           "DISPLAY": ":0"}, clear=True):
             self.assertIs(paste.desktop(), paste.MACOS)
 
-    def test_the_modifiers_are_held_down_around_one_keystroke(self):
-        self.assertEqual(
-            self.press("cmd+v"),
-            ["osascript", "-e", 'tell application "System Events" to '
-                                'keystroke "v" using {command down}'])
+    # ---- the combination, as Quartz counts it ----------------------------
 
-    def test_three_keys(self):
-        self.assertIn("using {command down, shift down}", self.press("cmd+shift+v")[-1])
+    def test_a_modifier_and_a_key(self):
+        self.assertEqual(paste.MACOS.key_command("cmd+v"),
+                         (paste.macos.CG_FLAGS["cmd"], hotkey.MAC_KEYS["v"]))
+
+    def test_two_modifiers_are_one_mask(self):
+        mods, key = paste.MACOS.key_command("cmd+shift+v")
+        self.assertEqual(mods, paste.macos.CG_FLAGS["cmd"]
+                         | paste.macos.CG_FLAGS["shift"])
+        self.assertEqual(key, hotkey.MAC_KEYS["v"])
 
     def test_command_is_the_key_linux_calls_super(self):
-        self.assertEqual(self.press("cmd+v"), self.press("super+v"))
-        self.assertEqual(self.press("command+v"), self.press("meta+v"))
+        for name in ("command", "meta", "super"):
+            with self.subTest(name=name):
+                self.assertEqual(paste.MACOS.key_command(f"{name}+v"),
+                                 paste.MACOS.key_command("cmd+v"))
 
-    def test_a_key_that_cannot_be_typed_goes_in_by_its_code(self):
-        """AppleScript types characters; Return is not one, so it is pressed."""
-        self.assertIn("key code 36 using {command down}", self.press("cmd+return")[-1])
+    def test_case_and_spacing_do_not_matter_for_the_combination(self):
+        self.assertEqual(paste.MACOS.key_command(" CMD + V "),
+                         paste.MACOS.key_command("cmd+v"))
 
     def test_a_combination_with_no_key_in_it_is_refused(self):
         with self.assertRaises(paste.PasteError) as caught:
             paste.MACOS.key_command("cmd+shift")
         self.assertIn("cmd+shift", str(caught.exception))
 
-    def test_a_failure_points_at_the_permission_it_needs(self):
-        """osascript is always installed, so a failure is never a missing
-        program: it is macOS refusing to let it type."""
+    # ---- pressing it -----------------------------------------------------
+
+    def test_the_event_is_posted_once_with_the_right_numbers(self):
+        paste.press("cmd+v")
+        self.assertEqual(self.pressed, [(paste.macos.CG_FLAGS["cmd"],
+                                         hotkey.MAC_KEYS["v"])])
+
+    def test_without_permission_nothing_is_pressed_and_it_says_why(self):
+        """The failure macOS will not report: told to press a key it has not
+        allowed, it says the key went through. Asked first instead."""
+        self.trusted = False
+        self.assertFalse(paste.paste_ready())
         with self.assertRaises(paste.PasteError) as caught:
-            self.press("cmd+v", FakeCompleted(
-                returncode=1, stderr="osascript is not allowed to send keystrokes"))
+            paste.press("cmd+v")
+        self.assertEqual(self.pressed, [])
         self.assertIn("Accessibility", str(caught.exception))
+
+    def test_a_post_that_fails_is_an_error_rather_than_a_shrug(self):
+        self.patch_attr(paste.macos, "press_keys", lambda mods, key: False)
+        with self.assertRaises(paste.PasteError):
+            paste.press("cmd+v")
+
+    def test_no_program_is_run_to_press_a_key(self):
+        """The point of the whole group: no second process, and so no second
+        application for macOS to judge the permission by."""
+        with mock.patch.object(subprocess, "run") as run:
+            paste.press("cmd+v")
+        run.assert_not_called()
 
 
 if __name__ == "__main__":

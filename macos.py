@@ -29,7 +29,30 @@ NS_ACCESSORY = 1
 NS_CAN_JOIN_ALL_SPACES = 1 << 0
 NS_FULL_SCREEN_AUXILIARY = 1 << 8
 
+# CGEventFlags, which are not the numbers Carbon uses for the same keys.
+CG_FLAGS = {
+    "cmd": 1 << 20, "command": 1 << 20, "meta": 1 << 20, "super": 1 << 20,
+    "shift": 1 << 17,
+    "ctrl": 1 << 18, "control": 1 << 18,
+    "alt": 1 << 19, "option": 1 << 19,
+}
+# kCGHIDEventTap: posted where the hardware would have, so every application
+# sees it the way it sees a real key.
+CG_HID_EVENT_TAP = 0
+
 _objc = None
+_appservices = None
+
+
+def _services():
+    """ApplicationServices, which holds both Quartz and the accessibility check."""
+    global _appservices
+    if _appservices is None:
+        path = ctypes.util.find_library("ApplicationServices")
+        if not path:
+            return None
+        _appservices = ctypes.cdll.LoadLibrary(path)
+    return _appservices
 
 
 def available():
@@ -43,26 +66,59 @@ def available():
     return sys.platform == "darwin" and QApplication.platformName() == "cocoa"
 
 
+def _runtime():
+    """libobjc, loaded once, with the functions used below declared.
+
+    Declaring them matters more than it looks: a pointer returned as a C int is
+    truncated on a 64-bit build, and the class would arrive at objc_msgSend as
+    a different address than the one it was given.
+    """
+    global _objc
+    if _objc is None:
+        lib = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
+        lib.objc_getClass.restype = ctypes.c_void_p
+        lib.objc_getClass.argtypes = [ctypes.c_char_p]
+        lib.sel_registerName.restype = ctypes.c_void_p
+        lib.sel_registerName.argtypes = [ctypes.c_char_p]
+        _objc = lib
+    return _objc
+
+
 def _send(receiver, selector, restype=ctypes.c_void_p, argtypes=(), *args):
     """[receiver selector:args].
 
     objc_msgSend is variadic, and ctypes cannot call a variadic function on
     arm64 without being told the argument types, so every call declares its own.
     """
-    global _objc
-    if _objc is None:
-        _objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
-        _objc.objc_getClass.restype = ctypes.c_void_p
-        _objc.objc_getClass.argtypes = [ctypes.c_char_p]
-        _objc.sel_registerName.restype = ctypes.c_void_p
-        _objc.sel_registerName.argtypes = [ctypes.c_char_p]
-    _objc.objc_msgSend.restype = restype
-    _objc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p, *argtypes]
-    return _objc.objc_msgSend(receiver, _objc.sel_registerName(selector), *args)
+    objc = _runtime()
+    objc.objc_msgSend.restype = restype
+    objc.objc_msgSend.argtypes = [ctypes.c_void_p, ctypes.c_void_p, *argtypes]
+    return objc.objc_msgSend(receiver, objc.sel_registerName(selector), *args)
 
 
 def _app():
-    return _send(_objc.objc_getClass(b"NSApplication"), b"sharedApplication")
+    # Through _runtime() rather than the module-level name: Python evaluates
+    # the arguments before the call, so reaching for the library here while
+    # _send() is still the only thing that loads it is an AttributeError — one
+    # the callers below would have caught and turned into a silent "no".
+    return _send(_runtime().objc_getClass(b"NSApplication"), b"sharedApplication")
+
+
+def _try(what, call):
+    """Run one of these and say whether it worked, out loud when it did not.
+
+    Every failure here is a window behaving as if the call had never been
+    written: the indicator hides itself, or takes the keyboard with it. Both
+    look like a bug in the recording rather than in three lines of ctypes, and
+    a caught exception with nothing said is what makes them look that way.
+    """
+    try:
+        call()
+    except (OSError, AttributeError, TypeError, ValueError) as exc:
+        print(f"dikte: macOS refused {what} ({exc}); "
+              f"the indicator may not behave", file=sys.stderr)
+        return False
+    return True
 
 
 def live_in_the_menu_bar():
@@ -78,12 +134,9 @@ def live_in_the_menu_bar():
     """
     if not available():
         return False
-    try:
-        _send(_app(), b"setActivationPolicy:", ctypes.c_bool, [ctypes.c_long],
-              NS_ACCESSORY)
-    except (OSError, AttributeError, TypeError, ValueError):
-        return False
-    return True
+    return _try("setActivationPolicy:", lambda: _send(
+        _app(), b"setActivationPolicy:", ctypes.c_bool, [ctypes.c_long],
+        NS_ACCESSORY))
 
 
 def keep_visible_without_focus(widget):
@@ -99,17 +152,96 @@ def keep_visible_without_focus(widget):
     """
     if not available():
         return False
-    try:
-        window = _send(ctypes.c_void_p(int(widget.winId())), b"window")
-        if not window:
-            return False
-        _send(window, b"setHidesOnDeactivate:", None, [ctypes.c_bool], False)
-        _send(window, b"setCollectionBehavior:", None, [ctypes.c_ulong],
-              NS_CAN_JOIN_ALL_SPACES | NS_FULL_SCREEN_AUXILIARY)
-    except (OSError, AttributeError, TypeError, ValueError):
+
+    def call():
         # A Qt that hands out something other than an NSView, or a macOS that
         # has stopped answering to these. An indicator that hides too eagerly
         # is worth less than one that stays; neither is worth a crash.
+        window = _send(ctypes.c_void_p(int(widget.winId())), b"window")
+        if not window:
+            raise ValueError("no NSWindow behind this widget")
+        _send(window, b"setHidesOnDeactivate:", None, [ctypes.c_bool], False)
+        _send(window, b"setCollectionBehavior:", None, [ctypes.c_ulong],
+              NS_CAN_JOIN_ALL_SPACES | NS_FULL_SCREEN_AUXILIARY)
+
+    return _try("setHidesOnDeactivate:", call)
+
+
+def trusted_to_type(ask=False):
+    """Whether macOS will let this process press a key on your behalf.
+
+    Worth asking rather than finding out: told to press a key it has not been
+    allowed to, macOS answers that it did. osascript exits 0, System Events
+    reports no error, and the key reaches nobody — a dictation that ends in a
+    transcript nothing was ever pasted from, and no reason given anywhere.
+
+    `ask` opens the system's own dialogue, which is the only way to the pane
+    that grants it, and returns the answer as it stands rather than waiting.
+    """
+    if not available():
+        return False
+    services = _services()
+    if services is None:
+        return False
+    try:
+        if not ask:
+            services.AXIsProcessTrusted.restype = ctypes.c_bool
+            return bool(services.AXIsProcessTrusted())
+        core = ctypes.cdll.LoadLibrary(ctypes.util.find_library("CoreFoundation"))
+        core.CFStringCreateWithCString.restype = ctypes.c_void_p
+        core.CFStringCreateWithCString.argtypes = [ctypes.c_void_p,
+                                                   ctypes.c_char_p, ctypes.c_uint32]
+        core.CFDictionaryCreate.restype = ctypes.c_void_p
+        core.CFDictionaryCreate.argtypes = [ctypes.c_void_p, ctypes.c_void_p,
+                                            ctypes.c_void_p, ctypes.c_long,
+                                            ctypes.c_void_p, ctypes.c_void_p]
+        key = ctypes.c_void_p(core.CFStringCreateWithCString(
+            None, b"AXTrustedCheckOptionPrompt", 0x08000100))   # kCFStringEncodingUTF8
+        true_value = ctypes.c_void_p.in_dll(core, "kCFBooleanTrue")
+        keys = (ctypes.c_void_p * 1)(key)
+        values = (ctypes.c_void_p * 1)(true_value)
+        options = core.CFDictionaryCreate(None, keys, values, 1, None, None)
+        services.AXIsProcessTrustedWithOptions.restype = ctypes.c_bool
+        services.AXIsProcessTrustedWithOptions.argtypes = [ctypes.c_void_p]
+        return bool(services.AXIsProcessTrustedWithOptions(options))
+    except (OSError, AttributeError, TypeError, ValueError) as exc:
+        print(f"dikte: could not ask macOS about accessibility ({exc})",
+              file=sys.stderr)
+        return False
+
+
+def press_keys(modifiers, key_code):
+    """Post one key down and up, with `modifiers` held, as this process.
+
+    Through Quartz rather than by shelling out to osascript: one fewer process
+    on every dictation, and — the reason it matters — the permission belongs to
+    whoever posts the event. osascript is a program of Apple's that Dikte
+    happens to run, and macOS judges it by the application responsible for it,
+    which is not always the one somebody has allowed in the settings.
+    """
+    if not available():
+        return False
+    services = _services()
+    if services is None:
+        return False
+    try:
+        services.CGEventCreateKeyboardEvent.restype = ctypes.c_void_p
+        services.CGEventCreateKeyboardEvent.argtypes = [
+            ctypes.c_void_p, ctypes.c_uint16, ctypes.c_bool]
+        services.CGEventSetFlags.argtypes = [ctypes.c_void_p, ctypes.c_uint64]
+        services.CGEventPost.argtypes = [ctypes.c_uint32, ctypes.c_void_p]
+        core = ctypes.cdll.LoadLibrary(ctypes.util.find_library("CoreFoundation"))
+        core.CFRelease.argtypes = [ctypes.c_void_p]
+
+        for down in (True, False):
+            event = services.CGEventCreateKeyboardEvent(None, key_code, down)
+            if not event:
+                return False
+            services.CGEventSetFlags(event, modifiers)
+            services.CGEventPost(CG_HID_EVENT_TAP, event)
+            core.CFRelease(event)
+    except (OSError, AttributeError, TypeError, ValueError) as exc:
+        print(f"dikte: could not press the key ({exc})", file=sys.stderr)
         return False
     return True
 
@@ -124,8 +256,5 @@ def come_to_the_front():
     """
     if not available():
         return False
-    try:
-        _send(_app(), b"activateIgnoringOtherApps:", None, [ctypes.c_bool], True)
-    except (OSError, AttributeError, TypeError, ValueError):
-        return False
-    return True
+    return _try("activateIgnoringOtherApps:", lambda: _send(
+        _app(), b"activateIgnoringOtherApps:", None, [ctypes.c_bool], True))
