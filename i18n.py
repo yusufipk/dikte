@@ -104,6 +104,8 @@ TR = {
     "Could not start recording: {error}": "Kayıt başlatılamadı: {error}",
     "No audio recorder found. Install pulseaudio-utils or pipewire-audio.":
         "Ses kayıt aracı bulunamadı. pulseaudio-utils ya da pipewire-audio kur.",
+    "ffmpeg not found. Install it with: brew install ffmpeg":
+        "ffmpeg bulunamadı. Şununla kur: brew install ffmpeg",
     "Audio recorder stopped before receiving sound: {error}":
         "Ses kayıt aracı veri alamadan kapandı: {error}",
     "Could not copy to clipboard: {error}": "Panoya kopyalanamadı: {error}",
@@ -117,6 +119,13 @@ TR = {
     "{tool} failed: {error}": "{tool} hatası: {error}",
     "Is ydotoold running? (systemctl --user status ydotool)":
         "ydotoold çalışıyor mu? (systemctl --user status ydotool)",
+    "the macOS command line tools": "macOS komut satırı araçlarını",
+    "{shortcut} is not one key and its modifiers.":
+        "{shortcut} bir tuş ve değiştiricilerinden oluşmuyor.",
+    "Allow the application running Dikte to control your computer, "
+    "under System Settings → Privacy & Security → Accessibility.":
+        "Sistem Ayarları → Gizlilik ve Güvenlik → Erişilebilirlik altında, "
+        "Dikte'yi çalıştıran uygulamaya bilgisayarı kontrol etme izni ver.",
 
     # --- api errors ----------------------------------------------------
     "{service} API key is empty. Add it in Settings.":
@@ -317,6 +326,16 @@ TR = {
         "KWin, kısayol ayarlarını yalnızca açılışta okur. 'Kur' dedikten sonra kısayol "
         "Sistem Ayarları → Kısayollar altında görünür ama oturumu yeniden açana kadar "
         "tetiklenmez. O zamana kadar yerleşik dinleyiciyi kullanabilirsin.",
+    "Dikte registers these itself and they work at once, for as long as it is "
+    "running. macOS keeps its own shortcuts to itself: a combination one of "
+    "them already uses is accepted here and then never arrives, so pick "
+    "another one if a key does nothing.":
+        "Dikte bu kısayolları kendi kaydeder ve çalıştığı sürece anında "
+        "geçerlidir. macOS kendi kısayollarını kimseye açmaz: onlardan birinin "
+        "kullandığı bir kombinasyon burada kabul edilir ama hiç ulaşmaz; bir "
+        "tuş hiçbir şey yapmıyorsa başka bir kombinasyon seç.",
+    "Active while Dikte runs: {shortcut}":
+        "Dikte çalışırken etkin: {shortcut}",
     "Shortcut conflict": "Kısayol çakışması",
     "{shortcut} is also used by:\n\n{list}\n\nInstall anyway?":
         "{shortcut} şu girdilerde de kullanılıyor:\n\n{list}\n\nYine de kurulsun mu?",
@@ -329,6 +348,14 @@ TR = {
     "Could not write the desktop file: {error}": "Desktop dosyası yazılamadı: {error}",
     "Could not write kglobalshortcutsrc: {error}": "kglobalshortcutsrc yazılamadı: {error}",
     "Could not parse the shortcut: {shortcut}": "Kısayol çözümlenemedi: {shortcut}",
+    "Could not reach the macOS shortcut API: {error}":
+        "macOS kısayol arayüzüne erişilemedi: {error}",
+    "Could not listen for shortcuts: error {code}":
+        "Kısayollar dinlenemedi: hata {code}",
+    "{shortcut} could not be registered; another Dikte shortcut is already on "
+    "it. Pick another one in Settings → Shortcuts.":
+        "{shortcut} kaydedilemedi; başka bir Dikte kısayolu bu tuşta. "
+        "Ayarlar → Kısayollar'dan başka bir kombinasyon seç.",
     "Cannot read /dev/input. Your user needs to be in the 'input' group:\n"
     "  sudo usermod -aG input $USER   (then log out and back in)":
         "/dev/input okunamıyor. Kullanıcının 'input' grubunda olması gerekir:\n"
@@ -523,6 +550,10 @@ TR = {
         "kaydedilen saklanıyor.",
     "ffmpeg not found. Install it to record a meeting.":
         "ffmpeg bulunamadı. Toplantı kaydı için kur.",
+    "Recording a meeting needs what comes out of the speakers, which macOS "
+    "does not hand out. Not supported yet.":
+        "Toplantı kaydı hoparlörden çıkan sesi gerektiriyor, macOS bunu "
+        "vermiyor. Henüz desteklenmiyor.",
     "Could not work out which speaker output to record. Pick one in "
     "Settings → Meeting.":
         "Hangi ses çıkışının kaydedileceği anlaşılamadı. Ayarlar → Toplantı "
@@ -562,6 +593,12 @@ TR = {
         "Yapabiliyorsan kulaklık tak. Hoparlörde mikrofonun karşı tarafı da "
         "duyar; aynı anda iki kanala birden düşen satır ayıklanıyor ama bu "
         "onarım, hiç gerekmemesi kadar temiz olmuyor.",
+    "Recording a meeting needs what comes out of the speakers, and macOS hands "
+    "that to nobody. Everything else on this tab still applies to a recording "
+    "made elsewhere and written up here.":
+        "Toplantı kaydı hoparlörden çıkan sesi gerektiriyor ve macOS bunu "
+        "kimseye vermiyor. Bu sekmedeki diğer her şey, başka yerde alınıp "
+        "burada yazıya dökülen bir kayıt için hâlâ geçerli.",
     "Who is talking": "Kimler konuşuyor",
     "Me": "Ben",
     "Other side": "Karşı taraf",

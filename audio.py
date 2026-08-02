@@ -1,19 +1,23 @@
 """Raw PCM capture with a live level meter.
 
-Dictation records one source through pw-record. A meeting records two of them at
-once, the microphone and what comes out of the speakers, and for that it goes
-through ffmpeg instead: one process reading both devices and merging them into
-the two channels of a single stream, which is the only way the two stay aligned
-with each other over an hour.
+Dictation records one source through pw-record, or through ffmpeg's
+avfoundation input on a Mac, which has no sound server to ask. A meeting
+records two sources at once, the microphone and what comes out of the speakers,
+and for that it goes through ffmpeg everywhere: one process reading both
+devices and merging them into the two channels of a single stream, which is the
+only way the two stay aligned with each other over an hour. macOS hands out no
+speaker output at all, so a meeting is Linux-only for now.
 """
 
 import array
 import json
 import math
 import os
+import re
 import shutil
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import wave
@@ -57,9 +61,7 @@ class Recorder(QObject):
             return
         cmd = recording_command(target)
         if not cmd:
-            self.failed.emit(t(
-                "No audio recorder found. Install pulseaudio-utils or pipewire-audio."
-            ))
+            self.failed.emit(missing_recorder_message())
             return
 
         try:
@@ -169,13 +171,13 @@ def read_exactly(stream, size):
 
     `read(n)` hands over what has arrived rather than what was asked for, and
     how much that is belongs to whoever is on the other end: parec, told the
-    latency to keep, fills a chunk at a time, while a recorder handing its
-    output to a pipe unasked may give over a fraction of one. Both the level
-    meter and the silence check are measured in chunks of one known length —
-    vad.analyse() is given the seconds a chunk lasts and multiplies — so a
-    stream that arrives in pieces is put back together here rather than
-    counted as if each piece were a chunk of its own, which would say a
-    two-second recording held fifteen seconds of speech.
+    latency to keep, fills a chunk at a time, while ffmpeg's avfoundation input
+    hands over a fraction of one. Both the level meter and the silence check
+    are measured in chunks of one known length — vad.analyse() is given the
+    seconds a chunk lasts and multiplies — so a stream that arrives in pieces is
+    put back together here rather than counted as if each piece were a chunk of
+    its own, which would say a two-second recording held fifteen seconds of
+    speech.
     """
     parts, remaining = [], size
     while remaining > 0:
@@ -197,6 +199,31 @@ def write_wav(pcm, rate=RATE, channels=CHANNELS, width=SAMPLE_WIDTH):
     return path
 
 
+def missing_recorder_message():
+    """What to install, when recording_command() came back with nothing."""
+    if sys.platform == "darwin":
+        return t("ffmpeg not found. Install it with: brew install ffmpeg")
+    return t("No audio recorder found. Install pulseaudio-utils or pipewire-audio.")
+
+
+def _avfoundation_command(target=""):
+    """Capture through ffmpeg, which is the only way in on a Mac.
+
+    There is no sound server to ask and no small recorder beside it, but ffmpeg
+    is already a dependency for the audio-file tab, so this costs nothing extra.
+    `default` is avfoundation's own name for whatever the system input is, and a
+    target is the device name rather than its index: indexes move when a
+    microphone is plugged in, names do not.
+    """
+    if not shutil.which("ffmpeg"):
+        return []
+    return [
+        "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error",
+        "-f", "avfoundation", "-i", f":{target or 'default'}",
+        "-ar", str(RATE), "-ac", str(CHANNELS), "-f", "s16le", "-",
+    ]
+
+
 def recording_command(target=""):
     """Return a raw-s16 capture command for the sound server on this desktop.
 
@@ -204,6 +231,8 @@ def recording_command(target=""):
     service, and its source names are the same ones shown by list_sources().
     Keep pw-record as the fallback for minimal native-PipeWire installations.
     """
+    if sys.platform == "darwin":
+        return _avfoundation_command(target)
     if shutil.which("parec"):
         cmd = [
             "parec", "--record", "--raw", f"--rate={RATE}",
@@ -263,6 +292,15 @@ class MeetingRecorder(QObject):
 
     def start(self, path, mic_target="", system_target="", max_seconds=14400):
         if self.active:
+            return
+        if sys.platform == "darwin":
+            # Said here rather than left to default_monitor() returning nothing:
+            # this is a platform that cannot do it at all, not a machine whose
+            # output could not be worked out.
+            self.failed.emit(t(
+                "Recording a meeting needs what comes out of the speakers, which "
+                "macOS does not hand out. Not supported yet."
+            ))
             return
         if not shutil.which("ffmpeg"):
             self.failed.emit(t("ffmpeg not found. Install it to record a meeting."))
@@ -477,8 +515,46 @@ def _sources():
         return []
 
 
+# `[1] MacBook Pro Microphone`, once ffmpeg's own prefix has been taken off.
+_AVFOUNDATION_DEVICE = re.compile(r"\[\d+\]\s+(.+)")
+
+
+def _avfoundation_sources():
+    """[(name, name)] for every audio device avfoundation lists.
+
+    ffmpeg prints the list only when it is asked to open a device it cannot
+    open, so it always ends in an error and the exit code says nothing. The
+    device name is both halves of the pair: macOS has no second, friendlier
+    name to show beside it the way PulseAudio does.
+    """
+    if not shutil.which("ffmpeg"):
+        return []
+    try:
+        res = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-f", "avfoundation",
+             "-list_devices", "true", "-i", ""],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return []
+
+    out, listening = [], False
+    for line in res.stderr.splitlines():
+        _, _, rest = line.partition("] ")
+        if rest.endswith("devices:"):
+            listening = rest.startswith("AVFoundation audio devices")
+            continue
+        match = _AVFOUNDATION_DEVICE.match(rest) if listening else None
+        if match:
+            name = match.group(1).strip()
+            out.append((name, name))
+    return out
+
+
 def list_sources():
     """[(name, description)] for every real input source."""
+    if sys.platform == "darwin":
+        return _avfoundation_sources()
     return [
         (src.get("name", ""), src.get("description") or src.get("name", ""))
         for src in _sources()
@@ -491,7 +567,11 @@ def list_monitors():
 
     Recording a monitor is recording whatever is being played, which in a
     meeting is the other participants and nothing of your own microphone.
+    macOS publishes no such device, so the list is empty there and the meeting
+    tab says so rather than offering a choice that cannot be made.
     """
+    if sys.platform == "darwin":
+        return []
     return [
         (src.get("name", ""), src.get("description") or src.get("name", ""))
         for src in _sources()
@@ -501,7 +581,7 @@ def list_monitors():
 
 def default_monitor():
     """The monitor of the output sound is currently going to, or ''."""
-    if not shutil.which("pactl"):
+    if sys.platform == "darwin" or not shutil.which("pactl"):
         return ""
     try:
         sink = subprocess.run(

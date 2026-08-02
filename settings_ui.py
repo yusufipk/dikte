@@ -106,11 +106,21 @@ REASONING_LEVELS = [
     ("Low", "low"), ("Medium", "medium"), ("High", "high"),
     ("Very high", "xhigh"), ("Maximum", "max"),
 ]
-PASTE_SHORTCUTS = ["ctrl+v", "ctrl+shift+v", "shift+insert"]
+PASTE_SHORTCUTS = (["cmd+v", "cmd+shift+v"] if cfg.MACOS
+                   else ["ctrl+v", "ctrl+shift+v", "shift+insert"])
 # Offered for every global shortcut, which keeps them one kind of field rather
 # than four. The boxes stay editable: this is a shortlist of combinations that
 # are usually free, not the set of ones that work.
+#
+# The macOS list is a different shortlist rather than the same one relabelled:
+# Ctrl+Space switches the input source there, Cmd+Space is Spotlight, and
+# Cmd+Alt+Space is the Finder search window, so none of the three is free.
 SHORTCUTS = [
+    "Ctrl+Alt+Space", "Ctrl+Shift+Space", "Cmd+Shift+Space",
+    "Ctrl+Alt+A", "Ctrl+Alt+D", "Ctrl+Alt+M", "Ctrl+Alt+Q",
+    "Cmd+Alt+A", "Cmd+Alt+D", "Cmd+Alt+M",
+    "F13", "F14", "F15",
+] if cfg.MACOS else [
     "Ctrl+Space", "Ctrl+Alt+Space", "Ctrl+Shift+Space", "Meta+Space",
     "Ctrl+Alt+A", "Ctrl+Alt+D", "Ctrl+Alt+M", "Ctrl+Alt+Q",
     "Meta+A", "Meta+D", "Meta+M",
@@ -985,6 +995,10 @@ class SettingsWindow(QDialog):
         sources_form.addRow(t("The other participants"), self.meeting_system)
 
         note = QLabel(t(
+            "Recording a meeting needs what comes out of the speakers, and macOS "
+            "hands that to nobody. Everything else on this tab still applies to "
+            "a recording made elsewhere and written up here."
+        ) if cfg.MACOS else t(
             "Wear headphones if you can. Through speakers your microphone hears "
             "the other side as well, and although a line that lands on both "
             "channels at once is dropped again, the repair is never as clean as "
@@ -1232,8 +1246,17 @@ class SettingsWindow(QDialog):
             "combination also reaches the focused application."
         ))
         layout.addWidget(self.evdev_enabled)
+        # There is no waiting for a desktop to pick the shortcut up on macOS,
+        # and so nothing for a listener to cover: the box below would be a
+        # switch for a thing that is already how the shortcuts work.
+        self.evdev_enabled.setVisible(not cfg.MACOS)
 
         note = QLabel(t(
+            "Dikte registers these itself and they work at once, for as long as "
+            "it is running. macOS keeps its own shortcuts to itself: a "
+            "combination one of them already uses is accepted here and then "
+            "never arrives, so pick another one if a key does nothing."
+        ) if cfg.MACOS else t(
             "KWin only reads shortcut settings at startup. After 'Install' the "
             "shortcut shows up under System Settings → Shortcuts, but it will not "
             "fire until you log out and back in. Until then, use the built-in listener."
@@ -1832,15 +1855,34 @@ class SettingsWindow(QDialog):
         if ok:
             self.conf[spec.setting] = combo
             self.conf.save()
+            if cfg.MACOS:
+                # On Linux the desktop now holds the binding and Dikte has
+                # nothing left to do. Here the binding is Dikte's own, so it
+                # has to go and make it: the setting alone changes nothing.
+                self.applied.emit()
         self._refresh_shortcut_status(which)
 
     def _remove_shortcut(self, which):
-        hotkey.remove_shortcut(hotkey.SHORTCUTS[which].desktop_id)
+        spec = hotkey.SHORTCUTS[which]
+        hotkey.remove_shortcut(spec.desktop_id)
+        if cfg.MACOS:
+            # The setting is the registration on macOS, so one goes with the
+            # other; on Linux the desktop entry is what was removed and the
+            # setting stays as the combination to install next time.
+            self.conf[spec.setting] = ""
+            self.conf.save()
+            self.applied.emit()
         self._refresh_shortcut_status(which)
 
     def _refresh_shortcut_status(self, which):
         _box, status, missing = self._shortcut_rows[which]
-        current = hotkey.shortcut_status(hotkey.SHORTCUTS[which].desktop_id)
+        spec = hotkey.SHORTCUTS[which]
+        if cfg.MACOS:
+            combo = self.conf[spec.setting]
+            status.setText(t("Active while Dikte runs: {shortcut}", shortcut=combo)
+                           if combo else missing)
+            return
+        current = hotkey.shortcut_status(spec.desktop_id)
         status.setText(
             t("Registered in {desktop}: {shortcut}",
               desktop=hotkey.desktop_name(), shortcut=current) if current

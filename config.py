@@ -5,11 +5,17 @@ import hashlib
 import json
 import os
 import pathlib
+import sys
 
 import api
 import ggml
 import i18n
 from i18n import t
+
+# Two of the defaults below differ on a Mac: pasting is done with command
+# rather than control, and Ctrl+Space is taken by the input source switcher,
+# which would leave a first run with a key that does nothing.
+MACOS = sys.platform == "darwin"
 
 
 def _xdg(var, default):
@@ -415,7 +421,7 @@ DEFAULTS = {
     "local_llm_reasoning": "none",
     "cleanup_prompt": "",           # empty -> language-specific default
     "auto_paste": True,
-    "paste_shortcut": "ctrl+v",
+    "paste_shortcut": "cmd+v" if MACOS else "ctrl+v",
     "restore_clipboard": False,
     "mic_target": "",
     "max_seconds": 300,
@@ -424,11 +430,13 @@ DEFAULTS = {
     "speech_margin_db": 10.0,     # how far speech must rise above the noise floor
     "min_voiced_seconds": 0.3,
     "filter_hallucinations": True,
-    "shortcut": "Ctrl+Space",
-    # Ctrl+Alt+Space rather than Escape: the combination the recording started
-    # with, one modifier along. Escape belongs to whatever window has focus, and
-    # while you are dictating something else usually has it.
-    "cancel_shortcut": "Ctrl+Alt+Space",
+    # Ctrl+Space everywhere but on macOS, where it switches the input source and
+    # would be lost to it; Ctrl+Alt+Space is free there and stays in the family.
+    "shortcut": "Ctrl+Alt+Space" if MACOS else "Ctrl+Space",
+    # One modifier along from the key the recording started with. Escape belongs
+    # to whatever window has focus, and while you are dictating something else
+    # usually has it.
+    "cancel_shortcut": "Ctrl+Alt+D" if MACOS else "Ctrl+Alt+Space",
     "evdev_hotkey": False,
     "overlay_corner": "bottom-left",
     "keep_audio": False,

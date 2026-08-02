@@ -96,7 +96,11 @@ class Dikte:
         self.ask_pipeline = Pipeline(self.conf)
         self.meeting_recorder = audio.MeetingRecorder()
         self.meetings = MeetingPipeline(self.conf)
-        self.evdev = hotkey.EvdevHotkey()
+        # What catches the global shortcuts. On Linux it is the fallback that
+        # covers the wait for KWin, and it is off unless asked for; on macOS
+        # there is nothing to fall back from, so it is how the shortcuts work.
+        self.listener = (hotkey.CarbonHotkey() if cfg.MACOS
+                         else hotkey.EvdevHotkey())
         # Before anything of ours is started: a server from a Dikte that was
         # killed outright is still holding a model in memory.
         ggml.sweep()
@@ -118,13 +122,13 @@ class Dikte:
         self.meetings.progress.connect(self._on_meeting_progress)
         self.meetings.finished.connect(self._on_meeting_finished)
         self.meetings.failed.connect(self._on_meeting_failed)
-        self.evdev.triggered.connect(self._on_evdev)
-        self.evdev.failed.connect(self._on_error)
+        self.listener.triggered.connect(self._on_hotkey)
+        self.listener.failed.connect(self._on_error)
 
         self.elapsed = QElapsedTimer()
         self.meeting_elapsed = QElapsedTimer()
         self.last_toggle = QElapsedTimer()
-        self.last_evdev = {}
+        self.last_press = {}
         self.ticker = QTimer()
         self.ticker.setInterval(100)
         self.ticker.timeout.connect(self._tick)
@@ -325,23 +329,29 @@ class Dikte:
         # that same press. Its lateness is also the proof we were waiting for
         # that the shortcut is live, which leaves the listener with nothing to
         # do but double every press.
-        timer = self.last_evdev.get(name)
-        if self.evdev.running and timer is not None and timer.elapsed() < ECHO_MS:
+        #
+        # None of which is true on macOS: there is no second registration to
+        # wait for, so a toggle arriving close behind a key press is somebody
+        # running `dikte toggle` while the last one is still fresh, and that is
+        # a request rather than an echo.
+        timer = self.last_press.get(name)
+        if (not cfg.MACOS and self.listener.running
+                and timer is not None and timer.elapsed() < ECHO_MS):
             self._retire_listener()
             return
         handler()
 
-    def _on_evdev(self, name):
-        timer = self.last_evdev.get(name)
+    def _on_hotkey(self, name):
+        timer = self.last_press.get(name)
         if timer is None:
-            timer = self.last_evdev[name] = QElapsedTimer()
+            timer = self.last_press[name] = QElapsedTimer()
         timer.restart()
         handlers = {"meeting": self._toggle_meeting, "ask": self._toggle_ask,
                     "cancel": self._cancel}
         handlers.get(name, self._toggle)()
 
     def _retire_listener(self):
-        self.evdev.stop()
+        self.listener.stop()
         self.conf["evdev_hotkey"] = False
         self.conf.save()
         self.tray.showMessage(
@@ -459,7 +469,7 @@ class Dikte:
             "meeting_message": self.meeting_message,
             "agent": assistant.display_name(self.conf),
             "provider": assistant.provider(self.conf),
-            "listener": self.evdev.running,
+            "listener": self.listener.running,
         }
 
     def reload_settings(self):
@@ -853,11 +863,14 @@ class Dikte:
         self._apply_local()
         self._build_tray()
         self._refresh_tray()
-        if self.conf["evdev_hotkey"]:
-            self.evdev.start({name: self.conf[spec.setting]
-                              for name, spec in hotkey.SHORTCUTS.items()})
+        # `evdev_hotkey` is the switch for the Linux fallback, and it is off by
+        # default because the KDE shortcut is what should be doing this. macOS
+        # has no such shortcut to defer to, so it does not read the switch.
+        if cfg.MACOS or self.conf["evdev_hotkey"]:
+            self.listener.start({name: self.conf[spec.setting]
+                                 for name, spec in hotkey.SHORTCUTS.items()})
         else:
-            self.evdev.stop()
+            self.listener.stop()
 
     def restart(self):
         """Replace this process with a fresh one, picking up code and settings."""
@@ -869,7 +882,7 @@ class Dikte:
 
     def shutdown(self):
         self._quitting = True
-        self.evdev.stop()
+        self.listener.stop()
         if self.recording:
             self.recorder.cancel()
         # A meeting in progress is closed properly rather than thrown away: the

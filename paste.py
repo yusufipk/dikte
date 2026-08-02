@@ -1,31 +1,51 @@
 """Clipboard and key injection, through whichever pair of programs is here.
 
 A Wayland session has wl-clipboard and ydotool, an X11 one has xclip and
-xdotool, and a session is one or the other. Which it is gets decided in one
-place, and each desktop is a small group of functions below it: another desktop,
-or another operating system, adds a group and a line to the chooser rather than
-a branch inside every function here.
+xdotool, and a session is one or the other. macOS has pbcopy and osascript and
+is neither. Which it is gets decided in one place, and each desktop is a small
+group of functions below it: another desktop, or another operating system, adds
+a group and a line to the chooser rather than a branch inside every function
+here.
 """
 
 import collections
 import os
 import shutil
 import subprocess
+import sys
 import time
 
 from i18n import t
 
 # Linux input event codes (linux/input-event-codes.h), which is what ydotool
 # takes. They are also the list of keys a paste shortcut may be built from, so
-# xdotool is held to the same table rather than being handed the text as typed.
+# xdotool and osascript are held to the same table rather than being handed the
+# text as typed. "cmd" is in here because it is the name macOS gives the key
+# Linux calls super, not because ydotool has ever been asked for one.
 KEYCODES = {
-    "ctrl": 29, "control": 29, "shift": 42, "alt": 56, "super": 125, "meta": 125,
+    "ctrl": 29, "control": 29, "shift": 42, "alt": 56, "option": 56,
+    "super": 125, "meta": 125, "cmd": 125, "command": 125,
     "v": 47, "insert": 110, "enter": 28, "return": 28,
 }
 
 # xdotool speaks X keysyms, which spell some of those differently.
-KEYSYMS = {"control": "ctrl", "meta": "super", "insert": "Insert",
+KEYSYMS = {"control": "ctrl", "meta": "super", "cmd": "super", "command": "super",
+           "option": "alt", "insert": "Insert",
            "enter": "Return", "return": "Return"}
+
+# AppleScript names the modifiers in a `using {…}` clause, and the same physical
+# key answers to both names: what Linux calls super is what macOS calls command.
+MODIFIER_PHRASES = {
+    "cmd": "command down", "command": "command down",
+    "super": "command down", "meta": "command down",
+    "ctrl": "control down", "control": "control down",
+    "shift": "shift down", "alt": "option down", "option": "option down",
+}
+
+# The keys AppleScript cannot type as a character, by their virtual key code.
+# There is no insert key on a Mac keyboard; the code is the one macOS maps it to
+# when an external keyboard has one.
+MAC_KEY_CODES = {"enter": 36, "return": 36, "insert": 114}
 
 
 class PasteError(Exception):
@@ -52,6 +72,27 @@ def _xdotool_command(shortcut):
     """xdotool takes the whole combination as one argument."""
     keys = [KEYSYMS.get(key, key) for key in _keys(shortcut)]
     return ["xdotool", "key", "--clearmodifiers", "+".join(keys)]
+
+
+def _osascript_command(shortcut):
+    """AppleScript presses the combination as one keystroke with its modifiers.
+
+    There is no press-and-release pair to build here: `keystroke "v" using
+    {command down}` is the whole event, and the modifiers are what it is held
+    down with rather than keys of their own.
+    """
+    keys = _keys(shortcut)
+    modifiers = [MODIFIER_PHRASES[key] for key in keys if key in MODIFIER_PHRASES]
+    rest = [key for key in keys if key not in MODIFIER_PHRASES]
+    if len(rest) != 1:
+        raise PasteError(t("{shortcut} is not one key and its modifiers.",
+                           shortcut=shortcut))
+    key = rest[0]
+    press = (f"key code {MAC_KEY_CODES[key]}" if key in MAC_KEY_CODES
+             else f'keystroke "{key}"')
+    using = f" using {{{', '.join(modifiers)}}}" if modifiers else ""
+    return ["osascript", "-e",
+            f'tell application "System Events" to {press}{using}']
 
 
 Desktop = collections.namedtuple(
@@ -81,6 +122,20 @@ X11 = Desktop(
     key_hint="",
 )
 
+# Both of these ship with macOS, so `packages` names no package: there is
+# nothing to install, and a missing one means something is wrong with the
+# system rather than with the setup.
+MACOS = Desktop(
+    clipboard="pbcopy",
+    keyboard="osascript",
+    packages="the macOS command line tools",
+    read_command=["pbpaste"],
+    copy_command=["pbcopy"],
+    key_command=_osascript_command,
+    key_hint="Allow the application running Dikte to control your computer, "
+             "under System Settings → Privacy & Security → Accessibility.",
+)
+
 
 def desktop():
     """The pair of programs this session's clipboard and keyboard go through.
@@ -89,6 +144,8 @@ def desktop():
     display server was up would otherwise be stuck with the wrong answer, and a
     test would have nowhere to say which one it means.
     """
+    if sys.platform == "darwin":
+        return MACOS
     if os.environ.get("XDG_SESSION_TYPE") == "x11":
         return X11
     if os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
@@ -125,7 +182,7 @@ def copy(text):
     here = desktop()
     if not shutil.which(here.clipboard):
         raise PasteError(t("{tool} not found. Install {packages}.",
-                           tool=here.clipboard, packages=here.packages))
+                           tool=here.clipboard, packages=t(here.packages)))
     try:
         res = _run_copy(text.encode("utf-8"))
     except (subprocess.SubprocessError, OSError) as exc:

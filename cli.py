@@ -717,7 +717,7 @@ def cmd_shortcut(opts):
     combo = (opts.combo or conf[spec.setting] or spec.fallback).strip()
     if not combo:
         return fail(opts, "no combination given and none stored; pass --combo", 2)
-    if hotkey.parse_shortcut(combo) == (None, None):
+    if not hotkey.understands(combo):
         return fail(opts, f"cannot parse that combination: {combo}", 2)
     clashes = hotkey.conflicting_shortcuts(combo, spec.desktop_id)
     if clashes and not opts.force:
@@ -765,7 +765,12 @@ def cmd_status(opts):
 def cmd_doctor(opts):
     """What the settings window checks behind its buttons, in one pass."""
     conf = cfg.Config()
-    wanted = ["pw-record", "wl-copy", "ydotool", "ffmpeg", "pactl", "kwriteconfig6",
+    # The programs each platform actually reaches for. Naming the other one's
+    # here would report half a dozen things missing that were never wanted.
+    system = (["ffmpeg", "pbcopy", "osascript", "whisper-server"] if cfg.MACOS
+              else ["pw-record", "wl-copy", "ydotool", "ffmpeg", "pactl",
+                    "kwriteconfig6"])
+    wanted = [*system,
               assistant.executable(assistant.provider(conf)) or "claude",
               cleanup.executable(cleanup.provider(conf))]
     programs = {name: shutil.which(name) or "" for name in wanted if name}
