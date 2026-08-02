@@ -212,6 +212,13 @@ class Dikte:
     def _tray_clicked(self, reason):
         if reason != QSystemTrayIcon.ActivationReason.Trigger:
             return
+        # A click on a macOS menu bar icon opens the menu, and Qt reports that
+        # same click as a Trigger. Acting on it as well means every trip to
+        # Settings starts a recording nobody asked for. The menu is what the
+        # icon does there; on Linux the click is its own button and the menu is
+        # the right one.
+        if cfg.MACOS:
+            return
         # The icon ends whatever is being recorded rather than only a dictation.
         # The two shortcuts are each tied to their own mode, on purpose, but the
         # icon is one button: having it refuse to stop a recording it can see is

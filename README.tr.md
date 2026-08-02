@@ -88,7 +88,7 @@ yapıştırılır; modelin yanındaki kutudan düşünme seviyesini de seçebili
 
 | Ne | Nasıl |
 | --- | --- |
-| Kaydı başlat / bitir | `Ctrl+Space`, ya da tepsi simgesine tıkla |
+| Kaydı başlat / bitir | `Ctrl+Space`, ya da tepsi simgesine tıkla (macOS'ta simge menüyü açar) |
 | Kaydı iptal et | `Ctrl+Alt+Space`, tepsi menüsü, ya da `dikte cancel` |
 | Ajana sesle komut ver | Tepsi menüsü → *Claude'a sor*, ya da `dikte ask` |
 | Toplantıyı başlat / bitir | Tepsi menüsü → *Toplantı kaydet*, ya da `dikte meeting` |
