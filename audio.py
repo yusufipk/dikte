@@ -83,7 +83,7 @@ class Recorder(QObject):
         stdout = proc.stdout
         try:
             while True:
-                chunk = stdout.read(CHUNK_BYTES)
+                chunk = read_exactly(stdout, CHUNK_BYTES)
                 if not chunk:
                     break
                 peak, rms = chunk_levels(chunk)
@@ -162,6 +162,29 @@ class Recorder(QObject):
 
         path = write_wav(pcm)
         self.stopped.emit(path, frames / RATE, rms)
+
+
+def read_exactly(stream, size):
+    """`size` bytes from an unbuffered pipe, or what is left of it at the end.
+
+    `read(n)` hands over what has arrived rather than what was asked for, and
+    how much that is belongs to whoever is on the other end: parec, told the
+    latency to keep, fills a chunk at a time, while a recorder handing its
+    output to a pipe unasked may give over a fraction of one. Both the level
+    meter and the silence check are measured in chunks of one known length —
+    vad.analyse() is given the seconds a chunk lasts and multiplies — so a
+    stream that arrives in pieces is put back together here rather than
+    counted as if each piece were a chunk of its own, which would say a
+    two-second recording held fifteen seconds of speech.
+    """
+    parts, remaining = [], size
+    while remaining > 0:
+        piece = stream.read(remaining)
+        if not piece:
+            break
+        parts.append(piece)
+        remaining -= len(piece)
+    return b"".join(parts)
 
 
 def write_wav(pcm, rate=RATE, channels=CHANNELS, width=SAMPLE_WIDTH):
@@ -299,7 +322,9 @@ class MeetingRecorder(QObject):
         block = CHUNK_FRAMES * SAMPLE_WIDTH * 2
         try:
             while True:
-                chunk = stdout.read(block)
+                # Whole frames, or the stereo split below would read the two
+                # channels the wrong way round for the rest of the meeting.
+                chunk = read_exactly(stdout, block)
                 if not chunk:
                     break
                 mine, theirs = stereo_levels(chunk)
