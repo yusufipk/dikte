@@ -697,14 +697,20 @@ def cmd_test_key(opts):
 def cmd_shortcut(opts):
     conf = cfg.Config()
     if opts.shortcut == "status":
-        rows = {}
+        # macOS writes no shortcut down. Dikte registers what the settings hold
+        # for as long as it runs, so there is no file here whose absence could
+        # mean "not installed", and saying so would send somebody looking for a
+        # step that does not exist.
+        rows, lines = {}, []
         for name, spec in hotkey.SHORTCUTS.items():
-            rows[name] = {"registered": hotkey.shortcut_status(spec.desktop_id),
-                          "configured": conf[spec.setting]}
-        lines = [f"{name:8} {row['registered'] or '(not installed)':16} "
-                 f"setting: {row['configured'] or '(none)'}"
-                 for name, row in rows.items()]
-        lines.append(f"built-in listener: {'on' if conf['evdev_hotkey'] else 'off'}")
+            registered = hotkey.shortcut_status(spec.desktop_id)
+            configured = conf[spec.setting]
+            rows[name] = {"registered": registered, "configured": configured}
+            shown = (("(while Dikte runs)" if configured else "(none)")
+                     if cfg.MACOS else registered or "(not installed)")
+            lines.append(f"{name:8} {shown:19} setting: {configured or '(none)'}")
+        if not cfg.MACOS:
+            lines.append(f"built-in listener: {'on' if conf['evdev_hotkey'] else 'off'}")
         return out(opts, {"ok": True, "shortcuts": rows,
                           "listener": conf["evdev_hotkey"]}, "\n".join(lines))
 

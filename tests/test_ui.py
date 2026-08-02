@@ -320,6 +320,14 @@ class Overlay(DikteTest):
         self.assertTrue(flags & Qt.WindowType.WindowDoesNotAcceptFocus)
         self.assertTrue(flags & Qt.WindowType.WindowStaysOnTopHint)
 
+    def test_the_cocoa_call_is_skipped_on_a_platform_that_is_not_cocoa(self):
+        """winId() is an NSView under the cocoa plugin and a handle that is not
+        an object anywhere else; sending that a message takes the process with
+        it, which a test discovers as a run that stops mid-line."""
+        widget = self.overlay()
+        widget.show_recording()
+        overlay_module.keep_visible_off_screen_focus(widget)   # must be a no-op
+
     def test_recording_then_working_then_done(self):
         widget = self.overlay()
         widget.show_recording()
