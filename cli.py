@@ -32,6 +32,9 @@ import hotkey
 import ipc
 import meeting
 import paste
+from platforms import adapter
+
+runtime = adapter("runtime")
 
 NOT_RUNNING = 3
 
@@ -129,12 +132,16 @@ def _ask_instance(opts, cmd, wait=False, **args):
 
 
 def launch_gui(verb=""):
-    """No instance running, so become the application itself."""
-    args = [sys.executable, ipc.script_path()]
-    if verb:
-        args.append(verb)
-    args.append("--gui")
-    os.execv(sys.executable, args)
+    """No instance running, so become the application itself.
+
+    On Linux this replaces the process and never returns, which is what a
+    shortcut pressed on a fresh login relies on. A packaged Windows build has
+    no process to replace: the tray application is a second executable beside
+    this one, so it is started and this one stands down.
+    """
+    args = ([verb] if verb else []) + ["--gui"]
+    runtime.relaunch(ipc.gui_command(*args))
+    sys.exit(0)
 
 
 def _not_running(opts):
@@ -762,17 +769,36 @@ def cmd_status(opts):
     return out(opts, reply, "\n".join(lines))
 
 
+def _audio_devices():
+    """How many microphones and recordable outputs the sound system offers.
+
+    Asked here rather than assumed, because "no microphone" and "the microphone
+    is switched off in the privacy settings" look identical from a shortcut
+    that appears to do nothing.
+    """
+    try:
+        return {"microphones": len(audio.list_sources()),
+                "outputs": len(audio.list_monitors()), "error": ""}
+    except Exception as exc:      # noqa: BLE001 - whatever the sound library says
+        return {"microphones": 0, "outputs": 0, "error": str(exc)}
+
+
 def cmd_doctor(opts):
     """What the settings window checks behind its buttons, in one pass."""
     conf = cfg.Config()
-    wanted = ["pw-record", "wl-copy", "ydotool", "ffmpeg", "pactl", "kwriteconfig6",
+    # What has to be on the PATH is the platform's business: Linux records,
+    # copies, types and registers a shortcut through six outside programs, and
+    # Windows does all four inside this process.
+    wanted = [*runtime.PROGRAMS,
               assistant.executable(assistant.provider(conf)) or "claude",
               cleanup.executable(cleanup.provider(conf))]
     programs = {name: shutil.which(name) or "" for name in wanted if name}
     target = conf.transcribe_target()
     cleaner = cleanup.provider(conf)
+    devices = _audio_devices()
     checks = {
         "programs": programs,
+        "audio": devices,
         "transcription": {"provider": target.provider, "model": target.model,
                           "key": bool(target.api_key)},
         "cleanup": {"enabled": conf["cleanup_enabled"], "provider": cleaner,
@@ -784,6 +810,13 @@ def cmd_doctor(opts):
     }
     lines = [f"{'✓' if path else '✗'} {name:14} {path or 'not on your PATH'}"
              for name, path in programs.items()]
+    lines += [
+        f"{'✓' if devices['microphones'] else '✗'} microphones   "
+        f"{devices['microphones']} found"
+        + (f" ({devices['error']})" if devices["error"] else ""),
+        f"{'✓' if devices['outputs'] else '·'} speaker output "
+        f"{devices['outputs']} recordable, for meetings",
+    ]
     lines += [
         f"{'✓' if target.api_key else '✗'} {target.service} key, transcribing on "
         f"{target.model}",
@@ -1035,8 +1068,27 @@ def _needs_subcommand(parser):
     return show
 
 
+def prepare_output():
+    """Make sure the answers can reach whatever this was typed into.
+
+    Dikte answers with check marks, arrows, ellipses and, half the time, with
+    Turkish. A Windows console starts in the machine's ANSI codepage, and
+    printing a character that codepage has never heard of raises rather than
+    prints, so `dikte doctor` ends in a traceback where the answer should be.
+    UTF-8 is asked for, and a stream that will not have it falls back to
+    replacing what it cannot encode: a mangled character beats no answer.
+    """
+    runtime.prepare_console()
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError, OSError):
+            pass
+
+
 def run(argv):
     global _app
+    prepare_output()
     parser = build_parser()
     opts = parser.parse_args(argv)
     # No verb at all is the plain `dikte`, which means the settings window.

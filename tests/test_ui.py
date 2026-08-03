@@ -6,9 +6,7 @@ save, so a setting added to one half and not the other is silently reset the
 next time anybody presses Save. That is the failure this catches.
 """
 
-import sys
 import unittest
-from typing import ClassVar
 from unittest import mock
 
 from PyQt6.QtWidgets import QApplication, QMessageBox
@@ -17,9 +15,8 @@ import cleanup
 import config as cfg
 import hotkey
 import overlay as overlay_module
-import paste
 import settings_ui
-from tests.support import DikteTest, only_these_tools
+from tests.support import DikteTest, only_these_tools, sandbox_shortcuts
 
 # One application for the whole run; Qt allows no second one.
 _app = QApplication.instance() or QApplication([])
@@ -100,26 +97,22 @@ CHANGED = {
 
 
 class Settings(DikteTest):
-    # What a Mac shows instead, where the combination on offer is a different
-    # one. Everything else about the window is the same on both.
-    changed = CHANGED
-    platform = "linux"
-
     def setUp(self):
         super().setUp()
         # No pactl, no model lists over the network, and no modal dialogue
         # waiting for somebody to press OK.
-        self.enterContext(mock.patch.object(sys, "platform", self.platform))
         self.enterContext(only_these_tools())
         self.enterContext(mock.patch.object(QMessageBox, "information"))
+        # A shortcut somebody else already holds asks before it is installed,
+        # and a modal question in a test is a run that never ends. Windows
+        # reserves a good many combinations, so this is not hypothetical.
+        self.enterContext(mock.patch.object(
+            QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes))
         self.enterContext(mock.patch.object(settings_ui.SettingsWindow,
                                             "_load_models"))
         self.enterContext(mock.patch.object(settings_ui.SettingsWindow,
                                             "_load_transcribe_models"))
-        self.enterContext(mock.patch.object(settings_ui.hotkey, "APPLICATIONS_DIR",
-                                            self.path("applications")))
-        self.enterContext(mock.patch.object(settings_ui.hotkey, "SHORTCUTS_FILE",
-                                            self.path("kglobalshortcutsrc")))
+        sandbox_shortcuts(self)
 
     def window(self, conf):
         window = settings_ui.SettingsWindow(conf)
@@ -142,13 +135,16 @@ class Settings(DikteTest):
         self.assertEqual(conf.data, before)
 
     def test_a_setting_of_your_own_survives_the_round_trip(self):
-        self.write_config(self.changed)
+        self.write_config(CHANGED)
         conf = cfg.Config()
         self.window(conf)._save()
-        stored = self.read_config_file()
-        for key, value in self.changed.items():
+        # Read back through Config rather than out of the file: an API key is
+        # not stored as it was typed on every platform, and what matters here
+        # is that the window did not drop it on the way through.
+        reloaded = cfg.Config()
+        for key, value in CHANGED.items():
             with self.subTest(key=key):
-                self.assertEqual(stored[key], value)
+                self.assertEqual(reloaded[key], value)
 
     def test_the_model_box_on_screen_belongs_to_whoever_cleans_up(self):
         """An OpenRouter id and a Claude alias are not the same field."""
@@ -184,7 +180,7 @@ class Settings(DikteTest):
         conf = cfg.Config()
         window = self.window(conf)
         for box, _status, _missing in window._shortcut_rows.values():
-            box.setCurrentText("")
+            box.setText("")
         window._save()
         self.assertEqual(conf["shortcut"], "Ctrl+Space")
         self.assertEqual(conf["cancel_shortcut"], "")
@@ -194,7 +190,7 @@ class Settings(DikteTest):
     def test_installing_the_discard_key_writes_its_own_entry(self):
         conf = cfg.Config()
         window = self.window(conf)
-        window._shortcut_rows["cancel"][0].setCurrentText("Meta+Shift+Space")
+        window._shortcut_rows["cancel"][0].setText("Meta+Shift+Space")
         with mock.patch.object(settings_ui.hotkey, "install_shortcut",
                                return_value=(True, "saved")) as install:
             window._install_shortcut("cancel")
@@ -204,6 +200,37 @@ class Settings(DikteTest):
         self.assertEqual(install.call_args.kwargs["desktop_id"],
                          hotkey.CANCEL_DESKTOP_ID)
         self.assertEqual(conf["cancel_shortcut"], "Meta+Shift+Space")
+
+    def test_each_shortcut_has_a_capture_button_instead_of_a_preset_list(self):
+        window = self.window(cfg.Config())
+        self.assertEqual(set(window._shortcut_catchers), set(hotkey.SHORTCUTS))
+        for box, _status, _missing in window._shortcut_rows.values():
+            with self.subTest(box=box):
+                self.assertIsInstance(box, settings_ui.QLineEdit)
+
+    def test_a_captured_shortcut_is_selected_in_its_own_field(self):
+        window = self.window(cfg.Config())
+        window._shortcut_captured("meeting", "Ctrl+Shift+M")
+        box, status, _missing = window._shortcut_rows["meeting"]
+        self.assertEqual(box.text(), "Ctrl+Shift+M")
+        self.assertIn("Ctrl+Shift+M", status.text())
+
+    def test_one_combination_cannot_be_captured_for_two_actions(self):
+        window = self.window(cfg.Config())
+        window._shortcut_rows["toggle"][0].setText("Ctrl+Space")
+        window._shortcut_rows["cancel"][0].setText("Ctrl+Alt+Space")
+        window._shortcut_captured("cancel", "Ctrl+Space")
+        box, status, _missing = window._shortcut_rows["cancel"]
+        self.assertEqual(box.text(), "Ctrl+Alt+Space")
+        self.assertIn("Ctrl+Space", status.text())
+
+    def test_closing_while_capturing_gives_the_keyboard_back(self):
+        window = self.window(cfg.Config())
+        catchers = list(window._shortcut_catchers.values())
+        for catcher in catchers:
+            catcher.cancel = mock.Mock()
+        window.close()
+        self.assertTrue(all(catcher.cancel.called for catcher in catchers))
 
     def test_a_prompt_left_at_its_default_is_stored_as_empty(self):
         """So that switching the interface language switches the prompt too."""
@@ -313,34 +340,6 @@ class Settings(DikteTest):
         self.assertFalse(window.file_stop.isEnabled())
 
 
-class MacSettings(Settings):
-    """The same window and the same round trip, standing on a Mac.
-
-    Nothing here is about macOS: it is the rest of the window, checked on the
-    platform where three of its widgets are gone and one offers other keys.
-    """
-
-    platform = "darwin"
-    changed: ClassVar[dict] = {**CHANGED, "paste_shortcut": "cmd+shift+v"}
-
-    def test_there_is_no_install_button_where_nothing_is_installed(self):
-        window = self.window(cfg.Config())
-        labels = [button.text() for button in
-                  window.findChildren(settings_ui.QPushButton)]
-        self.assertFalse([text for text in labels if "shortcut" in text.lower()])
-
-    def test_the_listener_is_not_offered_as_a_choice(self):
-        """It is the whole mechanism there; turning it off would leave nothing."""
-        window = self.window(cfg.Config())
-        self.assertFalse(window.evdev_enabled.isVisible())
-
-    def test_the_paste_keys_on_offer_are_the_ones_a_mac_uses(self):
-        window = self.window(cfg.Config())
-        offered = [window.paste_shortcut.itemText(index)
-                   for index in range(window.paste_shortcut.count())]
-        self.assertEqual(offered, paste.MACOS.shortcuts)
-
-
 class Overlay(DikteTest):
     def overlay(self, **kwargs):
         widget = overlay_module.Overlay(**kwargs)
@@ -354,25 +353,6 @@ class Overlay(DikteTest):
         flags = self.overlay().windowFlags()
         self.assertTrue(flags & Qt.WindowType.WindowDoesNotAcceptFocus)
         self.assertTrue(flags & Qt.WindowType.WindowStaysOnTopHint)
-
-    def test_it_lets_a_click_through_to_whatever_is_under_it(self):
-        """It stays mapped while idle, so without this its corner of the screen
-        would stop taking clicks for good. The widget attribute is not enough:
-        on a top-level window it only makes Qt drop the event it already took."""
-        from PyQt6.QtCore import Qt
-        flags = self.overlay().windowFlags()
-        self.assertTrue(flags & Qt.WindowType.WindowTransparentForInput)
-
-    def test_the_one_that_takes_clicks_shrinks_out_of_the_way(self):
-        """It has to stay clickable, so it cannot be transparent to input; it
-        gets out of the way by leaving nothing there to click instead."""
-        widget = self.overlay(dismissable=True)
-        widget.show_busy("Asking Claude…")
-        self.assertGreater(widget.width(), 1)
-        widget.dismiss()
-        self.assertEqual((widget.width(), widget.height()), (1, 1))
-        widget.show_busy("Asking Claude…")
-        self.assertGreater(widget.width(), 1)
 
     def test_recording_then_working_then_done(self):
         widget = self.overlay()

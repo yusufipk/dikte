@@ -80,9 +80,9 @@ TR = {
         "{service} hesapta kredi kalmadığını söylüyor (HTTP 402).",
     "{service} is rate limiting you (HTTP 429). Try again in a moment.":
         "{service} hız sınırı uyguluyor (HTTP 429). Birazdan tekrar dene.",
-    "The {desktop} shortcut is live now, so the built-in listener has "
-    "been turned off. It was doubling every key press.":
-        "{desktop} kısayolu artık çalışıyor, bu yüzden dahili dinleyici kapatıldı. "
+    "The KDE shortcut is live now, so the built-in listener has been "
+    "turned off. It was doubling every key press.":
+        "KDE kısayolu artık çalışıyor, bu yüzden dahili dinleyici kapatıldı. "
         "Her tuşa basışı ikiye katlıyordu.",
     "No speech detected": "Ses algılanmadı",
     "No speech detected ({level} dB)": "Ses algılanmadı ({level} dB)",
@@ -104,14 +104,11 @@ TR = {
     "Could not start recording: {error}": "Kayıt başlatılamadı: {error}",
     "No audio recorder found. Install pulseaudio-utils or pipewire-audio.":
         "Ses kayıt aracı bulunamadı. pulseaudio-utils ya da pipewire-audio kur.",
-    "ffmpeg not found. Install it with: brew install ffmpeg":
-        "ffmpeg bulunamadı. Şununla kur: brew install ffmpeg",
     "Audio recorder stopped before receiving sound: {error}":
         "Ses kayıt aracı veri alamadan kapandı: {error}",
     "Could not copy to clipboard: {error}": "Panoya kopyalanamadı: {error}",
     "{tool} not found. Install {packages}.":
         "{tool} bulunamadı. {packages} paketlerini kur.",
-    "{tool} not found.": "{tool} bulunamadı.",
     "{tool} exited with code {code}.": "{tool} {code} koduyla çıktı.",
     "{tool} not found, cannot paste automatically.":
         "{tool} bulunamadı, otomatik yapıştırma yapılamıyor.",
@@ -120,10 +117,6 @@ TR = {
     "{tool} failed: {error}": "{tool} hatası: {error}",
     "Is ydotoold running? (systemctl --user status ydotool)":
         "ydotoold çalışıyor mu? (systemctl --user status ydotool)",
-    "macOS has not been told to let Dikte press keys. Turn Dikte on under "
-    "System Settings → Privacy & Security → Accessibility.":
-        "macOS, Dikte'nin tuşlara basmasına henüz izin vermiyor. Sistem Ayarları "
-        "→ Gizlilik ve Güvenlik → Erişilebilirlik altında Dikte'yi aç.",
 
     # --- api errors ----------------------------------------------------
     "{service} API key is empty. Add it in Settings.":
@@ -162,8 +155,6 @@ TR = {
     "Paste key": "Yapıştırma tuşu",
     "Terminals usually want ctrl+shift+v. Change this if pasting does nothing.":
         "Terminaller genelde ctrl+shift+v ister. Yapıştırma çalışmıyorsa bunu değiştir.",
-    "macOS asks for Accessibility permission the first time this is sent.":
-        "macOS bu ilk gönderildiğinde Erişilebilirlik izni ister.",
     "Restore the previous clipboard after pasting":
         "Yapıştırdıktan sonra eski pano içeriğini geri koy",
     "Indicator corner": "Gösterge köşesi",
@@ -177,6 +168,10 @@ TR = {
         "Sessiz kayıtları atla (API'ye gönderme)",
     "Silence threshold": "Sessizlik eşiği",
     "Keep audio files ({path})": "Ses kayıtlarını sakla ({path})",
+    "Folders": "Klasörler",
+    "Folder": "Klasör",
+    "Open the settings folder": "Ayar klasörünü aç",
+    "Open the data folder": "Veri klasörünü aç",
 
     # --- settings: api --------------------------------------------------
     "Keys": "Anahtarlar",
@@ -306,6 +301,26 @@ TR = {
     "No global shortcut installed. The tray menu discards it too.":
         "Global kısayol kurulu değil. Kayıt tepsi menüsünden de iptal edilebilir.",
     "Start and stop": "Başlat ve bitir",
+    "Capture shortcut": "Kısayolu yakala",
+    "Press shortcut… (Esc cancels)": "Kısayola bas… (Esc iptal eder)",
+    "Click here, then press the shortcut you want. Dikte temporarily "
+    "releases its own shortcuts while listening, so you can capture "
+    "the shortcut that is already active too.":
+        "Buraya tıkla, sonra istediğin kısayola bas. Dikte dinlerken kendi "
+        "kısayollarını geçici olarak bırakır; böylece hâlihazırda etkin olan "
+        "kısayolu da yakalayabilirsin.",
+    "Shortcut capture timed out. Try again.":
+        "Kısayol yakalama süresi doldu. Yeniden dene.",
+    "That key is not supported. Use a letter, number, function key, Space or "
+    "a navigation key, optionally with Ctrl, Alt, Shift or Meta.":
+        "Bu tuş desteklenmiyor. Ctrl, Alt, Shift veya Meta ile birlikte ya da "
+        "tek başına bir harf, rakam, işlev tuşu, Boşluk veya yön tuşu kullan.",
+    "The shortcut {shortcut} is already assigned to {verb}. Each shortcut can "
+    "only perform one action.":
+        "{shortcut} kısayolu zaten {verb} için atanmış. Her kısayol yalnızca "
+        "bir işlem yapabilir.",
+    "Selected {shortcut}. Press Save to start using it.":
+        "{shortcut} seçildi. Kullanmaya başlamak için Kaydet'e bas.",
     "Throws the recording away without transcribing it. Works on a dictation "
     "and on a command for the agent alike, whichever is running.":
         "Kaydı yazıya dökmeden atar. Hangisi çalışıyorsa ona işler: dikteye de, "
@@ -313,10 +328,8 @@ TR = {
     "Shortcut saved: {shortcut}": "Kısayol kaydedildi: {shortcut}",
     "Could not register the GNOME shortcut: {error}":
         "GNOME kısayolu kaydedilemedi: {error}",
-    "Use the built-in listener (/dev/input), for when the {desktop} shortcut "
-    "is not active yet":
-        "Yerleşik dinleyici kullan (/dev/input), {desktop} kısayolu henüz etkin "
-        "değilken",
+    "Use the built-in listener (/dev/input), for when the KDE shortcut is not active yet":
+        "Yerleşik dinleyici kullan (/dev/input), KDE kısayolu henüz etkin değilken",
     "Works immediately, no session restart. The only difference: the key "
     "combination also reaches the focused application.":
         "Anında çalışır, oturum yenilemek gerekmez. Tek farkı: tuş kombinasyonu "
@@ -327,13 +340,6 @@ TR = {
         "KWin, kısayol ayarlarını yalnızca açılışta okur. 'Kur' dedikten sonra kısayol "
         "Sistem Ayarları → Kısayollar altında görünür ama oturumu yeniden açana kadar "
         "tetiklenmez. O zamana kadar yerleşik dinleyiciyi kullanabilirsin.",
-    "The shortcut starts working as soon as it is installed.":
-        "Kısayol kurulur kurulmaz çalışmaya başlar.",
-    "Dikte asks macOS for these combinations itself, while it is running. "
-    "Nothing is installed, and no other application receives them in the "
-    "meantime.":
-        "Dikte bu kombinasyonları çalışırken macOS'tan kendisi ister. Hiçbir şey "
-        "kurulmaz ve o sırada başka hiçbir uygulama bu tuşları almaz.",
     "Shortcut conflict": "Kısayol çakışması",
     "{shortcut} is also used by:\n\n{list}\n\nInstall anyway?":
         "{shortcut} şu girdilerde de kullanılıyor:\n\n{list}\n\nYine de kurulsun mu?",
@@ -346,19 +352,88 @@ TR = {
     "Could not write the desktop file: {error}": "Desktop dosyası yazılamadı: {error}",
     "Could not write kglobalshortcutsrc: {error}": "kglobalshortcutsrc yazılamadı: {error}",
     "Could not parse the shortcut: {shortcut}": "Kısayol çözümlenemedi: {shortcut}",
-    "Shortcut saved: {shortcut}\nDikte holds this one itself while it is "
-    "running, so it works as soon as the settings are saved.":
-        "Kısayol kaydedildi: {shortcut}\nDikte bunu çalıştığı sürece kendisi "
-        "tutar, yani ayarlar kaydedilir kaydedilmez çalışır.",
-    "Could not reach the macOS shortcut service: {error}":
-        "macOS kısayol servisine ulaşılamadı: {error}",
-    "macOS would not give Dikte {shortcut}; another application already holds it.":
-        "macOS {shortcut} kombinasyonunu Dikte'ye vermedi; başka bir uygulama "
-        "onu şimdiden tutuyor.",
     "Cannot read /dev/input. Your user needs to be in the 'input' group:\n"
     "  sudo usermod -aG input $USER   (then log out and back in)":
         "/dev/input okunamıyor. Kullanıcının 'input' grubunda olması gerekir:\n"
         "  sudo usermod -aG input $USER   (sonra oturumu yeniden aç)",
+
+    # --- windows: the shortcuts ---------------------------------------------
+    "The shortcuts are held for as long as Dikte is running, and given back "
+    "when it quits. Windows hands a combination to one program at a time: one "
+    "that is already taken is refused, without saying by whom, and the key no "
+    "longer reaches the window underneath.":
+        "Kısayollar Dikte çalıştığı sürece tutulur, kapanınca geri verilir. "
+        "Windows bir kombinasyonu aynı anda tek programa verir: başkasının "
+        "aldığı bir kombinasyon reddedilir, kimin aldığı söylenmez, ve tuş "
+        "artık alttaki pencereye ulaşmaz.",
+    "{shortcut} is already taken by another application.":
+        "{shortcut} kombinasyonunu başka bir uygulama tutuyor.",
+    "{shortcut} is already taken by another application. Windows only gives a "
+    "combination to one program at a time; pick another one.":
+        "{shortcut} kombinasyonunu başka bir uygulama tutuyor. Windows bir "
+        "kombinasyonu aynı anda tek programa verir; başka bir tane seç.",
+    "Windows refused the shortcut {shortcut} (error {code}).":
+        "Windows {shortcut} kısayolunu kabul etmedi (hata {code}).",
+    "another application (Windows does not say which)":
+        "başka bir uygulama (Windows hangisi olduğunu söylemiyor)",
+
+    # --- windows: sound -----------------------------------------------------
+    "The Windows sound support is missing. Reinstall Dikte, or run: "
+    "pip install PyAudioWPatch":
+        "Windows ses desteği eksik. Dikte'yi yeniden kur ya da şunu çalıştır: "
+        "pip install PyAudioWPatch",
+    "Whatever {device} is playing": "{device} ne çalıyorsa",
+    "Windows would not open {device}. Check Settings → Privacy & security → "
+    "Microphone: desktop apps need microphone access turned on. ({error})":
+        "Windows {device} aygıtını açmadı. Ayarlar → Gizlilik ve güvenlik → "
+        "Mikrofon bölümünü aç: masaüstü uygulamalarının mikrofon erişimi açık "
+        "olmalı. ({error})",
+    "Could not start recording on {device}: {error}":
+        "{device} üzerinde kayıt başlatılamadı: {error}",
+    "No microphone found. Plug one in, or pick another under Settings → General.":
+        "Mikrofon bulunamadı. Bir mikrofon tak ya da Ayarlar → Genel altından "
+        "başka birini seç.",
+    "The microphone {device} is not there any more. Pick another one under "
+    "Settings → General.":
+        "{device} mikrofonu artık yok. Ayarlar → Genel altından başka birini seç.",
+    "The microphone stopped before any sound arrived: {error}":
+        "Mikrofon, hiç ses gelmeden durdu: {error}",
+    "the device went away": "aygıt ortadan kayboldu",
+
+    # --- windows: the clipboard ---------------------------------------------
+    "Could not open the Windows clipboard: another program is holding it. "
+    "Try again in a moment.":
+        "Windows panosu açılamadı: başka bir program panoyu tutuyor. "
+        "Birazdan tekrar dene.",
+    "Windows would not let Dikte type into that window, because it is running "
+    "as administrator and Dikte is not. The text is on the clipboard: press "
+    "{shortcut} yourself.":
+        "Windows, Dikte'nin o pencereye yazmasına izin vermedi: pencere "
+        "yönetici olarak çalışıyor, Dikte çalışmıyor. Metin panoda, "
+        "{shortcut} tuşlarına kendin bas.",
+    "Could not send the key press: Windows error {code}.":
+        "Tuş gönderilemedi: Windows hatası {code}.",
+
+    # --- local models: which build ------------------------------------------
+    # "Runs on" is further down, where the agent tab already uses it.
+    "Auto": "Otomatik",
+    "CPU": "İşlemci",
+    "NVIDIA (CUDA)": "NVIDIA (CUDA)",
+    "Vulkan": "Vulkan",
+    "Automatic downloads the build that runs on any machine, on the "
+    "processor. Pick a graphics card build to fetch that one instead; if it "
+    "fails to start, the reason is shown rather than swallowed.":
+        "Otomatik, her makinede işlemci üzerinde çalışan sürümü indirir. Ekran "
+        "kartı sürümü seçersen o indirilir; başlatılamazsa nedeni gizlenmeden "
+        "gösterilir.",
+    "Downloaded, version {version} ({backend}).":
+        "İndirildi, sürüm {version} ({backend}).",
+    "{repo} {tag} publishes no {backend} build for this machine.":
+        "{repo} {tag} bu makine için {backend} sürümü yayımlamıyor.",
+    "{archive} tried to write outside its own directory ({member}). "
+    "Nothing was installed.":
+        "{archive} kendi klasörünün dışına yazmaya çalıştı ({member}). "
+        "Hiçbir şey kurulmadı.",
 
     # --- settings: history --------------------------------------------------
     "Copy selected to clipboard": "Seçiliyi panoya kopyala",
@@ -582,12 +657,6 @@ TR = {
     "Same as dictation": "Diktedekiyle aynı",
     "Current output": "Geçerli çıkış",
     "The other participants": "Karşı tarafın sesi",
-    "macOS does not offer what the speakers are playing as something to "
-    "record. Install BlackHole or Loopback, send the meeting's sound through "
-    "it, and pick it above.":
-        "macOS, hoparlörden çıkan sesi kaydedilebilir bir kaynak olarak sunmaz. "
-        "BlackHole ya da Loopback kur, toplantının sesini oradan geçir ve "
-        "yukarıdan onu seç.",
     "Wear headphones if you can. Through speakers your microphone hears the "
     "other side as well, and although a line that lands on both channels at "
     "once is dropped again, the repair is never as clean as not needing it.":

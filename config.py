@@ -1,4 +1,12 @@
-"""Settings storage, in the place this system keeps a program's settings."""
+"""Settings storage: ~/.config/dikte/config.json, or %APPDATA%\\Dikte\\config.json
+
+Where the file goes and how the API keys inside it are kept are both the
+platform's business, so both come from the runtime adapter. On Linux a key is
+written as it stands into a file nobody else can read; on Windows the file's
+permissions are not the protection, so the key is encrypted to the Windows
+account before it is written. Everything above this line sees a plain key
+either way.
+"""
 
 import collections
 import hashlib
@@ -10,45 +18,41 @@ import sys
 import api
 import ggml
 import i18n
-import paste
 from i18n import t
+from platforms import adapter
 
-
-def _xdg(var, default):
-    return pathlib.Path(os.environ.get(var) or os.path.expanduser(default))
+runtime = adapter("runtime")
 
 
 def _directories(platform=None):
-    """(settings, data), in the two places this system keeps them.
-
-    macOS keeps both in the one directory a Mac user's backup already knows
-    about. Windows separates roaming settings from machine-local data. Linux
-    keeps them separate too and follows the XDG variables.
-    """
+    """Compatibility seam used by tests and migrations for all three OSes."""
     platform = platform or sys.platform
     if platform == "darwin":
         support = pathlib.Path.home() / "Library/Application Support/Dikte"
         return support, support
     if platform.startswith("win"):
-        roaming = pathlib.Path(
-            os.environ.get("APPDATA")
-            or pathlib.Path.home() / "AppData/Roaming"
-        )
-        local = pathlib.Path(
-            os.environ.get("LOCALAPPDATA")
-            or pathlib.Path.home() / "AppData/Local"
-        )
+        roaming = pathlib.Path(os.environ.get("APPDATA")
+                               or pathlib.Path.home() / "AppData/Roaming")
+        local = pathlib.Path(os.environ.get("LOCALAPPDATA")
+                             or pathlib.Path.home() / "AppData/Local")
         return roaming / "Dikte", local / "Dikte"
-    return (_xdg("XDG_CONFIG_HOME", "~/.config") / "dikte",
-            _xdg("XDG_DATA_HOME", "~/.local/share") / "dikte")
+    config_home = pathlib.Path(os.environ.get("XDG_CONFIG_HOME")
+                               or pathlib.Path.home() / ".config")
+    data_home = pathlib.Path(os.environ.get("XDG_DATA_HOME")
+                             or pathlib.Path.home() / ".local/share")
+    return config_home / "dikte", data_home / "dikte"
 
-
-CONFIG_DIR, DATA_DIR = _directories()
+CONFIG_DIR = runtime.config_dir()
 CONFIG_FILE = CONFIG_DIR / "config.json"
+DATA_DIR = runtime.data_dir()
 HISTORY_FILE = DATA_DIR / "history.jsonl"
-RECORDINGS_DIR = DATA_DIR / "recordings"
-MEETINGS_DIR = DATA_DIR / "meetings"
+RECORDINGS_DIR = DATA_DIR / runtime.RECORDINGS_NAME
+MEETINGS_DIR = DATA_DIR / runtime.MEETINGS_NAME
 MEETINGS_FILE = DATA_DIR / "meetings.jsonl"
+
+# The settings that are secrets rather than preferences. They go through the
+# platform on the way in and on the way out, and nothing else in the file does.
+SECRET_KEYS = ("openai_api_key", "groq_api_key", "openrouter_api_key")
 
 CLEANUP_PROMPT_EN = """You clean up dictation transcripts. You are given the raw
 text of something spoken out loud. Make it readable with MINIMAL interference.
@@ -415,6 +419,10 @@ DEFAULTS = {
     "local_preload": True,          # load the model while Dikte starts, rather
                                     # than on the first dictation
     "local_binary": "",             # empty -> whichever copy ggml.py finds
+    # Which published build to fetch: auto, cpu, cuda or vulkan. Auto is the
+    # one that runs on any machine; a graphics card is opted into, once, and a
+    # build the project does not publish is refused rather than substituted.
+    "local_backend": "auto",
 
     "cleanup_enabled": True,
     "cleanup_provider": "openrouter",  # a name in cleanup.PROVIDERS
@@ -435,13 +443,14 @@ DEFAULTS = {
     "local_llm_gpu": True,
     "local_llm_context": 8192,
     "local_llm_binary": "",
+    "local_llm_backend": "auto",    # as local_backend, for llama.cpp
     "local_llm_preload": False,     # heavier than whisper, so only when asked
     # Off rather than empty: a model trained to think will, and 300 tokens of
     # reasoning about a comma is 300 tokens of waiting.
     "local_llm_reasoning": "none",
     "cleanup_prompt": "",           # empty -> language-specific default
     "auto_paste": True,
-    "paste_shortcut": paste.desktop().shortcuts[0],   # cmd+v on a Mac
+    "paste_shortcut": "ctrl+v",
     "restore_clipboard": False,
     "mic_target": "",
     "max_seconds": 300,
@@ -543,6 +552,12 @@ class Config:
                 stored = json.load(fh)
             if isinstance(stored, dict):
                 self.data.update({k: v for k, v in stored.items() if k in DEFAULTS})
+                # A key written by an older version, or by hand, comes back as
+                # it was written; the next save is what puts it into whatever
+                # form this platform keeps secrets in.
+                for key in SECRET_KEYS:
+                    if isinstance(self.data.get(key), str):
+                        self.data[key] = runtime.unprotect(self.data[key])
         except FileNotFoundError:
             pass
         except (json.JSONDecodeError, OSError) as exc:
@@ -557,10 +572,16 @@ class Config:
 
     def save(self):
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        stored = dict(self.data)
+        for key in SECRET_KEYS:
+            if isinstance(stored.get(key), str) and stored[key]:
+                stored[key] = runtime.protect(stored[key])
         tmp = CONFIG_FILE.with_suffix(".json.tmp")
         with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(self.data, fh, ensure_ascii=False, indent=2)
-        os.chmod(tmp, 0o600)
+            json.dump(stored, fh, ensure_ascii=False, indent=2)
+        # Tightened before it is moved into place, so there is never a moment
+        # when the keys are on disk under the mode a new file is given.
+        runtime.secure_file(tmp)
         tmp.replace(CONFIG_FILE)
         i18n.set_language(self.data["ui_language"])
 

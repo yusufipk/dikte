@@ -741,3 +741,10 @@ if sys.platform.startswith("win"):
 
     def shortcut_needs_restart():
         return False
+
+
+# The updated application shell consumes these two platform-neutral names.
+# Keep the older function as well because CLI and macOS/Linux tests use it.
+Listener = (_windows_hotkeys.Listener if sys.platform.startswith("win")
+            else CarbonHotkey if sys.platform == "darwin" else EvdevHotkey)
+LISTENER_IS_PRIMARY = sys.platform == "darwin" or sys.platform.startswith("win")

@@ -26,15 +26,13 @@ import sys
 
 WINDOWS = "windows"
 LINUX = "linux"
+MACOS = "macos"
 
 IS_WINDOWS = sys.platform.startswith("win")
 IS_LINUX = sys.platform.startswith("linux")
+IS_MACOS = sys.platform == "darwin"
 
-# Nothing else is ported. macOS and the BSDs land on the Linux adapters, which
-# is right for the parts that go through POSIX and wrong for the parts that go
-# through PipeWire; the failure is then a missing program with its name in the
-# message rather than an import error at startup.
-NAME = WINDOWS if IS_WINDOWS else LINUX
+NAME = WINDOWS if IS_WINDOWS else MACOS if IS_MACOS else LINUX
 
 _loaded = {}
 

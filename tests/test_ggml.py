@@ -9,18 +9,20 @@ import contextlib
 import hashlib
 import io
 import os
+import re
 import signal
 import sys
 import tarfile
 import textwrap
 import threading
 import time
+import zipfile
 from unittest import mock
 
 import ggml
 import hub
 from tests.support import (DikteTest, fake_urlopen, http_error, json_body,
-                           linux_only, url_error)
+                           linux_only, url_error, windows_only)
 
 
 def body(data, length=None):
@@ -174,11 +176,17 @@ class Download(Local):
 
 
 class InstallProgram(Local):
+    """The Linux half of picking a release apart.
+
+    Pinned to the Linux tables rather than skipped off it: which asset a
+    machine is owed is a decision worth testing on whichever machine the tests
+    are run, and the code that makes it is the same code there.
+    """
+
     def setUp(self):
         super().setUp()
-        # These fixtures are Ubuntu release archives.  Keep checking that path
-        # on every host, including the Mac that checks the macOS backend.
-        self.patch_attr(sys, "platform", "linux")
+        self.patch_attr(ggml, "IS_WINDOWS", False)
+        self.patch_attr(ggml, "EXE", "")
         # Built once, because the release listing has to publish its checksum
         # and a tarball is not the same bytes twice.
         self.archive = tarball({
@@ -218,23 +226,6 @@ class InstallProgram(Local):
             with self.assertRaises(ggml.LocalError) as caught:
                 ggml.install_program(ggml.WHISPER)
         self.assertIn("this machine", str(caught.exception))
-
-    def test_a_mac_does_not_install_an_ubuntu_archive_for_the_same_architecture(self):
-        self.patch_attr(sys, "platform", "darwin")
-        self.patch_attr(ggml, "_arch", lambda: "arm64")
-        listing = self.release("whisper-bin-ubuntu-arm64.tar.gz")
-        with fake_urlopen(listing):
-            with self.assertRaises(ggml.LocalError) as caught:
-                ggml.install_program(ggml.WHISPER)
-        self.assertIn("brew install whisper-cpp", str(caught.exception))
-
-    def test_a_mac_uses_the_native_llama_archive_instead_of_ubuntu(self):
-        self.patch_attr(sys, "platform", "darwin")
-        self.patch_attr(ggml, "_arch", lambda: "arm64")
-        self.assertEqual(
-            ggml._wanted_assets(ggml.LLAMA),
-            ("bin-macos-arm64.tar.gz",),
-        )
 
     def test_what_was_installed_is_remembered(self):
         path, _ = self.install("whisper-bin-ubuntu-x64.tar.gz")
@@ -314,16 +305,169 @@ class InstallProgram(Local):
             with self.subTest(url=url):
                 self.assertTrue(url.startswith("https://"))
 
+    def matched(self, program, names, backend="auto"):
+        """Which of `names` the asset patterns would take, best first."""
+        return [name for pattern in ggml._wanted_assets(program, backend)
+                for name in names if re.search(pattern, name)]
+
     def test_llama_takes_the_vulkan_build_when_there_is_a_loader(self):
         self.patch_attr(ggml, "_arch", lambda: "x64")
         self.patch_attr(ggml, "_has_vulkan", lambda: True)
-        self.assertEqual(ggml._wanted_assets(ggml.LLAMA)[0],
-                         "bin-ubuntu-vulkan-x64.tar.gz")
+        self.assertEqual(
+            self.matched(ggml.LLAMA, ["llama-b1-bin-ubuntu-x64.tar.gz",
+                                      "llama-b1-bin-ubuntu-vulkan-x64.tar.gz"])[0],
+            "llama-b1-bin-ubuntu-vulkan-x64.tar.gz")
 
     def test_llama_falls_back_to_the_plain_build_without_one(self):
         self.patch_attr(ggml, "_arch", lambda: "x64")
         self.patch_attr(ggml, "_has_vulkan", lambda: False)
-        self.assertEqual(ggml._wanted_assets(ggml.LLAMA), ("bin-ubuntu-x64.tar.gz",))
+        self.assertEqual(
+            self.matched(ggml.LLAMA, ["llama-b1-bin-ubuntu-x64.tar.gz",
+                                      "llama-b1-bin-ubuntu-vulkan-x64.tar.gz"]),
+            ["llama-b1-bin-ubuntu-x64.tar.gz"])
+
+    def test_no_cuda_build_is_published_for_linux(self):
+        """Asked for one, Linux is told so rather than handed the CPU build."""
+        self.patch_attr(ggml, "_arch", lambda: "x64")
+        self.assertEqual(ggml._wanted_assets(ggml.LLAMA, "cuda"), ())
+
+
+def zipball(entries):
+    """A .zip laid out the way the Windows releases are: one directory of files."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, content in entries.items():
+            zf.writestr(name, content)
+    return buf.getvalue()
+
+
+class WindowsAssets(Local):
+    """Which of a release's files a Windows machine is owed, and what unpacking
+    one does.
+
+    Pinned to the Windows tables the same way the Linux class above is pinned
+    to its own, so a change to either is caught wherever the tests are run.
+    """
+
+    def setUp(self):
+        super().setUp()
+        self.patch_attr(ggml, "IS_WINDOWS", True)
+        self.patch_attr(ggml, "EXE", ".exe")
+        self.patch_attr(ggml, "_arch", lambda: "x64")
+        self.archive = zipball({
+            "Release/whisper-server.exe": b"MZ not really",
+            "Release/whisper.dll": b"nor this",
+        })
+
+    # ---- picking the asset ----------------------------------------------
+
+    def matched(self, program, names, backend="auto"):
+        return [name for pattern in ggml._wanted_assets(program, backend)
+                for name in names if re.search(pattern, name)]
+
+    WHISPER_RELEASE = [
+        "whisper-bin-ubuntu-x64.tar.gz",
+        "whisper-bin-Win32.zip",
+        "whisper-bin-x64.zip",
+        "whisper-blas-bin-x64.zip",
+        "whisper-cublas-11.8.0-bin-x64.zip",
+        "whisper-cublas-12.4.0-bin-x64.zip",
+    ]
+
+    LLAMA_RELEASE = [
+        "cudart-llama-bin-win-cuda-12.4-x64.zip",
+        "llama-b1-bin-ubuntu-x64.tar.gz",
+        "llama-b1-bin-win-cpu-x64.zip",
+        "llama-b1-bin-win-cuda-12.4-x64.zip",
+        "llama-b1-bin-win-vulkan-x64.zip",
+    ]
+
+    def test_the_cpu_build_is_what_nobody_asking_gets(self):
+        """It runs on every machine, and its failures are not about drivers."""
+        self.assertEqual(self.matched(ggml.WHISPER, self.WHISPER_RELEASE),
+                         ["whisper-bin-x64.zip"])
+        self.assertEqual(self.matched(ggml.LLAMA, self.LLAMA_RELEASE),
+                         ["llama-b1-bin-win-cpu-x64.zip"])
+
+    def test_the_blas_and_cublas_builds_are_not_mistaken_for_the_plain_one(self):
+        """All three end in bin-x64.zip and are three different downloads."""
+        taken = self.matched(ggml.WHISPER, self.WHISPER_RELEASE)
+        self.assertNotIn("whisper-blas-bin-x64.zip", taken)
+        self.assertNotIn("whisper-cublas-12.4.0-bin-x64.zip", taken)
+
+    def test_asking_for_cuda_gets_the_cuda_build(self):
+        self.assertIn("whisper-cublas",
+                      self.matched(ggml.WHISPER, self.WHISPER_RELEASE, "cuda")[0])
+        self.assertEqual(self.matched(ggml.LLAMA, self.LLAMA_RELEASE, "cuda"),
+                         ["llama-b1-bin-win-cuda-12.4-x64.zip"])
+
+    def test_asking_for_vulkan_where_there_is_none_is_refused(self):
+        """whisper.cpp publishes no Vulkan build for Windows, and a CPU one
+        handed over quietly would look like a graphics card that is just slow."""
+        self.assertEqual(ggml._wanted_assets(ggml.WHISPER, "vulkan"), ())
+        self.assertEqual(self.matched(ggml.LLAMA, self.LLAMA_RELEASE, "vulkan"),
+                         ["llama-b1-bin-win-vulkan-x64.zip"])
+
+    def test_the_cuda_runtime_comes_along_with_the_cuda_build(self):
+        """llama.cpp ships the DLLs in a second archive, and the server exits
+        without them on a machine with no CUDA toolkit installed."""
+        assets = [hub.Item(name, f"https://example.invalid/{name}", 10, "a" * 64)
+                  for name in self.LLAMA_RELEASE]
+        chosen = next(a for a in assets if a.name.endswith("win-cuda-12.4-x64.zip"))
+        self.assertEqual([a.name for a in ggml._companions(ggml.LLAMA, chosen, assets)],
+                         ["cudart-llama-bin-win-cuda-12.4-x64.zip"])
+
+    def test_the_cpu_build_needs_nothing_beside_it(self):
+        assets = [hub.Item(name, f"https://example.invalid/{name}", 10, "a" * 64)
+                  for name in self.LLAMA_RELEASE]
+        chosen = next(a for a in assets if a.name.endswith("win-cpu-x64.zip"))
+        self.assertEqual(ggml._companions(ggml.LLAMA, chosen, assets), [])
+
+    # ---- unpacking it ----------------------------------------------------
+
+    def release(self, *names, archive=None):
+        digest = hashlib.sha256(self.archive if archive is None else archive)
+        return {"tag_name": "v1.9.1", "assets": [
+            {"name": name, "browser_download_url": f"https://example.invalid/{name}",
+             "size": 10, "digest": "sha256:" + digest.hexdigest()}
+            for name in names]}
+
+    def install(self, *names, archive=None):
+        blob = self.archive if archive is None else archive
+        with serving(self.release(*names, archive=blob), blob) as calls:
+            path = ggml.install_program(ggml.WHISPER)
+        return path, [call.args[0].full_url for call in calls.call_args_list]
+
+    def test_the_exe_and_its_dlls_land_together(self):
+        """The loader looks beside the .exe, so the directory is what survives."""
+        path, _ = self.install("whisper-bin-x64.zip")
+        self.assertTrue(path.endswith("whisper-server.exe"))
+        self.assertTrue(os.path.isfile(path))
+        self.assertTrue(os.path.isfile(
+            os.path.join(os.path.dirname(path), "whisper.dll")))
+
+    def test_the_windows_build_is_taken_over_the_linux_one(self):
+        _, urls = self.install("whisper-bin-ubuntu-x64.tar.gz", "whisper-bin-x64.zip")
+        self.assertTrue(urls[1].endswith("whisper-bin-x64.zip"))
+
+    def test_a_zip_cannot_write_outside_the_directory_it_is_opened_in(self):
+        """A zip entry is a string the archive chose, and it may name ..\\..\\."""
+        escape = zipball({"../../../escaped.txt": b"should not land"})
+        with self.assertRaises(ggml.LocalError) as caught:
+            self.install("whisper-bin-x64.zip", archive=escape)
+        self.assertIn("outside", str(caught.exception))
+        self.assertFalse(self.path("escaped.txt").exists())
+        self.assertFalse(self.path("data", "escaped.txt").exists())
+
+    def test_an_archive_without_the_exe_is_refused(self):
+        empty = zipball({"Release/README.txt": b"nothing here"})
+        with self.assertRaises(ggml.LocalError) as caught:
+            self.install("whisper-bin-x64.zip", archive=empty)
+        self.assertIn("whisper-server.exe", str(caught.exception))
+
+    def test_the_archive_is_not_kept(self):
+        self.install("whisper-bin-x64.zip")
+        self.assertEqual(list(self.path("data", "bin", "whisper").glob("*.zip")), [])
 
 
 class WhichCopyRuns(Local):
@@ -681,3 +825,4 @@ class Sizes(DikteTest):
         self.assertEqual(ggml.human_size(512), "512 B")
         self.assertEqual(ggml.human_size(574041195), "547.4 MB")
         self.assertEqual(ggml.human_size(3_095_033_483), "2.9 GB")
+

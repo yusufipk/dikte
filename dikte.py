@@ -11,23 +11,14 @@ import contextlib
 import json
 import os
 import signal
-import socket
 import sys
 import threading
+import time
 
 # A Wayland client cannot place a window in a screen corner, so the indicator
 # is drawn through XWayland.
 if os.environ.get("XDG_SESSION_TYPE") == "wayland" and os.environ.get("DISPLAY"):
     os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
-
-# An application started from the Finder is given none of the shell's PATH, so
-# Homebrew's ffmpeg is invisible to it. Put the two places brew installs to in
-# front, before anything goes looking for a program.
-if sys.platform == "darwin":
-    os.environ["PATH"] = os.pathsep.join(
-        part for part in ("/opt/homebrew/bin", "/usr/local/bin",
-                          os.environ.get("PATH", "")) if part
-    )
 
 from PyQt6.QtCore import QTimer, QElapsedTimer, QSocketNotifier  # noqa: E402
 from PyQt6.QtGui import QAction, QIcon  # noqa: E402
@@ -41,13 +32,17 @@ import config as cfg  # noqa: E402
 import ggml  # noqa: E402
 import hotkey  # noqa: E402
 import i18n  # noqa: E402
+import icons  # noqa: E402
 import ipc  # noqa: E402
 import meeting  # noqa: E402
 from i18n import t  # noqa: E402
 from meeting import MeetingPipeline  # noqa: E402
 from overlay import Overlay  # noqa: E402
+from platforms import adapter  # noqa: E402
 from settings_ui import SettingsWindow  # noqa: E402
 from worker import Pipeline  # noqa: E402
+
+runtime = adapter("runtime")
 
 SERVER_NAME = ipc.SERVER_NAME
 IDLE, RECORDING, BUSY = "idle", "recording", "busy"
@@ -84,6 +79,10 @@ class Dikte:
         self.meeting_base = ""
         self.meeting_message = ""
         self.settings_window = None
+        self._capturing_shortcut = False
+        # What proves this is the only Dikte running, where the platform needs
+        # something held rather than a socket bound. Handed over by run_app.
+        self.instance = None
         self._quitting = False
         # A request that asked to be told how its run ended waits in here until
         # the run gets there, keyed by which of the three it was waiting on.
@@ -105,7 +104,9 @@ class Dikte:
         self.ask_pipeline = Pipeline(self.conf)
         self.meeting_recorder = audio.MeetingRecorder()
         self.meetings = MeetingPipeline(self.conf)
-        self.evdev = hotkey.listener()
+        # On Windows this is the whole shortcut mechanism; on Linux it is the
+        # stopgap that works before the desktop reads its own file.
+        self.evdev = hotkey.Listener()
         # Before anything of ours is started: a server from a Dikte that was
         # killed outright is still holding a model in memory.
         ggml.sweep()
@@ -218,9 +219,14 @@ class Dikte:
             self._toggle()
 
     def _set_icon(self, name):
+        # The desktop's own icon where there is one, so that a Linux tray keeps
+        # looking like the rest of the tray it sits in. Windows has no icon
+        # theme to ask, and icons.py draws the same three.
         icon = QIcon.fromTheme(name)
         if icon.isNull():
             icon = QIcon.fromTheme("audio-input-microphone")
+        if icon.isNull():
+            icon = icons.tray_icon(name)
         self.tray.setIcon(icon)
 
     # ---- state ----------------------------------------------------------
@@ -334,10 +340,12 @@ class Dikte:
         # that same press. Its lateness is also the proof we were waiting for
         # that the shortcut is live, which leaves the listener with nothing to
         # do but double every press.
-        # Where nothing was installed there is no shortcut to catch up, and
-        # retiring the listener would leave the keys with nowhere to arrive.
+        #
+        # None of that applies where the listener is the mechanism rather than
+        # a stopgap: on Windows nothing launches Dikte for a key press, so a
+        # request arriving from outside is somebody typing `dikte toggle`.
         timer = self.last_evdev.get(name)
-        if (hotkey.installs_shortcuts() and self.evdev.running
+        if (not hotkey.LISTENER_IS_PRIMARY and self.evdev.running
                 and timer is not None and timer.elapsed() < ECHO_MS):
             self._retire_listener()
             return
@@ -358,9 +366,8 @@ class Dikte:
         self.conf.save()
         self.tray.showMessage(
             "Dikte",
-            t("The {desktop} shortcut is live now, so the built-in listener has "
-              "been turned off. It was doubling every key press.",
-              desktop=hotkey.desktop_name()),
+            t("The KDE shortcut is live now, so the built-in listener has been "
+              "turned off. It was doubling every key press."),
             QSystemTrayIcon.MessageIcon.Information, 8000,
         )
 
@@ -817,6 +824,7 @@ class Dikte:
         if self.settings_window is None:
             self.settings_window = SettingsWindow(self.conf, self.meetings)
             self.settings_window.applied.connect(self._apply_settings)
+            self.settings_window.capturing.connect(self._capture_shortcut)
             self.settings_window.finished.connect(self._settings_closed)
         self.settings_window.show()
         self.settings_window.raise_()
@@ -825,6 +833,20 @@ class Dikte:
     def _settings_closed(self, *_):
         # Don't drop the object while its own signal is still being delivered.
         QTimer.singleShot(0, lambda: setattr(self, "settings_window", None))
+
+    def _capture_shortcut(self, active):
+        """Let the settings window receive a combination Dikte already owns."""
+        if active:
+            if self._capturing_shortcut:
+                return
+            self._capturing_shortcut = True
+            self.evdev.stop()
+            return
+        if not self._capturing_shortcut:
+            return
+        self._capturing_shortcut = False
+        if not self._quitting:
+            self._apply_shortcuts()
 
     def _apply_local(self):
         """Pass the local settings on, and hold the models ready if asked to.
@@ -866,22 +888,44 @@ class Dikte:
         self._apply_local()
         self._build_tray()
         self._refresh_tray()
-        # Where the desktop has no shortcut registry of its own, the listener is
-        # not the fallback the setting offers to turn on: it is the only way the
-        # keys arrive at all, so it runs whatever the setting says.
-        if self.conf["evdev_hotkey"] or not hotkey.installs_shortcuts():
-            self.evdev.start({name: self.conf[spec.setting]
-                              for name, spec in hotkey.SHORTCUTS.items()})
+        self._apply_shortcuts()
+
+    def _apply_shortcuts(self):
+        """Register the combinations stored in settings with this platform."""
+        if self._capturing_shortcut:
+            return
+        # Windows has nothing else to deliver a shortcut, so the listener runs
+        # whenever Dikte does and the setting does not come into it.
+        if hotkey.LISTENER_IS_PRIMARY or self.conf["evdev_hotkey"]:
+            # Where the listener is the mechanism, a toggle nobody set still
+            # has to work, because nothing else is listening for it. On Linux
+            # an empty setting means the desktop's own shortcut has the job.
+            self.evdev.start({
+                name: (self.conf[spec.setting]
+                       or (spec.fallback if hotkey.LISTENER_IS_PRIMARY else ""))
+                for name, spec in hotkey.SHORTCUTS.items()
+            })
         else:
             self.evdev.stop()
 
     def restart(self):
-        """Replace this process with a fresh one, picking up code and settings."""
+        """Start a fresh one, picking up code and settings, and stand down.
+
+        The shortcuts, the socket and on Windows the single-instance mutex are
+        all given back before the new process goes looking for them, or it
+        would find this one still holding them and quit again.
+        """
         if self.settings_window is not None:
             self.settings_window.close()
         self.shutdown()
         QLocalServer.removeServer(SERVER_NAME)
-        os.execv(sys.executable, [sys.executable, ipc.script_path(), "--gui"])
+        if self.instance is not None:
+            self.instance.release()
+            self.instance = None
+        # On Linux this replaces the process and never comes back; on Windows
+        # it starts a detached one and the quit below is what ends this.
+        runtime.relaunch(ipc.gui_command("--gui"))
+        self.app.quit()
 
     def shutdown(self):
         self._quitting = True
@@ -915,6 +959,11 @@ def _clock(seconds):
 
 def main():
     argv = sys.argv[1:]
+    # A packaged tray application double-clicked or started at login carries no
+    # arguments at all, and nobody typed it: sending it through the command
+    # line would only have the command line start it again, one process later.
+    if ipc.IS_TRAY and not argv:
+        return run_app([])
     # Anything typed at a terminal is the command line's business, including
     # --help and the verbs that only need a message sent. It comes back here
     # with --gui when it turns out there is no instance to send one to.
@@ -935,13 +984,13 @@ def install_signal_handlers(app):
     Worth the trouble because of what shutdown() does: a logout sends SIGTERM,
     and without this a whisper.cpp or llama.cpp server outlives the session
     holding its model in memory. SIGKILL cannot be caught at all, which is what
-    ggml.sweep() is for.
+    ggml.sweep() is for, and neither can the Windows equivalent.
 
-    Returns the objects it made; they have to stay alive to keep working.
+    Which signals there are is the platform's business: no SIGHUP on Windows,
+    where a logout arrives as a window message Qt turns into quitting on its
+    own. Returns the objects it made; they have to stay alive to keep working.
     """
-    reader, writer = socket.socketpair()
-    reader.setblocking(False)
-    writer.setblocking(False)
+    reader, writer = runtime.wakeup_socketpair()
     signal.set_wakeup_fd(writer.fileno())
     notifier = QSocketNotifier(reader.fileno(), QSocketNotifier.Type.Read)
 
@@ -951,11 +1000,29 @@ def install_signal_handlers(app):
         app.quit()          # aboutToQuit runs shutdown()
 
     notifier.activated.connect(woken)
-    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+    for sig in runtime.signals():
         # A handler that does nothing, so that the default action, stopping the
         # process where it stands, is replaced by the wakeup above.
-        signal.signal(sig, lambda *_: None)
+        with contextlib.suppress(OSError, ValueError):
+            signal.signal(sig, lambda *_: None)
     return reader, writer, notifier
+
+
+def _listen(server, attempts=10, delay=0.1):
+    """Bind the local socket, waiting for the instance being replaced to let go.
+
+    A restart starts the new process before the old one has finished quitting,
+    and on Windows the named pipe stays until its server closes: `removeServer`
+    can delete a stale Unix socket but has nothing to delete there. A second of
+    retrying is the difference between a restart and a Dikte with no way to
+    talk to the command line.
+    """
+    for attempt in range(attempts):
+        if server.listen(SERVER_NAME):
+            return True
+        if attempt < attempts - 1:
+            time.sleep(delay)
+    return False
 
 
 def run_app(args):
@@ -965,6 +1032,22 @@ def run_app(args):
     app.setApplicationName("Dikte")
     app.setDesktopFileName("dikte")
     app.setQuitOnLastWindowClosed(False)
+    window_icon = QIcon.fromTheme("audio-input-microphone")
+    app.setWindowIcon(window_icon if not window_icon.isNull()
+                      else icons.tray_icon("audio-input-microphone"))
+
+    # Whether this is the only Dikte running. On Linux the socket settles it
+    # and this always succeeds; on Windows two servers can hold the same pipe
+    # name, so a mutex is what actually answers, and a second instance passes
+    # its command to the first one and stands down rather than growing a second
+    # tray icon.
+    instance = runtime.single_instance(SERVER_NAME)
+    if instance is None:
+        if command:
+            ipc.send(command)
+        else:
+            print("dikte: already running")
+        return 0
     # Before Dikte is built, because building it is what may start a server, and
     # a signal arriving in the middle of that would otherwise take the default
     # action and leave the server behind. A signal this early lands in the
@@ -976,13 +1059,14 @@ def run_app(args):
         print("dikte: no system tray found, running anyway")
 
     dikte = Dikte(app)
+    dikte.instance = instance
 
     server = QLocalServer()
     # Qt puts the socket in /tmp, so keep it to this user: commands like
     # "quit" should not be reachable by anyone else on the machine.
     server.setSocketOptions(QLocalServer.SocketOption.UserAccessOption)
     QLocalServer.removeServer(SERVER_NAME)
-    if not server.listen(SERVER_NAME):
+    if not _listen(server):
         print(f"dikte: could not open the IPC socket: {server.errorString()}")
 
     def on_connection():

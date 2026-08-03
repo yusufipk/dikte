@@ -6,81 +6,37 @@ which is what lets a script wait for a dictation instead of guessing when it is
 done. One JSON object goes each way per connection. A bare verb is still
 understood, because that is what earlier versions sent and what a stale KDE
 shortcut may still send.
+
+The name it listens on is per user on both platforms: a Unix socket in /tmp
+named after the user id, a named pipe named after a hash of the Windows SID.
+Neither is a lock, and on Windows two servers can hold the same pipe name, so
+whether this is the only Dikte running is asked of the runtime adapter instead,
+and settled there by a mutex.
 """
 
 import json
-import hashlib
 import os
+import pathlib
 import sys
 
 from PyQt6.QtNetwork import QLocalSocket
 
-def _windows_sid():
-    """The current Windows account SID, or an empty string on API failure."""
-    try:
-        import ctypes
-        from ctypes import wintypes
+from platforms import adapter
 
-        token_query = 0x0008
-        token_user = 1
-        token = wintypes.HANDLE()
-        kernel32 = ctypes.windll.kernel32
-        advapi32 = ctypes.windll.advapi32
-        advapi32.OpenProcessToken.argtypes = [
-            wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
-        advapi32.OpenProcessToken.restype = wintypes.BOOL
-        advapi32.GetTokenInformation.argtypes = [
-            wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
-            ctypes.POINTER(wintypes.DWORD)]
-        advapi32.GetTokenInformation.restype = wintypes.BOOL
-        advapi32.ConvertSidToStringSidW.argtypes = [
-            ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR)]
-        advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
-        kernel32.LocalFree.argtypes = [wintypes.HLOCAL]
-        kernel32.LocalFree.restype = wintypes.HLOCAL
-        if not advapi32.OpenProcessToken(
-                kernel32.GetCurrentProcess(), token_query, ctypes.byref(token)):
-            return ""
-        try:
-            size = wintypes.DWORD()
-            advapi32.GetTokenInformation(token, token_user, None, 0,
-                                         ctypes.byref(size))
-            if not size.value:
-                return ""
-            buffer = ctypes.create_string_buffer(size.value)
-            if not advapi32.GetTokenInformation(
-                    token, token_user, buffer, size, ctypes.byref(size)):
-                return ""
+runtime = adapter("runtime")
 
-            class TokenUser(ctypes.Structure):
-                _fields_ = [("sid", ctypes.c_void_p),
-                            ("attributes", wintypes.DWORD)]
+SERVER_NAME = "dikte-" + runtime.user_id()
 
-            sid = ctypes.cast(buffer, ctypes.POINTER(TokenUser)).contents.sid
-            text = wintypes.LPWSTR()
-            if not advapi32.ConvertSidToStringSidW(sid, ctypes.byref(text)):
-                return ""
-            try:
-                return text.value or ""
-            finally:
-                kernel32.LocalFree(text)
-        finally:
-            kernel32.CloseHandle(token)
-    except (AttributeError, OSError, TypeError, ValueError):
-        return ""
+# Whether this is a packaged application rather than a checkout being run by a
+# Python interpreter. It changes what "start Dikte again" means, and there is
+# no dikte.py to point at inside a one-folder build.
+FROZEN = bool(getattr(sys, "frozen", False))
 
-
-def user_id(platform=None):
-    """A filesystem/pipe-safe token that is stable for the current user."""
-    platform = platform or sys.platform
-    if not platform.startswith("win"):
-        return str(os.getuid())
-    identity = (_windows_sid() or os.environ.get("USERNAME")
-                or os.environ.get("USER") or "dikte")
-    return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
-
-
-SERVER_NAME = "dikte-" + user_id()
+# A packaged build has two faces in one directory: the tray application with no
+# console, and the command line with one. Which of them is running decides both
+# what a bare start means and which one a restart hands over to.
+TRAY_EXE = "DikteApp.exe"
+IS_TRAY = FROZEN and os.path.basename(sys.executable).lower() == TRAY_EXE.lower()
 
 # Long enough for a process that is already running to answer, short enough that
 # "nothing is running" is not a noticeable pause in front of a key press.
@@ -93,9 +49,39 @@ def script_path():
     )
 
 
+def launch_command(*args):
+    """The argument list that starts Dikte again, as a list to spawn.
+
+    Packaged, the executable is the application and there is no interpreter and
+    no script in front of it. From a checkout it is the interpreter running
+    dikte.py, which is also what has to survive a restart after an update.
+    """
+    if FROZEN:
+        return [sys.executable, *args]
+    return [sys.executable, script_path(), *args]
+
+
+def gui_command(*args):
+    """The argument list that starts the tray application.
+
+    Not the same as launch_command in a packaged build: `dikte transcribe` runs
+    in a console window, and having it start the tray application would leave
+    that window open for as long as Dikte ran. The tray executable sits beside
+    it in the same directory.
+    """
+    if not FROZEN:
+        return launch_command(*args)
+    tray = pathlib.Path(sys.executable).with_name(TRAY_EXE)
+    return [str(tray) if tray.exists() else sys.executable, *args]
+
+
+def _quoted(part):
+    return f'"{part}"' if " " in part else part
+
+
 def command_for(verb):
-    """The command line a KDE shortcut runs for one of the verbs."""
-    return f"{sys.executable} {script_path()} {verb}"
+    """The command line a desktop shortcut runs for one of the verbs."""
+    return " ".join(_quoted(part) for part in launch_command(verb))
 
 
 def send(cmd, wait=False, timeout=0, **args):

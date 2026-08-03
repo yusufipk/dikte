@@ -1,0 +1,1 @@
+"""macOS runtime adapter package."""

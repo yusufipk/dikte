@@ -33,28 +33,33 @@ import json
 import os
 import pathlib
 import platform
+import re
 import shutil
-import signal
 import socket
 import subprocess
-import sys
 import tarfile
 import threading
 import time
 import urllib.error
 import urllib.request
+import zipfile
 
 import hub
 from i18n import t
+from platforms import IS_WINDOWS, adapter
+
+runtime = adapter("runtime")
 
 HOST = "127.0.0.1"
 # The path api.py asks for, so its URL and the server's line up.
 INFERENCE_PATH = "/v1/audio/transcriptions"
 
-DATA_DIR = (pathlib.Path(os.environ.get("XDG_DATA_HOME")
-                         or os.path.expanduser("~/.local/share")) / "dikte")
+DATA_DIR = runtime.data_dir()
 BIN_DIR = DATA_DIR / "bin"
 MODELS_DIR = DATA_DIR / "models"
+
+# What the programs are called once they are unpacked.
+EXE = ".exe" if IS_WINDOWS else ""
 
 # Loading a large model onto a GPU is the slow part of a start, and on a cold
 # page cache a large LLM read from a spinning disk is slower still.
@@ -148,14 +153,21 @@ def download(item, target, on_progress=None, should_stop=None, require_hash=True
     request = urllib.request.Request(item.url, headers={"User-Agent": hub.USER_AGENT})
     digest = hashlib.sha256()
     done = 0
+    total = 0
+    stopped = False
+    overlong = False
     try:
         with urllib.request.urlopen(request, timeout=60) as response:
             total = int(response.headers.get("Content-Length") or item.size or 0)
+            # Every way out of this block leaves the file closed before the
+            # `.part` is deleted. Windows refuses to unlink a file that is
+            # still open, so a cancelled download used to fail with a sharing
+            # violation on top of having been cancelled.
             with open(part, "wb") as out:
                 while True:
                     if should_stop is not None and should_stop():
-                        part.unlink(missing_ok=True)
-                        return False
+                        stopped = True
+                        break
                     block = response.read(DOWNLOAD_CHUNK)
                     if not block:
                         break
@@ -165,38 +177,69 @@ def download(item, target, on_progress=None, should_stop=None, require_hash=True
                     # More than was announced: a body that does not end is the
                     # one way this loop could run until the disk is full.
                     if total and done > total:
-                        part.unlink(missing_ok=True)
-                        raise LocalError(t("{name} is longer than it said it "
-                                           "would be.", name=item.name))
+                        overlong = True
+                        break
                     if on_progress is not None:
                         on_progress(done, total)
-        # A proxy notice or an error page that came back as 200 would otherwise
-        # be renamed into place and only fail when something tries to read it.
-        if total and done != total:
-            part.unlink(missing_ok=True)
-            raise LocalError(t("The download stopped early ({done} of {total}).",
-                               done=human_size(done), total=human_size(total)))
-        if item.sha256 and digest.hexdigest() != item.sha256:
-            part.unlink(missing_ok=True)
-            raise LocalError(t("{name} does not match its published checksum. "
-                               "Nothing was installed.", name=item.name))
-        part.replace(target)
-        return True
     except urllib.error.HTTPError as exc:
-        part.unlink(missing_ok=True)
+        _drop(part)
         exc.close()   # it holds the response body open until it is collected
         raise LocalError(t("Could not download {name}: HTTP {code}",
                            name=item.name, code=exc.code)) from exc
     except urllib.error.URLError as exc:
-        part.unlink(missing_ok=True)
+        _drop(part)
         raise LocalError(t("Could not download {name}: {error}",
                            name=item.name, error=exc.reason)) from exc
     except OSError as exc:
         # A connection cut mid-body arrives here too, and gigabytes in is
         # exactly where that happens.
-        part.unlink(missing_ok=True)
+        _drop(part)
         raise LocalError(t("Could not write {name}: {error}",
                            name=item.name, error=exc)) from exc
+
+    if stopped:
+        _drop(part)
+        return False
+    if overlong:
+        _drop(part)
+        raise LocalError(t("{name} is longer than it said it would be.",
+                           name=item.name))
+    # A proxy notice or an error page that came back as 200 would otherwise
+    # be renamed into place and only fail when something tries to read it.
+    if total and done != total:
+        _drop(part)
+        raise LocalError(t("The download stopped early ({done} of {total}).",
+                           done=human_size(done), total=human_size(total)))
+    if item.sha256 and digest.hexdigest() != item.sha256:
+        _drop(part)
+        raise LocalError(t("{name} does not match its published checksum. "
+                           "Nothing was installed.", name=item.name))
+    try:
+        part.replace(target)
+    except OSError as exc:
+        _drop(part)
+        raise LocalError(t("Could not write {name}: {error}",
+                           name=item.name, error=exc)) from exc
+    return True
+
+
+def _drop(path):
+    """Delete a file, waiting out whatever still has it open.
+
+    On Windows an on-access virus scanner opens a file the moment it is closed,
+    and a delete arriving in that window fails outright rather than being
+    queued the way it would be on Linux. Half a second of retries is the
+    difference between a cancelled download and a stray `.part` nobody cleans
+    up.
+    """
+    path = pathlib.Path(path)
+    for attempt in range(6):
+        try:
+            path.unlink(missing_ok=True)
+            return True
+        except OSError:
+            time.sleep(0.05 * (attempt + 1))
+    return False
 
 
 # --- the programs ---------------------------------------------------------
@@ -217,22 +260,175 @@ def _has_vulkan():
     fetching the Vulkan one for a machine that cannot load it would only make
     the download bigger.
     """
-    return bool(ctypes.util.find_library("vulkan"))
+    return bool(ctypes.util.find_library("vulkan-1" if IS_WINDOWS else "vulkan"))
 
 
-def _wanted_assets(program):
-    """Asset name endings to accept, best first.
+# What a user may ask the local programs to run on. "auto" is what Dikte picks
+# when nobody has said; the other three are a choice, and a choice that cannot
+# be honoured is refused rather than quietly turned into something else.
+BACKENDS = ("auto", "cpu", "cuda", "vulkan")
 
-    llama.cpp publishes native Metal-enabled macOS archives. whisper.cpp does
-    not publish a runnable macOS server archive, so an arm64 Mac must not
-    mistake Ubuntu's arm64 archive for a native build.
+BACKEND_LABELS = {
+    "auto": "Auto",
+    "cpu": "CPU",
+    "cuda": "NVIDIA (CUDA)",
+    "vulkan": "Vulkan",
+}
+
+
+def _wanted_assets(program, backend="auto"):
+    """Regular expressions matching the release assets to accept, best first.
+
+    Matched rather than compared, because the names carry versions nobody here
+    should have to know: whisper's CUDA build is `whisper-cublas-12.4.0-bin-
+    x64.zip` today and something else next release. Full patterns rather than
+    endings, because `whisper-bin-x64.zip`, `whisper-blas-bin-x64.zip` and
+    `whisper-cublas-12.4.0-bin-x64.zip` all end the same way and are three very
+    different downloads.
     """
     arch = _arch()
-    if sys.platform == "darwin":
-        return () if program is WHISPER else (f"bin-macos-{arch}.tar.gz",)
-    if program is LLAMA and _has_vulkan():
-        return (f"bin-ubuntu-vulkan-{arch}.tar.gz", f"bin-ubuntu-{arch}.tar.gz")
-    return (f"bin-ubuntu-{arch}.tar.gz",)
+    backend = backend if backend in BACKENDS else "auto"
+    if IS_WINDOWS:
+        return _windows_assets(program, backend, arch)
+    return _linux_assets(program, backend, arch)
+
+
+def _linux_assets(program, backend, arch):
+    cpu = rf"bin-ubuntu-{arch}\.tar\.gz$"
+    vulkan = rf"bin-ubuntu-vulkan-{arch}\.tar\.gz$"
+    if program is not LLAMA:
+        # whisper.cpp publishes one Linux build, and it is the CPU one.
+        return (cpu,)
+    if backend == "vulkan":
+        return (vulkan,)
+    if backend == "cpu":
+        return (cpu,)
+    if backend == "cuda":
+        # There is no CUDA build for Linux; Vulkan is how a card is reached.
+        return ()
+    # Auto, which is what it has always done: the Vulkan build when a loader is
+    # installed, because the plain one carries CPU backends only.
+    return (vulkan, cpu) if _has_vulkan() else (cpu,)
+
+
+def _windows_assets(program, backend, arch):
+    if program is LLAMA:
+        # Anchored on the program's own name: the CUDA runtime is published as
+        # `cudart-llama-bin-win-cuda-12.4-x64.zip`, which ends the same way as
+        # the build it belongs to and holds no llama-server at all.
+        table = {
+            "cpu": (rf"^llama-.*-bin-win-cpu-{arch}\.zip$",),
+            "cuda": (rf"^llama-.*-bin-win-cuda-[\d.]+-{arch}\.zip$",),
+            "vulkan": (rf"^llama-.*-bin-win-vulkan-{arch}\.zip$",),
+        }
+    else:
+        table = {
+            "cpu": (rf"^whisper-bin-{arch}\.zip$",),
+            "cuda": (rf"^whisper-cublas-[\d.]+-bin-{arch}\.zip$",),
+            # whisper.cpp publishes no Vulkan build for Windows. Saying so is
+            # the point: falling back to the CPU one would look like a working
+            # graphics card that is simply slow.
+            "vulkan": (),
+        }
+    # Auto is the CPU build. It is the one that runs on every machine, and the
+    # one whose failure modes are not "which driver is installed"; a card is
+    # something to opt into, once, in the settings.
+    return table["cpu"] if backend == "auto" else table[backend]
+
+
+def backend_choices(program):
+    """The backends worth offering for this program on this machine.
+
+    What the projects publish differs by platform and by program: no CUDA
+    build of llama.cpp for Linux, no Vulkan build of whisper.cpp for Windows.
+    Offering one that does not exist is offering a failure.
+    """
+    return tuple(name for name in BACKENDS
+                 if name == "auto" or _wanted_assets(program, name))
+
+
+# Both projects publish several CUDA builds at once, against different CUDA
+# runtimes: whisper.cpp has 11.8 and 12.4 today, llama.cpp 12.4 and 13.3. A
+# driver runs anything up to its own version and nothing above it, so which one
+# to fetch is a question about this machine rather than a matter of taste.
+_CUDA_IN_NAME = re.compile(r"(?:cublas-|cuda-)(\d+)\.(\d+)")
+
+
+def _cuda_version(name):
+    found = _CUDA_IN_NAME.search(name)
+    return (int(found.group(1)), int(found.group(2))) if found else None
+
+
+def _pick(assets, pattern):
+    """The best asset matching `pattern`, or None when none of them will do.
+
+    For everything but CUDA there is one match and it is the answer. For CUDA
+    it is the newest build this machine's driver can load: the oldest would
+    work and waste the card, and the newest would fail inside the server with a
+    missing DLL naming a CUDA version and nothing about what to do.
+    """
+    found = [asset for asset in assets if re.search(pattern, asset.name)]
+    if not found:
+        return None
+    versions = [(_cuda_version(asset.name), asset) for asset in found]
+    if any(version is None for version, _asset in versions):
+        return found[0]
+    driver = runtime.cuda_driver_version()
+    if driver is None:
+        # No NVIDIA driver on this machine, so no CUDA build can run on it.
+        return None
+    usable = [pair for pair in versions if pair[0] <= driver]
+    return max(usable)[1] if usable else None
+
+
+def _no_build(program, tag, backend, assets):
+    """Why nothing was fetched, in terms of this machine rather than the release."""
+    if backend == "cuda":
+        driver = runtime.cuda_driver_version()
+        if driver is None:
+            return t("There is no NVIDIA driver on this machine, so a CUDA "
+                     "build of {name} could not run. Pick another one under "
+                     "Runs on.", name=program.name)
+        published = sorted(v for v in (_cuda_version(a.name) for a in assets) if v)
+        if published:
+            return t(
+                "{repo} {tag} publishes CUDA {wanted} at the oldest, and this "
+                "driver runs CUDA {have}. Update the NVIDIA driver, or pick "
+                "another build under Runs on.",
+                repo=program.repo, tag=tag,
+                wanted=f"{published[0][0]}.{published[0][1]}",
+                have=f"{driver[0]}.{driver[1]}",
+            )
+    if backend not in ("", "auto"):
+        return t("{repo} {tag} publishes no {backend} build for this machine.",
+                 repo=program.repo, tag=tag,
+                 backend=BACKEND_LABELS.get(backend, backend))
+    return t("{repo} {tag} has no build for this machine.",
+             repo=program.repo, tag=tag)
+
+
+# The CUDA builds of llama.cpp for Windows are published without the CUDA
+# runtime beside them: the DLLs come in a second archive, and the server exits
+# on a missing cudart64 without either archive being at fault. Unpacked into
+# the same directory, which is where the loader looks first.
+_CUDART = re.compile(r"^cudart-llama-bin-win-cuda-([\d.]+)-(\w+)\.zip$")
+_CUDA_BUILD = re.compile(r"bin-win-cuda-([\d.]+)-(\w+)\.zip$")
+
+
+def _companions(program, item, assets):
+    """Other assets that have to be unpacked beside `item` for it to run."""
+    if program is not LLAMA or not IS_WINDOWS:
+        return []
+    build = _CUDA_BUILD.search(item.name)
+    if not build:
+        return []
+    wanted = build.groups()
+    found = []
+    for asset in assets:
+        runtime_build = _CUDART.match(asset.name)
+        if runtime_build and runtime_build.groups() == wanted:
+            found.append(asset)
+    return found
 
 
 def _install_record(program):
@@ -257,6 +453,15 @@ def installed_version(program):
         return ""
 
 
+def installed_backend(program):
+    """What the downloaded build runs on, so the settings can show it."""
+    try:
+        record = json.loads(_install_record(program).read_text(encoding="utf-8"))
+        return record.get("backend") or "auto"
+    except (OSError, ValueError):
+        return "auto"
+
+
 def program_path(program, custom=""):
     """Which copy of the program to run, or "" when there is none.
 
@@ -275,6 +480,11 @@ def system_program(program):
     return bool(shutil.which(program.binary))
 
 
+def binary_name(program):
+    """What the executable is called once it is unpacked."""
+    return program.binary + EXE
+
+
 def _find_binary(root, name):
     for path in sorted(pathlib.Path(root).rglob(name)):
         if path.is_file():
@@ -283,30 +493,61 @@ def _find_binary(root, name):
 
 
 def _extract(archive, into):
-    """Unpack a release tarball, refusing anything that reaches outside `into`.
+    """Unpack a release archive, refusing anything that reaches outside `into`.
 
-    The archives lay their libraries next to their binaries and are linked with
-    an $ORIGIN runpath, so a whole directory is what has to survive the trip and
-    the binary cannot be lifted out of it.
+    The archives lay their libraries next to their binaries, with an $ORIGIN
+    runpath on Linux and the DLLs the loader looks for beside the .exe on
+    Windows, so a whole directory is what has to survive the trip and the
+    binary cannot be lifted out of it.
     """
+    name = os.path.basename(str(archive))
     try:
-        with tarfile.open(archive, "r:gz") as tar:
-            try:
-                tar.extractall(into, filter="data")
-            except TypeError:      # Python without the extraction filters
-                tar.extractall(into)
-    except (tarfile.TarError, OSError) as exc:
+        if zipfile.is_zipfile(archive):
+            _extract_zip(archive, into)
+        else:
+            with tarfile.open(archive, "r:gz") as tar:
+                try:
+                    tar.extractall(into, filter="data")
+                except TypeError:      # Python without the extraction filters
+                    tar.extractall(into)
+    except (tarfile.TarError, zipfile.BadZipFile, OSError) as exc:
         raise LocalError(t("Could not unpack {name}: {error}",
-                           name=os.path.basename(str(archive)), error=exc)) from exc
+                           name=name, error=exc)) from exc
+
+
+def _extract_zip(archive, into):
+    """A zip, with every member checked before any of it is written.
+
+    A zip entry is a string the archive chose, and it may name `..\\..\\` or an
+    absolute path. Python's own extractor strips those, but this is a program
+    that will then be run, so the check is made here and out loud: an archive
+    that tries it is refused whole rather than quietly flattened.
+    """
+    root = pathlib.Path(into).resolve()
+    with zipfile.ZipFile(archive) as zf:
+        for member in zf.infolist():
+            name = member.filename.replace("\\", "/")
+            if name.endswith("/"):
+                continue
+            landing = (root / name).resolve()
+            if landing != root and root not in landing.parents:
+                raise LocalError(t(
+                    "{archive} tried to write outside its own directory "
+                    "({member}). Nothing was installed.",
+                    archive=os.path.basename(str(archive)), member=member.filename,
+                ))
+        zf.extractall(root)
 
 
 def install_program(program, tag="", on_progress=None, should_stop=None,
-                    refresh=False):
+                    refresh=False, backend="auto"):
     """Fetch and unpack a release. The path to the binary, or "" when stopped.
 
     `tag` is empty for whatever the project released last, which is the point:
     a version pinned in Dikte's source would mean a release of Dikte every time
-    whisper.cpp has one.
+    whisper.cpp has one. `backend` is what the user asked to run on; a machine
+    the project publishes no such build for is told so rather than handed the
+    CPU one under another name.
     """
     try:
         tag, assets = hub.release(program.repo, tag or "latest", refresh=refresh)
@@ -314,43 +555,50 @@ def install_program(program, tag="", on_progress=None, should_stop=None,
         raise LocalError(str(exc)) from exc
 
     item = None
-    for ending in _wanted_assets(program):
-        item = next((a for a in assets if a.name.endswith(ending)), None)
+    for pattern in _wanted_assets(program, backend):
+        item = _pick(assets, pattern)
         if item:
             break
     if item is None:
-        if sys.platform == "darwin" and program is WHISPER:
-            raise LocalError(t(
-                "whisper.cpp publishes no macOS build. Install it with: "
-                "brew install whisper-cpp"
-            ))
-        raise LocalError(t("{repo} {tag} has no build for this machine.",
-                           repo=program.repo, tag=tag))
+        raise LocalError(_no_build(program, tag, backend, assets))
 
     into = BIN_DIR / program.name / tag
     shutil.rmtree(into, ignore_errors=True)
-    archive = BIN_DIR / program.name / item.name
+    wanted = [item] + _companions(program, item, assets)
+    archives = []
     try:
-        if not download(item, archive, on_progress, should_stop):
-            return ""
-        _extract(archive, into)
-        binary = _find_binary(into, program.binary)
+        for asset in wanted:
+            archive = BIN_DIR / program.name / asset.name
+            archives.append(archive)
+            if not download(asset, archive, on_progress, should_stop):
+                return ""
+            _extract(archive, into)
+        binary = _find_binary(into, binary_name(program))
         if binary is None:
             raise LocalError(t("{name} was not in the download.",
-                               name=program.binary))
-        binary.chmod(binary.stat().st_mode | 0o111)
+                               name=binary_name(program)))
+        _make_runnable(binary)
         _install_record(program).write_text(
-            json.dumps({"tag": tag, "binary": str(binary)}), encoding="utf-8")
+            json.dumps({"tag": tag, "binary": str(binary), "backend": backend}),
+            encoding="utf-8")
     except OSError as exc:
         raise LocalError(t("Could not install {name}: {error}",
                            name=program.name, error=exc)) from exc
     finally:
-        try:
-            archive.unlink(missing_ok=True)
-        except OSError:
-            pass
+        for archive in archives:
+            _drop(archive)
     _drop_old_versions(program, keep=tag)
     return str(binary)
+
+
+def _make_runnable(binary):
+    """Give the unpacked program the execute bit, where there is one to give."""
+    if IS_WINDOWS:
+        return
+    try:
+        binary.chmod(binary.stat().st_mode | 0o111)
+    except OSError:
+        pass
 
 
 def _drop_old_versions(program, keep):
@@ -592,11 +840,19 @@ class Server:
                         args + ["--host", HOST, "--port", str(port)],
                         stdout=sink, stderr=subprocess.STDOUT,
                         stdin=subprocess.DEVNULL,
+                        # No console window on Windows: a server started from a
+                        # tray icon would otherwise put a black box on screen
+                        # and keep it there for as long as the model is loaded.
+                        **runtime.NO_WINDOW,
                     )
             except OSError as exc:
                 raise LocalError(t("Could not start {name}: {error}",
                                    name=self.program.name, error=exc)) from exc
 
+            # Tied to this process where the platform can do that, so a Dikte
+            # killed outright takes the loaded model down with it rather than
+            # leaving gigabytes resident.
+            runtime.adopt(proc)
             # Written before it is ready rather than after, so that a kill
             # during the model load leaves something for the sweep to find.
             self._remember(proc.pid)
@@ -691,12 +947,7 @@ class Server:
         could be somebody else's copy; the name together with Dikte's own data
         directory on the command line could not.
         """
-        try:
-            blob = pathlib.Path(f"/proc/{pid}/cmdline").read_bytes()
-        except OSError:
-            return False
-        return (self.program.binary.encode() in blob
-                and str(DATA_DIR).encode() in blob)
+        return runtime.is_our_process(pid, (self.program.binary, str(DATA_DIR)))
 
     def sweep(self):
         """Kill a server a previous Dikte left behind. True when one was found.
@@ -713,11 +964,7 @@ class Server:
         self._forget()
         if not self._is_ours(pid):
             return False
-        try:
-            os.kill(pid, signal.SIGTERM)
-        except OSError:
-            return False
-        return True
+        return runtime.terminate(pid)
 
 
 # --- the two of them ------------------------------------------------------

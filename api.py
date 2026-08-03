@@ -17,13 +17,15 @@ import json
 import mimetypes
 import os
 import secrets
-import socket
 import threading
 import urllib.error
 import urllib.request
 
 import ggml
 from i18n import t
+from platforms import adapter
+
+runtime = adapter("runtime")
 
 APP_URL = "https://github.com/yusufipk/dikte"
 USER_AGENT = f"dikte/1.0 (+{APP_URL})"
@@ -141,13 +143,13 @@ def _stop_using(conn):
     A connection whose socket is not open yet would open one on the next line,
     so the reconnect is turned off first. One that is open is being read from,
     and close() alone leaves that read waiting for bytes which are never coming
-    now; the shutdown is what makes it return.
+    now. What does make it return differs between the two socket libraries, so
+    the platform is asked.
     """
     conn.auto_open = 0
     sock = getattr(conn, "sock", None)
     if sock is not None:
-        with contextlib.suppress(OSError):
-            sock.shutdown(socket.SHUT_RDWR)
+        runtime.abort_socket(sock)
     with contextlib.suppress(OSError):
         conn.close()
 
@@ -246,6 +248,40 @@ def _extract_error(body):
     return body[:300]
 
 
+# What an upload says it is, decided here rather than asked of the machine.
+# `mimetypes` reads the system's own table, and the systems disagree: a .wav is
+# audio/x-wav on Linux and audio/wav in the Windows registry, and a user who
+# has installed something that claimed .m4a can move it again. A request whose
+# shape depends on the desktop it was sent from is one more thing to rule out
+# when a provider starts refusing uploads, so the common formats are named.
+CONTENT_TYPES = {
+    ".wav": "audio/x-wav",
+    ".mp3": "audio/mpeg",
+    ".mpga": "audio/mpeg",
+    ".m4a": "audio/mp4",
+    ".aac": "audio/aac",
+    ".flac": "audio/flac",
+    ".ogg": "audio/ogg",
+    ".oga": "audio/ogg",
+    ".opus": "audio/opus",
+    ".webm": "audio/webm",
+    ".wma": "audio/x-ms-wma",
+    ".mp4": "video/mp4",
+    ".m4v": "video/x-m4v",
+    ".mpeg": "video/mpeg",
+    ".mov": "video/quicktime",
+    ".mkv": "video/x-matroska",
+    ".avi": "video/x-msvideo",
+}
+
+
+def _content_type(filename):
+    ending = os.path.splitext(filename)[1].lower()
+    return (CONTENT_TYPES.get(ending)
+            or mimetypes.guess_type(filename)[0]
+            or "application/octet-stream")
+
+
 def _multipart(fields, file_field, file_path):
     """Build a multipart/form-data body; returns (body, content-type)."""
     boundary = "----dikte" + secrets.token_hex(16)
@@ -258,7 +294,7 @@ def _multipart(fields, file_field, file_path):
         out += str(value).encode("utf-8") + b"\r\n"
 
     filename = os.path.basename(file_path)
-    ctype = mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    ctype = _content_type(filename)
     with open(file_path, "rb") as fh:
         payload = fh.read()
     out += f"--{boundary}\r\n".encode()

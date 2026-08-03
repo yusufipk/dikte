@@ -23,9 +23,12 @@ import ggml
 import hotkey
 import ipc
 import meeting
-import paste
 from filetranscribe import FileTranscriber
 from i18n import t
+from keycapture import ShortcutCatcher
+from platforms import adapter
+
+runtime = adapter("runtime")
 
 UI_LANGUAGES = [("Automatic (system)", "auto"), ("Turkish", "tr"), ("English", "en")]
 LANGUAGES = [
@@ -107,22 +110,10 @@ REASONING_LEVELS = [
     ("Low", "low"), ("Medium", "medium"), ("High", "high"),
     ("Very high", "xhigh"), ("Maximum", "max"),
 ]
+PASTE_SHORTCUTS = ["ctrl+v", "ctrl+shift+v", "shift+insert"]
 # Offered for every global shortcut, which keeps them one kind of field rather
 # than four. The boxes stay editable: this is a shortlist of combinations that
 # are usually free, not the set of ones that work.
-SHORTCUTS = [
-    "Ctrl+Space", "Ctrl+Alt+Space", "Ctrl+Shift+Space", "Meta+Space",
-    "Ctrl+Alt+A", "Ctrl+Alt+D", "Ctrl+Alt+M", "Ctrl+Alt+Q",
-    "Meta+A", "Meta+D", "Meta+M",
-    "Ctrl+Alt+F1", "Ctrl+Alt+F2", "Ctrl+Alt+F3",
-]
-# Cmd+Space is Spotlight and Ctrl+Space switches input sources, so a Mac gets
-# its own shortlist. Option is what Alt is called on that keyboard.
-MAC_SHORTCUTS = [
-    "Ctrl+Option+Space", "Cmd+Shift+Space", "Ctrl+Shift+Space",
-    "Ctrl+Option+A", "Ctrl+Option+D", "Ctrl+Option+M",
-    "Cmd+Option+A", "Cmd+Option+D", "Cmd+Option+M",
-]
 AUDIO_FILTER = ("*.mp3 *.wav *.m4a *.ogg *.opus *.flac *.aac *.wma "
                 "*.mp4 *.mkv *.webm *.mov *.avi")
 
@@ -166,6 +157,25 @@ class LocalModelBox(QGroupBox):
         self.install_button.clicked.connect(self._install_program)
         form.addRow(t("Program"), self._side_by_side(self.program_label,
                                                      self.install_button))
+
+        # Which build to fetch. The projects publish a different set per
+        # platform, with no CUDA for Linux and no Vulkan whisper for Windows,
+        # so the box offers what there is rather than a fixed list, and it is
+        # left out entirely where the only answer is the processor.
+        self.backend = QComboBox(self)
+        choices = ggml.backend_choices(program)
+        for name in choices:
+            self.backend.addItem(t(ggml.BACKEND_LABELS[name]), name)
+        self.backend.setToolTip(t(
+            "Automatic downloads the build that runs on any machine, on the "
+            "processor. Pick a graphics card build to fetch that one instead; "
+            "if it fails to start, the reason is shown rather than swallowed."
+        ))
+        self.backend.currentIndexChanged.connect(self._show_program)
+        if len(choices) > 2:
+            form.addRow(t("Runs on"), self.backend)
+        else:
+            self.backend.setVisible(False)
 
         if self._repos is not None:
             self.repo = QComboBox()
@@ -263,17 +273,32 @@ class LocalModelBox(QGroupBox):
             self.program_label.setText(t("Not installed."))
             self.install_button.setVisible(True)
             return
-        self.install_button.setVisible(not ggml.installed_program(self.program)
-                                       and not ggml.system_program(self.program))
         if ggml.system_program(self.program):
             # Worth saying which one is running: a distribution package is built
             # for this machine and may reach the graphics card, while the
             # released binaries carry processor backends only.
+            self.install_button.setVisible(False)
             self.program_label.setText(t("Installed on the system: {path}", path=path))
-        else:
-            self.program_label.setText(
-                t("Downloaded, version {version}.",
-                  version=ggml.installed_version(self.program) or "?"))
+            return
+        installed = ggml.installed_backend(self.program)
+        # Asking for a different build is asking for it to be fetched: what is
+        # unpacked here decides whether the graphics card is reachable at all.
+        self.install_button.setVisible(installed != self.chosen_backend())
+        self.program_label.setText(t(
+            "Downloaded, version {version} ({backend}).",
+            version=ggml.installed_version(self.program) or "?",
+            backend=t(ggml.BACKEND_LABELS.get(installed, installed)),
+        ))
+
+    def chosen_backend(self):
+        return self.backend.currentData() or "auto"
+
+    def set_backend(self, name):
+        for index in range(self.backend.count()):
+            if self.backend.itemData(index) == name:
+                self.backend.setCurrentIndex(index)
+                return
+        self.backend.setCurrentIndex(0)
 
     # ---- the lists -------------------------------------------------------
 
@@ -355,9 +380,12 @@ class LocalModelBox(QGroupBox):
         self.install_button.setEnabled(False)
         self.program_label.setText(t("Downloading…"))
 
+        backend = self.chosen_backend()
+
         def work():
             try:
-                ggml.install_program(self.program, on_progress=self._report)
+                ggml.install_program(self.program, on_progress=self._report,
+                                     backend=backend)
                 self._installed.emit("", "")
             except ggml.LocalError as exc:
                 self._installed.emit("", str(exc))
@@ -461,6 +489,10 @@ class LocalModelBox(QGroupBox):
 
 class SettingsWindow(QDialog):
     applied = pyqtSignal()
+    # True while a shortcut is being read off the keyboard. The application
+    # gives up its own global shortcuts for that long, or the combination it
+    # already holds would never reach this window to be read.
+    capturing = pyqtSignal(bool)
 
     _models_loaded = pyqtSignal(list, str)
     _transcribe_models_loaded = pyqtSignal(list, str)
@@ -476,6 +508,12 @@ class SettingsWindow(QDialog):
         # global shortcuts. One dictionary is what lets install, remove and the
         # status line be written once instead of once per key.
         self._shortcut_rows = {}
+        # The "press a key" button beside each of them, so that closing the
+        # window can hand the keyboard back whatever it was in the middle of,
+        # and what each row is called, for saying which verb already has a
+        # combination somebody just pressed.
+        self._shortcut_catchers = {}
+        self._shortcut_labels = {}
         # Each provider keeps its own transcription model, so switching the
         # provider back and forth never overwrites the other one's.
         self._models = dict.fromkeys(cfg.TRANSCRIBERS, "")
@@ -528,6 +566,16 @@ class SettingsWindow(QDialog):
         if not conf.transcribe_ready():
             self.tabs.setCurrentIndex(self.api_tab_index)
 
+    def closeEvent(self, event):
+        # A window closed in the middle of reading a key would take the
+        # keyboard with it and leave the application's own shortcuts down.
+        self._stop_capturing()
+        super().closeEvent(event)
+
+    def done(self, result):
+        self._stop_capturing()
+        super().done(result)
+
     # ---- tabs ----------------------------------------------------------
 
     def _general_tab(self):
@@ -557,16 +605,10 @@ class SettingsWindow(QDialog):
         form.addRow("", self.auto_paste)
 
         self.paste_shortcut = QComboBox()
-        # A shortlist of the combinations that usually paste, not the set of
-        # them: a stored one this desktop does not offer is kept as it is
-        # rather than quietly replaced by the first item on the list.
-        self.paste_shortcut.setEditable(True)
-        self.paste_shortcut.addItems(paste.desktop().shortcuts)
-        self.paste_shortcut.setToolTip(t(
-            "macOS asks for Accessibility permission the first time this is sent."
-            if paste.desktop() is paste.MACOS else
-            "Terminals usually want ctrl+shift+v. Change this if pasting does nothing."
-        ))
+        self.paste_shortcut.addItems(PASTE_SHORTCUTS)
+        self.paste_shortcut.setToolTip(
+            t("Terminals usually want ctrl+shift+v. Change this if pasting does nothing.")
+        )
         form.addRow(t("Paste key"), self.paste_shortcut)
 
         self.restore_clipboard = QCheckBox(t("Restore the previous clipboard after pasting"))
@@ -605,10 +647,27 @@ class SettingsWindow(QDialog):
         form.addRow("", self.filter_hallucinations)
 
         self.keep_audio = QCheckBox(
-            t("Keep audio files ({path})", path=str(cfg.RECORDINGS_DIR))
-        )
+            t("Keep audio files ({path})", path=cfg.RECORDINGS_DIR))
         form.addRow("", self.keep_audio)
+
+        # Where all of it actually is. The two directories are not in the same
+        # place on the two platforms and on Windows neither is anywhere a user
+        # would go looking, so the window opens them rather than naming them.
+        settings_folder = QPushButton(t("Open the settings folder"))
+        settings_folder.clicked.connect(
+            lambda: self._open_folder(cfg.CONFIG_DIR))
+        data_folder = QPushButton(t("Open the data folder"))
+        data_folder.clicked.connect(lambda: self._open_folder(cfg.DATA_DIR))
+        form.addRow(t("Folders"), self._row(settings_folder, data_folder))
         return page
+
+    def _open_folder(self, path):
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        if not runtime.open_folder(path):
+            QMessageBox.information(self, t("Folder"), str(path))
 
     def _api_tab(self):
         page = QWidget()
@@ -999,15 +1058,6 @@ class SettingsWindow(QDialog):
             self.meeting_system.addItem(desc, name)
         sources_form.addRow(t("The other participants"), self.meeting_system)
 
-        if audio.sound() is audio.COREAUDIO:
-            mac_note = QLabel(t(
-                "macOS does not offer what the speakers are playing as something "
-                "to record. Install BlackHole or Loopback, send the meeting's "
-                "sound through it, and pick it above."
-            ))
-            mac_note.setWordWrap(True)
-            sources_form.addRow(mac_note)
-
         note = QLabel(t(
             "Wear headphones if you can. Through speakers your microphone hears "
             "the other side as well, and although a line that lands on both "
@@ -1248,34 +1298,29 @@ class SettingsWindow(QDialog):
         layout.addLayout(form)
 
         self.evdev_enabled = QCheckBox(t(
-            "Use the built-in listener (/dev/input), for when the {desktop} "
-            "shortcut is not active yet", desktop=hotkey.desktop_name()
+            "Use the built-in listener (/dev/input), for when the KDE shortcut is "
+            "not active yet"
         ))
         self.evdev_enabled.setToolTip(t(
             "Works immediately, no session restart. The only difference: the key "
             "combination also reaches the focused application."
         ))
         layout.addWidget(self.evdev_enabled)
-        # Nothing to wait for where nothing is installed: there the listener is
-        # the mechanism, always on, and not a choice to offer.
-        self.evdev_enabled.setVisible(hotkey.installs_shortcuts())
+        # Windows has no desktop file for a session to read later and no
+        # /dev/input to read behind its back: Dikte registers the combination
+        # itself and holds it while it runs, so there is nothing to switch on.
+        self.evdev_enabled.setVisible(not hotkey.LISTENER_IS_PRIMARY)
 
-        if hotkey.shortcut_needs_restart():
-            explanation = t(
-                "KWin only reads shortcut settings at startup. After 'Install' the "
-                "shortcut shows up under System Settings → Shortcuts, but it will "
-                "not fire until you log out and back in. Until then, use the "
-                "built-in listener."
-            )
-        elif hotkey.installs_shortcuts():
-            explanation = t("The shortcut starts working as soon as it is installed.")
-        else:
-            explanation = t(
-                "Dikte asks macOS for these combinations itself, while it is "
-                "running. Nothing is installed, and no other application receives "
-                "them in the meantime."
-            )
-        note = QLabel(explanation)
+        note = QLabel(t(
+            "The shortcuts are held for as long as Dikte is running, and given "
+            "back when it quits. Windows hands a combination to one program at "
+            "a time: one that is already taken is refused, without saying by "
+            "whom, and the key no longer reaches the window underneath."
+        ) if hotkey.LISTENER_IS_PRIMARY else t(
+            "KWin only reads shortcut settings at startup. After 'Install' the "
+            "shortcut shows up under System Settings → Shortcuts, but it will not "
+            "fire until you log out and back in. Until then, use the built-in listener."
+        ))
         note.setWordWrap(True)
         layout.addWidget(note)
         layout.addStretch(1)
@@ -1345,14 +1390,10 @@ class SettingsWindow(QDialog):
 
     @staticmethod
     def _shortcut_box(placeholder=""):
-        """The field a global shortcut is typed or picked in."""
-        box = QComboBox()
-        box.setEditable(True)
-        box.addItems(MAC_SHORTCUTS if hotkey.desktop_name() == "macOS"
-                     else SHORTCUTS)
-        box.setCurrentText("")
+        """The field that shows a captured shortcut or accepts one typed in."""
+        box = QLineEdit()
         if placeholder:
-            box.lineEdit().setPlaceholderText(placeholder)
+            box.setPlaceholderText(placeholder)
         return box
 
     def _key_row(self, form, provider, placeholder, tester):
@@ -1383,31 +1424,63 @@ class SettingsWindow(QDialog):
         box = self._shortcut_box(placeholder or t("none"))
         if tooltip:
             box.setToolTip(tooltip)
-        form.addRow(label, self._row(box, *self._install_buttons(
-            lambda: self._install_shortcut(which),
-            lambda: self._remove_shortcut(which),
-        )))
+        # The box still takes a typed or picked combination, but pressing the
+        # keys is the obvious way to choose a key press and the only one that
+        # answers for the keyboard actually in front of you.
+        catcher = ShortcutCatcher()
+        catcher.captured.connect(
+            lambda combo: self._shortcut_captured(which, combo))
+        catcher.refused.connect(lambda why: self._shortcut_refused(which, why))
+        catcher.listening.connect(self.capturing)
+        install = QPushButton(t("Install as a {desktop} shortcut",
+                                desktop=hotkey.desktop_name()))
+        install.clicked.connect(lambda: self._install_shortcut(which))
+        remove = QPushButton(t("Remove"))
+        remove.clicked.connect(lambda: self._remove_shortcut(which))
+        form.addRow(label, self._row(box, catcher, install, remove))
         status = QLabel("")
         status.setWordWrap(True)
         form.addRow(status)
         self._shortcut_rows[which] = (box, status, missing)
+        self._shortcut_catchers[which] = catcher
+        self._shortcut_labels[which] = label
         return box
 
-    @staticmethod
-    def _install_buttons(install_handler, remove_handler):
-        """Install and Remove, where this system has somewhere to install into.
+    def _shortcut_captured(self, which, combo):
+        """A combination read off the keyboard lands in that verb's box."""
+        taken = self._verb_using(combo, except_for=which)
+        if taken:
+            self._shortcut_refused(which, t(
+                "The shortcut {shortcut} is already assigned to {verb}. Each "
+                "shortcut can only perform one action.", shortcut=combo,
+                verb=self._shortcut_labels.get(taken, taken),
+            ))
+            return
+        box, status, _missing = self._shortcut_rows[which]
+        box.setText(combo)
+        status.setText(t(
+            "Selected {shortcut}. Press Save to start using it.",
+            shortcut=combo))
 
-        macOS has not: Dikte asks for the combination itself while it runs, so
-        there is nothing to write down and nothing to take back out.
-        """
-        if not hotkey.installs_shortcuts():
-            return []
-        install = QPushButton(t("Install as a {desktop} shortcut",
-                                desktop=hotkey.desktop_name()))
-        install.clicked.connect(install_handler)
-        remove = QPushButton(t("Remove"))
-        remove.clicked.connect(remove_handler)
-        return [install, remove]
+    def _shortcut_refused(self, which, why):
+        _box, status, _missing = self._shortcut_rows[which]
+        status.setText(why)
+
+    def _verb_using(self, combo, except_for=""):
+        """Which other verb already has that combination in its box, or ''."""
+        wanted = hotkey.parse_shortcut(combo)
+        for name, (box, _status, _missing) in self._shortcut_rows.items():
+            if name == except_for:
+                continue
+            other = box.text().strip()
+            if other and hotkey.parse_shortcut(other) == wanted:
+                return name
+        return ""
+
+    def _stop_capturing(self):
+        """Give the keyboard back, whatever the window was in the middle of."""
+        for catcher in self._shortcut_catchers.values():
+            catcher.cancel()
 
     @staticmethod
     def _row(*widgets):
@@ -1446,6 +1519,7 @@ class SettingsWindow(QDialog):
         self.local_gpu.setChecked(conf["local_gpu"])
         self.local_preload.setChecked(conf["local_preload"])
         self.local_threads.setValue(int(conf["local_threads"]))
+        self.local_whisper.set_backend(conf["local_backend"])
         self.local_whisper.load(conf["local_model"])
 
         self.cleanup_enabled.setChecked(conf["cleanup_enabled"])
@@ -1460,6 +1534,7 @@ class SettingsWindow(QDialog):
         self.local_llm_gpu.setChecked(conf["local_llm_gpu"])
         self.local_llm_preload.setChecked(conf["local_llm_preload"])
         self._select_data(self.local_llm_reasoning, conf["local_llm_reasoning"])
+        self.local_llm.set_backend(conf["local_llm_backend"])
         self.local_llm.load(conf["local_llm_model"], conf["local_llm_repo"])
         self.cleanup_prompt.setPlainText(conf["cleanup_prompt"] or cfg.default_cleanup_prompt())
         self.file_cleanup_prompt.setPlainText(
@@ -1504,7 +1579,7 @@ class SettingsWindow(QDialog):
         self.file_path = ""
 
         for which, (box, _status, _missing) in self._shortcut_rows.items():
-            box.setCurrentText(conf[hotkey.SHORTCUTS[which].setting])
+            box.setText(conf[hotkey.SHORTCUTS[which].setting])
         self.evdev_enabled.setChecked(conf["evdev_hotkey"])
 
         self.history_limit.setValue(max(0, int(conf["history_limit"])))
@@ -1539,6 +1614,7 @@ class SettingsWindow(QDialog):
             conf[who.model] = self._models[name].strip() or cfg.DEFAULTS[who.model]
         conf["local_model"] = self.local_whisper.selected()
         conf["local_gpu"] = self.local_gpu.isChecked()
+        conf["local_backend"] = self.local_whisper.chosen_backend()
         conf["local_preload"] = self.local_preload.isChecked()
         conf["local_threads"] = self.local_threads.value()
 
@@ -1555,6 +1631,7 @@ class SettingsWindow(QDialog):
         conf["local_llm_model"] = self.local_llm.selected()
         conf["local_llm_repo"] = self.local_llm.repository()
         conf["local_llm_gpu"] = self.local_llm_gpu.isChecked()
+        conf["local_llm_backend"] = self.local_llm.chosen_backend()
         conf["local_llm_preload"] = self.local_llm_preload.isChecked()
         conf["local_llm_reasoning"] = self.local_llm_reasoning.currentData() or ""
 
@@ -1618,7 +1695,7 @@ class SettingsWindow(QDialog):
         # turns them off.
         for which, (box, _status, _missing) in self._shortcut_rows.items():
             spec = hotkey.SHORTCUTS[which]
-            conf[spec.setting] = box.currentText().strip() or spec.fallback
+            conf[spec.setting] = box.text().strip() or spec.fallback
         conf["evdev_hotkey"] = self.evdev_enabled.isChecked()
         conf["history_limit"] = self.history_limit.value()
         conf.save()
@@ -1864,7 +1941,7 @@ class SettingsWindow(QDialog):
     def _install_shortcut(self, which):
         spec = hotkey.SHORTCUTS[which]
         box, _status, _missing = self._shortcut_rows[which]
-        combo = box.currentText().strip() or spec.fallback
+        combo = box.text().strip() or spec.fallback
         if not combo:
             QMessageBox.information(self, t("Shortcut"),
                                     t("Type a key combination first."))
