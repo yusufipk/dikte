@@ -5,9 +5,9 @@ machine by default, a model cleans it up (dropping the *uh*s, the restarts, the
 missing punctuation), and the result lands in your clipboard and is pasted into
 whatever window you were typing in.
 
-Built for KDE Plasma 6 on Wayland, and runs on GNOME X11 and macOS too. No
-dependencies beyond system packages: just the Python standard library, 3.11 or
-newer, and PyQt6.
+Built for KDE Plasma 6 on Wayland, and runs on GNOME X11, macOS and Windows
+10/11 too. Source installs need Python 3.11 or newer and PyQt6; the Windows
+installer bundles its runtime and ffmpeg.
 
 *[Türkçe README](README.tr.md)*
 
@@ -61,6 +61,19 @@ that catches the keys is the mechanism there and there is nothing to run:
 needs BlackHole or Loopback, because nothing else offers what the speakers are
 playing.
 
+### Windows
+
+Download and run the installer produced under [packaging/windows](packaging/windows),
+or build it with `packaging/windows/build.ps1`. It installs for the current user
+under `%LOCALAPPDATA%`, requires no administrator access, and can start at sign
+in so global shortcuts are available.
+
+Windows uses native WASAPI microphone and speaker-loopback capture,
+`RegisterHotKey`, the Unicode clipboard and `SendInput`. API keys are protected
+for the current Windows account with DPAPI. Windows cannot inject a paste into
+an application running as administrator; in that case the result remains on
+the clipboard for manual paste.
+
 `install.sh` adds the `dikte` command, a menu entry, an autostart entry and the
 two global shortcuts, whose keys are its two arguments. `./update.sh` pulls and
 puts all of that back, keeping the keys you chose; `./uninstall.sh` takes it away
@@ -73,9 +86,10 @@ cleanup on OpenRouter (`google/gemini-3.5-flash-lite`) or, when either is
 installed, on Claude Code or Codex. The keys fall back to `OPENAI_API_KEY`,
 `GROQ_API_KEY` and `OPENROUTER_API_KEY`, and are stored in
 `~/.config/dikte/config.json`, mode 600, or in
-`~/Library/Application Support/Dikte` on a Mac. Cleanup can be switched off, in
-which case the raw transcript is pasted, and a thinking model's effort can be
-set next to it.
+`~/Library/Application Support/Dikte` on a Mac, or encrypted for the current
+account in `%APPDATA%\Dikte\config.json` on Windows. Cleanup can be switched
+off, in which case the raw transcript is pasted, and a thinking model's effort
+can be set next to it.
 
 ## Using it
 

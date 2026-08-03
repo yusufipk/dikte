@@ -4,9 +4,9 @@
 çevrilir, bir model transkripti temizler (ıı'lar, tekrarlar, eksik noktalama),
 sonuç panoya kopyalanır ve o an yazdığın pencereye yapıştırılır.
 
-KDE Plasma 6 / Wayland için yazıldı, GNOME X11 ve macOS'ta da çalışır. Sistem
-paketleri dışında bağımlılığı yok: sadece Python standart kütüphanesi (3.11 veya
-üstü) ve PyQt6.
+KDE Plasma 6 / Wayland için yazıldı; GNOME X11, macOS ve Windows 10/11'de de
+çalışır. Kaynaktan kurulum Python 3.11 veya üstü ile PyQt6 ister; Windows
+kurulum paketi çalışma ortamını ve ffmpeg'i birlikte getirir.
 
 *[English README](README.md)*
 
@@ -59,6 +59,19 @@ dinleyici orada mekanizmanın kendisi, dolayısıyla kurulacak bir şey de yok:
 `brew install ffmpeg`, `pip install PyQt6`, sonra `python dikte.py`. Toplantı
 için BlackHole ya da Loopback gerekiyor, hoparlörden çıkanı kimse vermiyor.
 
+### Windows
+
+[packaging/windows](packaging/windows) altında üretilen kurulum dosyasını
+çalıştırabilir veya `packaging/windows/build.ps1` ile kendin üretebilirsin.
+Program yalnızca mevcut kullanıcı için `%LOCALAPPDATA%` altına kurulur, yönetici
+izni istemez ve global kısayollar hazır olsun diye oturum açılışında başlayabilir.
+
+Windows'ta mikrofon ve sistem sesi için yerel WASAPI, kısayollar için
+`RegisterHotKey`, pano ve yapıştırma için Unicode Clipboard API ile `SendInput`
+kullanılır. API anahtarları DPAPI ile mevcut Windows hesabına bağlı olarak
+korunur. Windows, yönetici olarak çalışan bir uygulamaya tuş gönderilmesine izin
+vermez; bu durumda sonuç panoda kalır ve elle yapıştırılabilir.
+
 `install.sh` `dikte` komutunu, menü girdisini, oturum açılışında otomatik
 başlatmayı ve iki global kısayolu kurar; tuşları da iki argümanı. `./update.sh`
 son sürümü çeker ve bunları senin seçtiğin tuşlarla yerine koyar;
@@ -72,7 +85,9 @@ seçersen sesi yazıya çevirme **OpenAI**, **Groq** ya da **OpenRouter**'da
 (`google/gemini-3.5-flash-lite`) ya da kuruluysa Claude Code veya Codex'te
 çalışır. Anahtarları boş bırakırsan `OPENAI_API_KEY`, `GROQ_API_KEY` ve
 `OPENROUTER_API_KEY` kullanılır; anahtarlar `~/.config/dikte/config.json`
-içinde, izinler 600, Mac'te ise `~/Library/Application Support/Dikte` altında.
+içinde izinler 600 ile, Mac'te `~/Library/Application Support/Dikte` altında,
+Windows'ta ise `%APPDATA%\Dikte\config.json` içinde hesaba özel şifrelenmiş
+olarak tutulur.
 Temizlemeyi tamamen kapatabilirsin, o zaman ham transkript yapıştırılır; modelin
 yanındaki kutudan düşünme seviyesini de seçebilirsin.
 
