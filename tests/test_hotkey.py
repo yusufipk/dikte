@@ -200,21 +200,21 @@ class Chooser(DikteTest):
 
     def test_installing_goes_to_whichever_it_is(self):
         with self.under("GNOME"), \
-                mock.patch.object(hotkey, "install_gnome_shortcut",
+                mock.patch.object(linux_hotkeys, "install_gnome_shortcut",
                                   return_value=(True, "ok")) as gnome:
             linux_hotkeys.install_shortcut("Ctrl+Space", "dikte toggle")
         gnome.assert_called_once()
 
         with self.under("KDE"), \
-                mock.patch.object(hotkey, "install_kde_shortcut",
+                mock.patch.object(linux_hotkeys, "install_kde_shortcut",
                                   return_value=(True, "ok")) as kde:
             linux_hotkeys.install_shortcut("Ctrl+Space", "dikte toggle")
         kde.assert_called_once()
 
     def test_removing_and_reading_back_go_to_the_same_one(self):
         with self.under("GNOME"), \
-                mock.patch.object(hotkey, "remove_gnome_shortcut") as remove, \
-                mock.patch.object(hotkey, "gnome_shortcut_status",
+                mock.patch.object(linux_hotkeys, "remove_gnome_shortcut") as remove, \
+                mock.patch.object(linux_hotkeys, "gnome_shortcut_status",
                                   return_value="Ctrl+Space") as status:
             linux_hotkeys.remove_shortcut()
             self.assertEqual(linux_hotkeys.shortcut_status(), "Ctrl+Space")
