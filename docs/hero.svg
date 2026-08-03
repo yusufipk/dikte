@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="560" viewBox="0 0 1440 560" role="img" aria-labelledby="title desc">
+  <title id="title">daakDİKTE</title>
+  <desc id="desc">Native macOS and Linux voice-to-text with local Whisper and Codex CLI workflows.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#07090d"/><stop offset="1" stop-color="#151b27"/></linearGradient>
+    <linearGradient id="wave" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#7c5cff"/><stop offset=".5" stop-color="#47d7ff"/><stop offset="1" stop-color="#5ff0b1"/></linearGradient>
+  </defs>
+  <rect width="1440" height="560" rx="36" fill="url(#bg)"/>
+  <g font-family="-apple-system,BlinkMacSystemFont,Segoe UI,sans-serif">
+    <text x="72" y="104" fill="#47d7ff" font-size="23" font-weight="700">PRESS • TALK • PASTE</text>
+    <text x="72" y="224" fill="#f7f8ff" font-size="84" font-weight="800">daakDİKTE</text>
+    <text x="76" y="282" fill="#aeb8cb" font-size="27">Your voice, directly inside the app you are using.</text>
+    <text x="76" y="448" fill="#77839a" font-size="19">LOCAL WHISPER • CODEX CLI • GLOBAL HOTKEY • macOS + LINUX</text>
+  </g>
+  <g transform="translate(780 120)" fill="none" stroke="url(#wave)" stroke-width="12" stroke-linecap="round">
+    <path d="M0 160v-28M36 160V96M72 160V58M108 160V112M144 160V26M180 160V82M216 160V4M252 160V72M288 160V38M324 160V106M360 160V68M396 160V124M432 160V92M468 160V140"/>
+  </g>
+  <g transform="translate(844 360)" font-family="ui-monospace,SFMono-Regular,Menlo,monospace" font-size="18" font-weight="700">
+    <rect width="452" height="64" rx="32" fill="#111722" stroke="#2f3b50"/>
+    <circle cx="34" cy="32" r="8" fill="#5ff0b1"/>
+    <text x="58" y="39" fill="#dbe5f7">Ctrl + Space  •  listening locally</text>
+  </g>
+</svg>

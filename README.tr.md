@@ -1,5 +1,16 @@
 # daakDİKTE
 
+<p align="center">
+  <img src="docs/hero.svg" width="100%" alt="daakDİKTE — macOS ve Linux için yerel sesle yazma">
+</p>
+
+<p align="center">
+  <a href="https://github.com/benfirad/daakDIKTE-macos/releases/latest"><img alt="Son sürüm" src="https://img.shields.io/github/v/release/benfirad/daakDIKTE-macos?style=flat-square&color=47d7ff"></a>
+  <img alt="macOS ve Linux" src="https://img.shields.io/badge/platform-macOS_%2B_Linux-7c5cff?style=flat-square">
+  <img alt="Yerel Whisper" src="https://img.shields.io/badge/transkripsiyon-yerel_Whisper-5ff0b1?style=flat-square&logoColor=000000">
+  <img alt="Codex CLI" src="https://img.shields.io/badge/temizleme-Codex_CLI-47d7ff?style=flat-square">
+</p>
+
 **daakDİKTE, [Yusuf İpek'in açık kaynak Dikte
 projesinin](https://github.com/yusufipk/dikte) macOS uyarlamasıdır.** Orijinal
 yazar, proje ve GPL-3.0 lisansı açıkça belirtilmeye devam eder; yeni isim bu
