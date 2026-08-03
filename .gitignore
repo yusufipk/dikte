@@ -2,3 +2,11 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
+
+# What a Windows build leaves behind. The icon is drawn from icons.py and the
+# ffmpeg is fetched and checked against ffmpeg.json, so both are outputs rather
+# than sources; build.ps1 makes them.
+build/
+dist/
+packaging/windows/dikte.ico
+packaging/windows/vendor/

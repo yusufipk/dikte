@@ -1,0 +1,23 @@
+{
+  "_comment": [
+    "The FFmpeg build the Windows installer carries. Pinned by digest rather",
+    "than by 'latest': a build fetched at package time is a build nobody has",
+    "run, and 'whatever was on the server that afternoon' is not a thing to",
+    "ship a signed installer with.",
+    "",
+    "This is the static GPL build, one ffmpeg.exe with no DLLs beside it, from",
+    "BtbN/FFmpeg-Builds. GPL rather than LGPL because Dikte is GPL-3.0 itself,",
+    "and the licence notice goes into the installer beside Dikte's own.",
+    "",
+    "To move to a newer one: pick a dated autobuild tag, take the digest the",
+    "GitHub API publishes for the asset, and put both here. Nothing else in",
+    "the build reads a version number."
+  ],
+  "name": "ffmpeg-N-125907-ga7e72069f1-win64-gpl.zip",
+  "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-02-13-17/ffmpeg-N-125907-ga7e72069f1-win64-gpl.zip",
+  "sha256": "336b99f961a2b69dff75193d161dfa7c091705225b8b0b20e6015af7d58df9bc",
+  "size": 169715536,
+  "wanted": ["ffmpeg.exe", "ffprobe.exe"],
+  "license": "GPL-3.0-or-later",
+  "license_url": "https://www.ffmpeg.org/legal.html"
+}

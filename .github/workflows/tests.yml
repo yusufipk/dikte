@@ -7,10 +7,18 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    # Both platforms Dikte claims to run on, on every version it claims to run
+    # under. The suite is written to pass on either: what belongs to one
+    # desktop is marked as belonging to it and skipped on the other, and what
+    # is left — transcription, cleanup, the config file, the history, the
+    # agent, the command line and the timeline of a meeting — must pass on
+    # both, because none of it is desktop-specific and none of it may become so.
+    name: ${{ matrix.os }} · python ${{ matrix.python }}
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest, windows-latest]
         python: ["3.11", "3.12", "3.13"]
 
     steps:
@@ -25,6 +33,7 @@ jobs:
       # library, and the widgets want fontconfig, whether or not anything is
       # ever drawn.
       - name: Install the Qt runtime libraries
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
@@ -34,7 +43,49 @@ jobs:
       - name: Install PyQt6
         run: python -m pip install --quiet PyQt6
 
-      # Nothing else is needed: the code is standard library and PyQt6, and the
-      # tests reach neither the network nor a sound device.
+      # The Windows recorder goes through WASAPI rather than through another
+      # program, and this is the wheel that offers it. Nothing on Linux needs
+      # it: there the sound server's own tools do the capturing.
+      - name: Install the Windows sound support
+        if: runner.os == 'Windows'
+        run: python -m pip install --quiet PyAudioWPatch
+
+      # Nothing else is needed: the code is standard library, PyQt6 and — on
+      # Windows — one sound wheel, and the tests reach neither the network nor
+      # a sound device.
       - name: Run the tests
         run: python -m unittest discover --verbose
+
+  package:
+    # A build nobody has started is a build that does not start. This freezes
+    # the application and runs the packaged command line, which is where a
+    # missing hidden import shows up: the platform adapters are chosen through
+    # importlib, so nothing that reads the source can see that they are needed.
+    name: windows package
+    runs-on: windows-latest
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install what a build needs
+        run: python -m pip install --quiet PyQt6 PyAudioWPatch pyinstaller
+
+      # ffmpeg is skipped here: it is 170 MB fetched from another project's
+      # release, and what this job checks is that Dikte itself freezes and
+      # starts. A release build runs the same script without the flag.
+      - name: Build
+        shell: pwsh
+        run: >
+          ./packaging/windows/build.ps1
+          -Python python -SkipTests -SkipFfmpeg -SkipInstaller
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dikte-windows
+          path: dist/Dikte
+          retention-days: 7
