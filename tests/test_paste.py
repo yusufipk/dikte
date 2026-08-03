@@ -14,8 +14,10 @@ cannot quietly break the platform nobody is sitting at.
 """
 
 import os
+import pathlib
 import subprocess
 import sys
+import tempfile
 import unittest
 from typing import ClassVar
 from unittest import mock
@@ -400,6 +402,31 @@ class MacOS(ClipboardContract, DikteTest):
         self.patch_attr(paste, "_macos_api",
                         mock.Mock(side_effect=paste.PasteError("no such library")))
         self.assertFalse(paste.paste_ready())
+
+
+class MacClipboardSnapshot(DikteTest):
+    def test_every_native_type_is_restored_and_the_files_are_removed(self):
+        directory = tempfile.mkdtemp(prefix="dikte-test-clipboard-")
+        manifest = '[[{"type":"public.tiff","file":"0-0.bin"}]]'
+        pathlib.Path(directory, "0-0.bin").write_bytes(b"a TIFF")
+        snapshot = paste._MAC_SNAPSHOT(directory, manifest)
+
+        with mock.patch.object(subprocess, "run",
+                               return_value=FakeCompleted()) as run:
+            paste.copy_bytes(snapshot)
+
+        self.assertEqual(run.call_args.kwargs["input"], manifest)
+        self.assertEqual(run.call_args.kwargs["env"]["DIKTE_PASTEBOARD_DIR"],
+                         directory)
+        self.assertFalse(os.path.exists(directory))
+
+    def test_a_failed_snapshot_leaves_no_temporary_directory(self):
+        directory = tempfile.mkdtemp(prefix="dikte-test-clipboard-")
+        with mock.patch.object(paste.tempfile, "mkdtemp", return_value=directory), \
+                mock.patch.object(subprocess, "run",
+                                  return_value=FakeCompleted(stdout=b"not json")):
+            self.assertIsNone(paste._macos_snapshot())
+        self.assertFalse(os.path.exists(directory))
 
 
 if __name__ == "__main__":

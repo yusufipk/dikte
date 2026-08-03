@@ -138,13 +138,18 @@ class Pipeline(QObject):
                 wants_paste = paste_override
 
             with _paste_lock:
-                previous = paste.read_clipboard() if conf["restore_clipboard"] else None
-                paste.copy(text)
-
-                if wants_paste:
-                    self.stage.emit(t("Pasting…"))
-                    paste.press(conf["paste_shortcut"])
+                previous = (paste.read_clipboard()
+                            if conf["restore_clipboard"] and wants_paste else None)
+                try:
+                    paste.copy(text)
+                    if wants_paste:
+                        self.stage.emit(t("Pasting…"))
+                        paste.press(conf["paste_shortcut"])
+                finally:
                     if previous is not None:
+                        # Let the focused application consume the temporary
+                        # transcription before putting every old clipboard type
+                        # back.  This also runs when key injection fails.
                         time.sleep(0.35)
                         paste.copy_bytes(previous)
 

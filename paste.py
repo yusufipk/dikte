@@ -11,10 +11,12 @@ every function here.
 import collections
 import ctypes
 import functools
+import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 from i18n import t
@@ -47,6 +49,64 @@ MAC_FLAGS = {"shift": 1 << 17, "ctrl": 1 << 18, "alt": 1 << 19, "command": 1 << 
 MAC_ALIASES = {"cmd": "command", "meta": "command", "super": "command",
                "control": "ctrl", "option": "alt"}
 HID_EVENT_TAP = 0   # kCGHIDEventTap: the event goes in where the keyboard does
+
+
+# pbpaste only reads text, EPS and RTF.  In particular, an image on a Mac's
+# clipboard comes back as an empty byte string and pbcopy then replaces it with
+# empty plain text.  Keep every NSPasteboard representation in short-lived
+# files instead.  The manifest stays small even when the clipboard holds a
+# large TIFF, and no additional Python package is needed.
+_MAC_SNAPSHOT = collections.namedtuple("MacClipboardSnapshot", "directory manifest")
+
+_MAC_SNAPSHOT_SCRIPT = r'''
+ObjC.import("AppKit");
+const root = ObjC.unwrap(
+  $.NSProcessInfo.processInfo.environment.objectForKey("DIKTE_PASTEBOARD_DIR")
+);
+const pasteboard = $.NSPasteboard.generalPasteboard;
+const items = pasteboard.pasteboardItems;
+const result = [];
+for (let i = 0; i < items.count; i++) {
+  const item = items.objectAtIndex(i);
+  const representations = [];
+  const types = item.types;
+  for (let j = 0; j < types.count; j++) {
+    const type = ObjC.unwrap(types.objectAtIndex(j));
+    const data = item.dataForType(type);
+    if (!data) continue;
+    const file = `${i}-${j}.bin`;
+    if (data.writeToFileAtomically(`${root}/${file}`, true)) {
+      representations.push({type, file});
+    }
+  }
+  result.push(representations);
+}
+JSON.stringify(result);
+'''
+
+_MAC_RESTORE_SCRIPT = r'''
+ObjC.import("AppKit");
+const root = ObjC.unwrap(
+  $.NSProcessInfo.processInfo.environment.objectForKey("DIKTE_PASTEBOARD_DIR")
+);
+const input = $.NSFileHandle.fileHandleWithStandardInput.readDataToEndOfFile;
+const source = $.NSString.alloc.initWithDataEncoding(input, $.NSUTF8StringEncoding);
+const rows = JSON.parse(ObjC.unwrap(source));
+const items = [];
+for (const representations of rows) {
+  const item = $.NSPasteboardItem.alloc.init;
+  for (const representation of representations) {
+    const data = $.NSData.dataWithContentsOfFile(
+      `${root}/${representation.file}`
+    );
+    if (data) item.setDataForType(data, representation.type);
+  }
+  items.push(item);
+}
+const pasteboard = $.NSPasteboard.generalPasteboard;
+pasteboard.clearContents;
+pasteboard.writeObjects($(items));
+'''
 
 
 class PasteError(Exception):
@@ -280,8 +340,45 @@ def desktop():
 
 # --- the clipboard ---------------------------------------------------------
 
+def _macos_snapshot():
+    """Copy every native pasteboard type to a temporary, file-backed snapshot."""
+    directory = tempfile.mkdtemp(prefix="dikte-clipboard-")
+    environment = dict(os.environ, DIKTE_PASTEBOARD_DIR=directory)
+    try:
+        result = subprocess.run(
+            ["osascript", "-l", "JavaScript", "-e", _MAC_SNAPSHOT_SCRIPT],
+            capture_output=True, text=True, timeout=15, env=environment,
+        )
+        manifest = result.stdout.strip()
+        rows = json.loads(manifest) if result.returncode == 0 else None
+        if not isinstance(rows, list):
+            raise ValueError("the pasteboard helper returned no manifest")
+        return _MAC_SNAPSHOT(directory, manifest)
+    except (json.JSONDecodeError, OSError, subprocess.SubprocessError, ValueError):
+        shutil.rmtree(directory, ignore_errors=True)
+        return None
+
+
+def _macos_restore(snapshot):
+    """Put a native snapshot back, then discard its short-lived files."""
+    environment = dict(os.environ, DIKTE_PASTEBOARD_DIR=snapshot.directory)
+    try:
+        subprocess.run(
+            ["osascript", "-l", "JavaScript", "-e", _MAC_RESTORE_SCRIPT],
+            input=snapshot.manifest, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, text=True, timeout=15, env=environment,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+    finally:
+        shutil.rmtree(snapshot.directory, ignore_errors=True)
+
 def read_clipboard():
     here = desktop()
+    if here is MACOS and shutil.which("osascript"):
+        snapshot = _macos_snapshot()
+        if snapshot is not None:
+            return snapshot
     if not shutil.which(here.read_command[0]):
         return None
     try:
@@ -321,6 +418,9 @@ def copy(text):
 
 
 def copy_bytes(data):
+    if isinstance(data, _MAC_SNAPSHOT):
+        _macos_restore(data)
+        return
     if data is None or not shutil.which(desktop().clipboard):
         return
     try:

@@ -32,7 +32,7 @@ class Chain(DikteTest):
                   transcript="uh, book it for Thursday",
                   cleaned="Book it for Thursday.",
                   cleanup_error=None, answer=("Booked.", ""), rms=None,
-                  clipboard=b"what was there before"):
+                  clipboard=b"what was there before", paste_error=None):
         pipeline = worker.Pipeline(self.conf)
         done, failures, stages, cancels = [], [], [], []
         pipeline.finished.connect(lambda *args: done.append(args))
@@ -52,10 +52,13 @@ class Chain(DikteTest):
                 mock.patch.object(paste, "copy") as copy, \
                 mock.patch.object(paste, "copy_bytes") as copy_bytes, \
                 mock.patch.object(paste, "press") as press, \
-                mock.patch.object(paste, "read_clipboard", return_value=clipboard), \
+                mock.patch.object(paste, "read_clipboard",
+                                  return_value=clipboard) as read_clipboard, \
                 mock.patch.object(worker.time, "sleep", lambda seconds: None):
+            press.side_effect = paste_error
             calls = {"transcribe": tr, "cleanup": cleanup, "ask": ask_call,
-                     "copy": copy, "copy_bytes": copy_bytes, "press": press}
+                     "copy": copy, "copy_bytes": copy_bytes, "press": press,
+                     "read_clipboard": read_clipboard}
             pipeline._work(self.wav, duration,
                            self.rms if rms is None else rms, ask, paste_override)
         return {"done": done, "failures": failures, "stages": stages,
@@ -83,9 +86,11 @@ class Chain(DikteTest):
 
     def test_auto_paste_switched_off_only_copies(self):
         self.conf["auto_paste"] = False
+        self.conf["restore_clipboard"] = True
         run = self.run_chain()
         run["copy"].assert_called_once()
         run["press"].assert_not_called()
+        run["read_clipboard"].assert_not_called()
 
     def test_a_run_asked_for_from_a_terminal_pastes_nowhere(self):
         """The text comes back down the socket; the focused window is nobody's."""
@@ -102,6 +107,12 @@ class Chain(DikteTest):
         self.conf["restore_clipboard"] = False
         run = self.run_chain()
         run["copy_bytes"].assert_not_called()
+
+    def test_the_clipboard_is_put_back_when_the_keypress_fails(self):
+        self.conf["restore_clipboard"] = True
+        run = self.run_chain(paste_error=paste.PasteError("not trusted"))
+        self.assertIn("not trusted", run["failures"][0])
+        run["copy_bytes"].assert_called_once_with(b"what was there before")
 
     def test_the_transcription_is_told_the_language_and_the_glossary(self):
         self.conf["language"] = "tr"
