@@ -25,6 +25,7 @@ from unittest import mock
 import assistant
 import config as cfg
 import i18n
+import platforms
 
 # What the application is, rather than what it does: PipeWire, wl-clipboard,
 # ydotool, KDE's shortcut file, /dev/input. A port to another desktop replaces
@@ -39,6 +40,27 @@ linux_only = unittest.skipUnless(
     sys.platform.startswith("linux"),
     "covers the Linux desktop stack (PipeWire, wl-clipboard, ydotool, KDE)",
 )
+
+windows_only = unittest.skipUnless(
+    sys.platform.startswith("win"),
+    "covers the Windows stack (WASAPI, Win32 clipboard, RegisterHotKey, DPAPI)",
+)
+
+
+def sandbox_shortcuts(test):
+    """Keep a test's shortcut writing inside its own directory.
+
+    Each platform files a global shortcut somewhere of its own: .desktop files
+    and kglobalshortcutsrc on Linux, a small registry of its own on Windows.
+    A test that installs one must not write into the developer's session.
+    """
+    impl = platforms.adapter("hotkeys")
+    if hasattr(impl, "APPLICATIONS_DIR"):
+        test.patch_attr(impl, "APPLICATIONS_DIR", test.path("applications"))
+        test.patch_attr(impl, "SHORTCUTS_FILE", test.path("kglobalshortcutsrc"))
+    if hasattr(impl, "_registry_path"):
+        registry = test.path("shortcuts.json")
+        test.patch_attr(impl, "_registry_path", lambda: registry)
 
 
 def _no_network(*args, **kwargs):
@@ -82,8 +104,10 @@ class DikteTest(unittest.TestCase):
 
         # cli.launch_gui replaces this process with the application when no
         # instance is running. A test that reaches it would take the whole run
-        # with it and hang, so it fails loudly here instead.
+        # with it and hang, so it fails loudly here instead. Both halves: the
+        # exec on Linux, and the detached child Windows starts instead of one.
         self.patch_attr(os, "execv", _no_exec)
+        self.patch_attr(platforms.adapter("runtime"), "relaunch", _no_exec)
 
         # Every way out of here goes through urllib, so closing it is enough to
         # keep the suite offline. A test that means to answer a request patches

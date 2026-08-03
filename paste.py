@@ -440,3 +440,29 @@ def press(shortcut="", delay=0.12):
     """Press a paste combination, e.g. 'ctrl+v', or this desktop's own."""
     here = desktop()
     here.press(shortcut or here.shortcuts[0], delay)
+
+
+if sys.platform.startswith("win"):
+    from platforms import adapter as _platform_adapter
+
+    _windows_clipboard = _platform_adapter("clipboard", "windows")
+    PasteError = _windows_clipboard.PasteError
+    read_clipboard = _windows_clipboard.read_clipboard
+    copy = _windows_clipboard.copy
+    copy_bytes = _windows_clipboard.copy_bytes
+    paste_ready = _windows_clipboard.paste_ready
+    press = _windows_clipboard.press
+
+    WINDOWS = Desktop(
+        clipboard="Windows Clipboard",
+        packages="",
+        read_command=[],
+        copy_command=[],
+        shortcuts=["ctrl+v", "ctrl+shift+v", "shift+insert"],
+        keyboard="SendInput",
+        ready=_windows_clipboard.paste_ready,
+        press=_windows_clipboard.press,
+    )
+
+    def desktop():
+        return WINDOWS

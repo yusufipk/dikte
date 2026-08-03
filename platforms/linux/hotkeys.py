@@ -1,17 +1,6 @@
-"""Global shortcuts: the desktop's own registry, plus a listener of our own.
-
-Two things have to happen for a key combination to reach Dikte. Somewhere has
-to be told about it, and something has to be listening. On Linux that is the
-desktop's shortcut registry (KDE's file, GNOME's gsettings) and a reader of
-/dev/input for the wait until the registry is live. macOS has no registry to
-write into: the application asks Carbon for the combination while it runs, so
-there the listener is not a fallback but the whole mechanism.
-"""
+"""GNOME/KDE global-shortcut installation plus a built-in evdev listener."""
 
 import ast
-import collections
-import ctypes
-import ctypes.util
 import glob
 import os
 import pathlib
@@ -20,41 +9,23 @@ import select
 import shutil
 import struct
 import subprocess
-import sys
 import threading
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
 from i18n import t
+from platforms.common.shortcuts import (  # noqa: F401
+    ASK_DESKTOP_ID,
+    CANCEL_DESKTOP_ID,
+    DESKTOP_ID,
+    MEETING_DESKTOP_ID,
+)
 
-DESKTOP_ID = "dikte-toggle.desktop"
-CANCEL_DESKTOP_ID = "dikte-cancel.desktop"
-MEETING_DESKTOP_ID = "dikte-meeting.desktop"
-ASK_DESKTOP_ID = "dikte-ask.desktop"
 APPLICATIONS_DIR = pathlib.Path.home() / ".local/share/applications"
 DESKTOP_FILE = APPLICATIONS_DIR / DESKTOP_ID
 SHORTCUTS_FILE = pathlib.Path.home() / ".config/kglobalshortcutsrc"
 GNOME_MEDIA_SCHEMA = "org.gnome.settings-daemon.plugins.media-keys"
 GNOME_BINDING_SCHEMA = "org.gnome.settings-daemon.plugins.media-keys.custom-keybinding"
-
-Shortcut = collections.namedtuple("Shortcut", "verb desktop_id name setting fallback")
-
-# Every global shortcut in one place, because there are four of them and the
-# command line, the settings window and the installer each used to carry their
-# own copy of the list. `fallback` is what to register when the setting is
-# empty: only the toggle has one, since it is the key the application is
-# unusable without.
-SHORTCUTS = {
-    "toggle": Shortcut("toggle", DESKTOP_ID, "Dikte: start/stop recording",
-                       "shortcut", "Ctrl+Space"),
-    "cancel": Shortcut("cancel", CANCEL_DESKTOP_ID, "Dikte: discard the recording",
-                       "cancel_shortcut", ""),
-    "ask": Shortcut("ask", ASK_DESKTOP_ID, "Dikte: ask Claude Code",
-                    "assistant_shortcut", ""),
-    "meeting": Shortcut("meeting", MEETING_DESKTOP_ID,
-                        "Dikte: start/end a meeting recording",
-                        "meeting_shortcut", ""),
-}
 
 # --- evdev key codes (linux/input-event-codes.h) --------------------------
 
@@ -208,221 +179,12 @@ class EvdevHotkey(QObject):
         return True
 
 
-# --- macOS: Carbon's hotkey service ---------------------------------------
-
-# Apple virtual key codes: where a key sits, not what is printed on it.
-MAC_KEYS = {
-    "space": 49, "tab": 48, "enter": 36, "return": 36, "esc": 53, "escape": 53,
-    "backspace": 51, "delete": 117, "home": 115, "end": 119,
-    "pgup": 116, "pgdown": 121, "up": 126, "down": 125, "left": 123, "right": 124,
-    "1": 18, "2": 19, "3": 20, "4": 21, "5": 23, "6": 22, "7": 26,
-    "8": 28, "9": 25, "0": 29,
-    "a": 0, "b": 11, "c": 8, "d": 2, "e": 14, "f": 3, "g": 5, "h": 4,
-    "i": 34, "j": 38, "k": 40, "l": 37, "m": 46, "n": 45, "o": 31,
-    "p": 35, "q": 12, "r": 15, "s": 1, "t": 17, "u": 32, "v": 9,
-    "w": 13, "x": 7, "y": 16, "z": 6,
-    "f1": 122, "f2": 120, "f3": 99, "f4": 118, "f5": 96, "f6": 97,
-    "f7": 98, "f8": 100, "f9": 101, "f10": 109, "f11": 103, "f12": 111,
-}
-# Carbon's own modifier bits, which are not the ones CoreGraphics uses in
-# paste.py: the same four modifiers, numbered differently by two APIs.
-MAC_MODS = {
-    "cmd": 1 << 8, "command": 1 << 8, "meta": 1 << 8, "super": 1 << 8,
-    "shift": 1 << 9,
-    "alt": 1 << 11, "option": 1 << 11,
-    "ctrl": 1 << 12, "control": 1 << 12,
-}
-HOTKEY_SIGNATURE = "Dikt"          # what our registrations are labelled with
-KEYBOARD_EVENT_CLASS = "keyb"
-HOTKEY_PRESSED = 5                 # kEventHotKeyPressed
-PARAMETER_ANY = "----"             # kEventParamDirectObject / typeWildCard
-HOTKEY_ID_PARAMETER = "hkid"
-
-# What the running listener holds. This is the whole of "installed" on macOS,
-# and it lasts as long as the process does: there is no file, and no other
-# program to read one. Written by CarbonHotkey.start(), read by the status
-# line, so what Settings shows is what the Mac actually gave us.
-_REGISTERED = {}
-
-
-def parse_macos_shortcut(text):
-    """'Cmd+Space' -> (256, 49), or (None, None) when unusable."""
-    parts = [part.strip().lower() for part in str(text).split("+") if part.strip()]
-    modifiers, key = 0, None
-    for part in parts:
-        if part in MAC_MODS:
-            modifiers |= MAC_MODS[part]
-        elif key is None and part in MAC_KEYS:
-            key = MAC_KEYS[part]
-        else:
-            return None, None
-    if key is None:
-        return None, None
-    return modifiers, key
-
-
-def _fourcc(text):
-    """A Carbon four-character code, which is those four bytes as a number."""
-    return int.from_bytes(text.encode("ascii"), "big")
-
-
-class _EventTypeSpec(ctypes.Structure):
-    _fields_ = [("eventClass", ctypes.c_uint32), ("eventKind", ctypes.c_uint32)]
-
-
-class _EventHotKeyID(ctypes.Structure):
-    _fields_ = [("signature", ctypes.c_uint32), ("id", ctypes.c_uint32)]
-
-
-class CarbonHotkey(QObject):
-    """Catches global shortcuts through macOS's own hotkey service.
-
-    RegisterEventHotKey asks for one combination rather than reading the
-    keyboard, so it needs no permission at all. Accessibility is a separate
-    matter, and only for the Cmd+V that puts the text back (see paste.py).
-
-    Unlike the evdev listener this one does swallow the key: while Dikte holds
-    a combination, nothing else on the Mac receives it.
-    """
-
-    triggered = pyqtSignal(str)   # the name the binding was registered under
-    failed = pyqtSignal(str)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._carbon = None
-        self._callback = None
-        self._handler = ctypes.c_void_p()
-        self._registrations = []
-        self._names = {}
-
-    @property
-    def running(self):
-        return bool(self._registrations)
-
-    def start(self, bindings):
-        """`bindings` is {name: 'Cmd+Space'}; an empty combination is skipped."""
-        self.stop()
-        try:
-            self._carbon = _carbon()
-        except OSError as exc:
-            self.failed.emit(t("Could not reach the macOS shortcut service: "
-                               "{error}", error=exc))
-            return False
-        if not self._install_handler():
-            return False
-
-        for identifier, (name, shortcut) in enumerate(bindings.items(), 1):
-            if not shortcut:
-                continue
-            modifiers, key = parse_macos_shortcut(shortcut)
-            if key is None:
-                self.failed.emit(
-                    t("Could not parse the shortcut: {shortcut}", shortcut=shortcut)
-                )
-                continue
-            reference = ctypes.c_void_p()
-            code = self._carbon.RegisterEventHotKey(
-                key, modifiers,
-                _EventHotKeyID(_fourcc(HOTKEY_SIGNATURE), identifier),
-                self._carbon.GetApplicationEventTarget(), 0, ctypes.byref(reference),
-            )
-            if code != 0:
-                # This is the conflict warning on macOS: there is no list to
-                # read beforehand, the answer comes from asking for the key.
-                self.failed.emit(t(
-                    "macOS would not give Dikte {shortcut}; another application "
-                    "already holds it.", shortcut=shortcut))
-                continue
-            self._registrations.append(reference)
-            self._names[identifier] = name
-            spec = SHORTCUTS.get(name)
-            if spec:
-                _REGISTERED[spec.desktop_id] = shortcut
-        return bool(self._registrations)
-
-    def stop(self):
-        if self._carbon:
-            for reference in self._registrations:
-                self._carbon.UnregisterEventHotKey(reference)
-            if self._handler:
-                self._carbon.RemoveEventHandler(self._handler)
-        self._registrations = []
-        self._names = {}
-        self._handler = ctypes.c_void_p()
-        self._callback = None
-        _REGISTERED.clear()
-
-    def _install_handler(self):
-        carbon = self._carbon
-        callback_type = ctypes.CFUNCTYPE(
-            ctypes.c_int32, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p
-        )
-
-        def pressed(_next_handler, event, _user_data):
-            wanted = _EventHotKeyID()
-            size = ctypes.c_uint32()
-            code = carbon.GetEventParameter(
-                event, _fourcc(PARAMETER_ANY), _fourcc(HOTKEY_ID_PARAMETER), None,
-                ctypes.sizeof(wanted), ctypes.byref(size), ctypes.byref(wanted),
-            )
-            if code == 0:
-                name = self._names.get(wanted.id)
-                if name:
-                    self.triggered.emit(name)
-            return 0
-
-        # Kept on self: Carbon holds the address of this function, and nothing
-        # on the Python side would otherwise stop it being collected.
-        self._callback = callback_type(pressed)
-        event_type = _EventTypeSpec(_fourcc(KEYBOARD_EVENT_CLASS), HOTKEY_PRESSED)
-        code = carbon.InstallEventHandler(
-            carbon.GetApplicationEventTarget(), self._callback, 1,
-            ctypes.byref(event_type), None, ctypes.byref(self._handler),
-        )
-        if code != 0:
-            self.failed.emit(t("Could not reach the macOS shortcut service: "
-                               "{error}", error=code))
-            self._callback = None
-            return False
-        return True
-
-
-def _carbon():
-    """Carbon, with its calls typed the way they are used above."""
-    path = (ctypes.util.find_library("Carbon")
-            or "/System/Library/Frameworks/Carbon.framework/Carbon")
-    carbon = ctypes.CDLL(path)
-    carbon.GetApplicationEventTarget.restype = ctypes.c_void_p
-    carbon.InstallEventHandler.restype = ctypes.c_int32
-    carbon.InstallEventHandler.argtypes = [
-        ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint32,
-        ctypes.POINTER(_EventTypeSpec), ctypes.c_void_p,
-        ctypes.POINTER(ctypes.c_void_p),
-    ]
-    carbon.RegisterEventHotKey.restype = ctypes.c_int32
-    carbon.RegisterEventHotKey.argtypes = [
-        ctypes.c_uint32, ctypes.c_uint32, _EventHotKeyID, ctypes.c_void_p,
-        ctypes.c_uint32, ctypes.POINTER(ctypes.c_void_p),
-    ]
-    carbon.UnregisterEventHotKey.restype = ctypes.c_int32
-    carbon.UnregisterEventHotKey.argtypes = [ctypes.c_void_p]
-    carbon.RemoveEventHandler.restype = ctypes.c_int32
-    carbon.RemoveEventHandler.argtypes = [ctypes.c_void_p]
-    carbon.GetEventParameter.restype = ctypes.c_int32
-    carbon.GetEventParameter.argtypes = [
-        ctypes.c_void_p, ctypes.c_uint32, ctypes.c_uint32,
-        ctypes.POINTER(ctypes.c_uint32), ctypes.c_uint32,
-        ctypes.POINTER(ctypes.c_uint32), ctypes.c_void_p,
-    ]
-    return carbon
+# The listener the application starts when the desktop's own shortcut is not
+# live yet. Windows has no equivalent and registers its combinations directly.
+Listener = EvdevHotkey
 
 
 # --- the desktop's own shortcut -------------------------------------------
-
-def _macos():
-    return sys.platform == "darwin"
-
 
 def _gnome():
     desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
@@ -546,69 +308,26 @@ def gnome_shortcut_status(desktop_id=DESKTOP_ID):
         return None
 
 
-def listener(parent=None):
-    """The thing that hears the key, for whichever system this is."""
-    return CarbonHotkey(parent) if _macos() else EvdevHotkey(parent)
-
-
-def valid_shortcut(text):
-    """Whether this machine can bind the combination as it was typed."""
-    parse = parse_macos_shortcut if _macos() else parse_shortcut
-    return parse(text)[1] is not None
-
-
-def installs_shortcuts():
-    """Whether this system keeps a shortcut registry to write into.
-
-    KDE and GNOME do, and something outside Dikte reads it, so the combination
-    survives Dikte being closed. macOS does not: there is nothing to install,
-    nothing to remove, and Settings should not offer either.
-    """
-    return not _macos()
-
-
-def shortcut_needs_restart():
-    """Whether an installed shortcut waits for the next login before it works.
-
-    KWin reads kglobalshortcutsrc once, when it starts. GNOME picks a binding
-    up as it is written, and macOS never had one to write.
-    """
-    return not _macos() and not _gnome()
-
-
 def install_shortcut(shortcut, exec_command, name="Dikte: start/stop recording",
                      desktop_id=DESKTOP_ID):
-    if _macos():
-        _REGISTERED[desktop_id] = shortcut
-        return True, t(
-            "Shortcut saved: {shortcut}\nDikte holds this one itself while it "
-            "is running, so it works as soon as the settings are saved.",
-            shortcut=shortcut,
-        )
     if _gnome():
         return install_gnome_shortcut(shortcut, exec_command, name, desktop_id)
     return install_kde_shortcut(shortcut, exec_command, name, desktop_id)
 
 
 def remove_shortcut(desktop_id=DESKTOP_ID):
-    if _macos():
-        _REGISTERED.pop(desktop_id, None)
-    elif _gnome():
+    if _gnome():
         remove_gnome_shortcut(desktop_id)
     else:
         remove_kde_shortcut(desktop_id)
 
 
 def shortcut_status(desktop_id=DESKTOP_ID):
-    if _macos():
-        return _REGISTERED.get(desktop_id)
     return (gnome_shortcut_status(desktop_id) if _gnome()
             else kde_shortcut_status(desktop_id))
 
 
 def desktop_name():
-    if _macos():
-        return "macOS"
     return "GNOME" if _gnome() else "KDE"
 
 
@@ -693,10 +412,6 @@ def kde_shortcut_status(desktop_id=DESKTOP_ID):
 
 def conflicting_shortcuts(shortcut, desktop_id=DESKTOP_ID):
     """Names of other KDE entries bound to the same combination."""
-    if _macos():
-        # There is no list to read: macOS answers the question by refusing the
-        # registration, which CarbonHotkey reports when it asks for the key.
-        return []
     try:
         text = SHORTCUTS_FILE.read_text(encoding="utf-8")
     except OSError:
@@ -715,29 +430,3 @@ def conflicting_shortcuts(shortcut, desktop_id=DESKTOP_ID):
                  for part in re.split(r"[,\t]", value)):
             hits.append(f"{section} → {key}")
     return hits
-
-
-if sys.platform.startswith("win"):
-    from platforms import adapter as _platform_adapter
-
-    _windows_hotkeys = _platform_adapter("hotkeys", "windows")
-    parse_shortcut = _windows_hotkeys.parse_shortcut
-    install_shortcut = _windows_hotkeys.install_shortcut
-    remove_shortcut = _windows_hotkeys.remove_shortcut
-    shortcut_status = _windows_hotkeys.shortcut_status
-    conflicting_shortcuts = _windows_hotkeys.conflicting_shortcuts
-    desktop_name = _windows_hotkeys.desktop_name
-
-    def listener(parent=None):
-        return _windows_hotkeys.Listener(parent)
-
-    def valid_shortcut(text):
-        return parse_shortcut(text)[1] is not None
-
-    def installs_shortcuts():
-        # RegisterHotKey lives in this process; there is no desktop registry
-        # which can deliver a shortcut while Dikte is closed.
-        return False
-
-    def shortcut_needs_restart():
-        return False
