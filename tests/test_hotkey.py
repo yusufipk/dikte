@@ -361,8 +361,8 @@ class KdeShortcut(DikteTest):
         self.apps = self.path("applications")
         self.apps.mkdir(parents=True)
         self.rc = self.path("kglobalshortcutsrc")
-        self.patch_attr(hotkey, "APPLICATIONS_DIR", self.apps)
-        self.patch_attr(hotkey, "SHORTCUTS_FILE", self.rc)
+        self.patch_attr(linux_hotkeys, "APPLICATIONS_DIR", self.apps)
+        self.patch_attr(linux_hotkeys, "SHORTCUTS_FILE", self.rc)
 
     def test_installing_writes_a_desktop_file_kwin_will_launch(self):
         with mock.patch.object(subprocess, "run", return_value=FakeCompleted()):
