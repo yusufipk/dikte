@@ -1,5 +1,16 @@
 # daakDİKTE
 
+<p align="center">
+  <img src="docs/hero.svg" width="100%" alt="daakDİKTE — native voice-to-text for macOS and Linux">
+</p>
+
+<p align="center">
+  <a href="https://github.com/benfirad/daakDIKTE-macos/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/benfirad/daakDIKTE-macos?style=flat-square&color=47d7ff"></a>
+  <img alt="macOS and Linux" src="https://img.shields.io/badge/platform-macOS_%2B_Linux-7c5cff?style=flat-square">
+  <img alt="Local Whisper" src="https://img.shields.io/badge/transcription-local_Whisper-5ff0b1?style=flat-square&logoColor=000000">
+  <img alt="Codex CLI" src="https://img.shields.io/badge/cleanup-Codex_CLI-47d7ff?style=flat-square">
+</p>
+
 **daakDİKTE is the macOS adaptation of [Yusuf İpek's open-source Dikte
 project](https://github.com/yusufipk/dikte).** It keeps the original author,
 project and GPL-3.0 license visibly credited; the new name distinguishes this
