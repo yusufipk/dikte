@@ -176,6 +176,9 @@ class Download(Local):
 class InstallProgram(Local):
     def setUp(self):
         super().setUp()
+        # These fixtures are Ubuntu release archives.  Keep checking that path
+        # on every host, including the Mac that checks the macOS backend.
+        self.patch_attr(sys, "platform", "linux")
         # Built once, because the release listing has to publish its checksum
         # and a tarball is not the same bytes twice.
         self.archive = tarball({
@@ -215,6 +218,15 @@ class InstallProgram(Local):
             with self.assertRaises(ggml.LocalError) as caught:
                 ggml.install_program(ggml.WHISPER)
         self.assertIn("this machine", str(caught.exception))
+
+    def test_a_mac_does_not_install_an_ubuntu_archive_for_the_same_architecture(self):
+        self.patch_attr(sys, "platform", "darwin")
+        self.patch_attr(ggml, "_arch", lambda: "arm64")
+        listing = self.release("whisper-bin-ubuntu-arm64.tar.gz")
+        with fake_urlopen(listing):
+            with self.assertRaises(ggml.LocalError) as caught:
+                ggml.install_program(ggml.WHISPER)
+        self.assertIn("no build for this machine", str(caught.exception))
 
     def test_what_was_installed_is_remembered(self):
         path, _ = self.install("whisper-bin-ubuntu-x64.tar.gz")
@@ -661,4 +673,3 @@ class Sizes(DikteTest):
         self.assertEqual(ggml.human_size(512), "512 B")
         self.assertEqual(ggml.human_size(574041195), "547.4 MB")
         self.assertEqual(ggml.human_size(3_095_033_483), "2.9 GB")
-

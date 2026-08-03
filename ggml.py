@@ -37,6 +37,7 @@ import shutil
 import signal
 import socket
 import subprocess
+import sys
 import tarfile
 import threading
 import time
@@ -221,6 +222,11 @@ def _has_vulkan():
 
 def _wanted_assets(program):
     """Asset name endings to accept, best first."""
+    # The projects currently publish Linux and Windows archives, but no macOS
+    # one.  An arm64 Mac must not mistake Ubuntu's arm64 archive for a native
+    # build and install a binary it can never execute.
+    if sys.platform == "darwin":
+        return ()
     arch = _arch()
     if program is LLAMA and _has_vulkan():
         return (f"bin-ubuntu-vulkan-{arch}.tar.gz", f"bin-ubuntu-{arch}.tar.gz")
