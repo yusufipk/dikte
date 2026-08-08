@@ -78,6 +78,16 @@ class Table(unittest.TestCase):
         self.assertEqual([name for name, spec in hotkey.SHORTCUTS.items()
                           if spec.fallback], ["toggle"])
 
+    def test_the_fallback_a_mac_gets_is_not_one_macos_already_holds(self):
+        """Ctrl+Space switches the input source there and Cmd+Space is
+        Spotlight, so the table's own fallback is Linux's and only Linux's."""
+        with mock.patch.object(hotkey.sys, "platform", "darwin"):
+            self.assertEqual(hotkey.default_combo("toggle"), "Ctrl+Option+Space")
+            self.assertEqual(hotkey.default_combo("cancel"), "")
+        with mock.patch.object(hotkey.sys, "platform", "linux"):
+            self.assertEqual(hotkey.default_combo("toggle"), "Ctrl+Space")
+            self.assertEqual(hotkey.default_combo("cancel"), "")
+
 
 class ModsMatch(unittest.TestCase):
     """The combination has to be exact, or Ctrl+Space fires on Ctrl+Shift+Space."""

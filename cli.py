@@ -697,16 +697,27 @@ def cmd_test_key(opts):
 def cmd_shortcut(opts):
     conf = cfg.Config()
     if opts.shortcut == "status":
+        # The running instance is asked first. On KDE and GNOME this process
+        # could read the registry itself and get the same answer; on macOS
+        # there is no registry, the combination is held by that process and by
+        # nothing else, and asking here would report every shortcut as missing
+        # while they all work.
+        live = ipc.send("status") or {}
+        registered = live.get("shortcuts") or {}
         rows = {}
         for name, spec in hotkey.SHORTCUTS.items():
-            rows[name] = {"registered": hotkey.shortcut_status(spec.desktop_id),
-                          "configured": conf[spec.setting]}
+            rows[name] = {
+                "registered": registered.get(
+                    name, hotkey.shortcut_status(spec.desktop_id)),
+                "configured": conf[spec.setting],
+            }
+        listener = live.get("listener", conf["evdev_hotkey"])
         lines = [f"{name:8} {row['registered'] or '(not installed)':16} "
                  f"setting: {row['configured'] or '(none)'}"
                  for name, row in rows.items()]
-        lines.append(f"built-in listener: {'on' if conf['evdev_hotkey'] else 'off'}")
+        lines.append(f"built-in listener: {'on' if listener else 'off'}")
         return out(opts, {"ok": True, "shortcuts": rows,
-                          "listener": conf["evdev_hotkey"]}, "\n".join(lines))
+                          "listener": listener}, "\n".join(lines))
 
     spec = hotkey.SHORTCUTS[opts.which]
     if opts.shortcut == "remove":

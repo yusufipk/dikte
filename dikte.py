@@ -8,6 +8,8 @@ command line says "there is no instance to talk to, so be one".
 """
 
 import contextlib
+import ctypes
+import ctypes.util
 import json
 import os
 import signal
@@ -479,6 +481,12 @@ class Dikte:
             "agent": assistant.display_name(self.conf),
             "provider": assistant.provider(self.conf),
             "listener": self.evdev.running,
+            # Asked here rather than by the command line, because on macOS
+            # there is no registry to read: a combination is held by this
+            # process and by nothing else, so this is the only process that
+            # can say whether it is.
+            "shortcuts": {name: hotkey.shortcut_status(spec.desktop_id)
+                          for name, spec in hotkey.SHORTCUTS.items()},
         }
 
     def reload_settings(self):
@@ -964,6 +972,51 @@ def install_signal_handlers(app):
     return reader, writer, notifier
 
 
+def _stay_out_of_the_dock():
+    """Ask macOS to treat this as a menu bar application, not a windowed one.
+
+    LSUIElement in the bundle says the same thing, but it is read for the
+    process LaunchServices started, and that is the launcher script rather than
+    the Python it runs: the interpreter is a child, and the child inherits the
+    registration without inheriting the policy. Said here it holds however Dikte
+    was started, including straight from a terminal.
+
+    Accessory rather than Prohibited: a prohibited application cannot put
+    anything in the menu bar, which is the whole interface.
+    """
+    if sys.platform != "darwin":
+        return
+    NS_ACCESSORY = 1               # NSApplicationActivationPolicyAccessory
+    try:
+        objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
+        objc.objc_getClass.restype = ctypes.c_void_p
+        objc.objc_getClass.argtypes = [ctypes.c_char_p]
+        objc.sel_registerName.restype = ctypes.c_void_p
+        objc.sel_registerName.argtypes = [ctypes.c_char_p]
+        # objc_msgSend is a trampoline with no signature of its own, and on
+        # arm64 the arguments have to be in the registers the real method
+        # expects, so each call gets a prototype of its own. Built from the
+        # address: handing CFUNCTYPE the imported function object would make a
+        # callback into it rather than a call through it, and the crash lands
+        # inside the Objective-C runtime with nothing to read.
+        send = ctypes.cast(objc.objc_msgSend, ctypes.c_void_p).value
+        shared = ctypes.CFUNCTYPE(
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+        )(send)
+        policy = ctypes.CFUNCTYPE(
+            ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long,
+        )(send)
+
+        application = shared(objc.objc_getClass(b"NSApplication"),
+                             objc.sel_registerName(b"sharedApplication"))
+        if application:
+            policy(application, objc.sel_registerName(b"setActivationPolicy:"),
+                   NS_ACCESSORY)
+    except (OSError, AttributeError, TypeError):
+        # A Dock icon is a blemish, not a failure: everything still works.
+        pass
+
+
 def run_app(args):
     command = args[0] if args else ""
 
@@ -971,6 +1024,7 @@ def run_app(args):
     app.setApplicationName("Dikte")
     app.setDesktopFileName("dikte")
     app.setQuitOnLastWindowClosed(False)
+    _stay_out_of_the_dock()
     # Before Dikte is built, because building it is what may start a server, and
     # a signal arriving in the middle of that would otherwise take the default
     # action and leave the server behind. A signal this early lands in the

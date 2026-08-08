@@ -99,13 +99,24 @@ fi
 # 3. The application bundle -------------------------------------------------
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-# The launcher. It execs rather than backgrounding, so that the process macOS
-# is watching is the one doing the work: launchd's job control and the Force
-# Quit list both look at this pid.
+# The launcher, and the one thing here that must not be written the obvious
+# way. `exec "$PY" …` reads better and costs Dikte its menu bar icon: macOS
+# hands the bundle's application registration to the process it started, and
+# exec throws that process away. What is left is a running Python that answers
+# the socket, draws nothing, and gives no hint that anything is wrong. So the
+# interpreter is a child, and this script stays alive as its parent for as long
+# as it runs, holding the registration the status item hangs off.
+#
+# The child does not inherit LSUIElement along with the registration, which is
+# why dikte.py asks for the accessory policy itself once Qt is up.
 cat > "$APP/Contents/MacOS/Dikte" <<EOF
 #!/bin/sh
 # Written by install-mac.sh. Edit that, not this.
-exec "$PY" "$DIR/dikte.py" --gui "\$@"
+"$PY" "$DIR/dikte.py" --gui "\$@" &
+child=\$!
+# Quitting from the Force Quit list or a logout arrives here, not there.
+trap 'kill \$child 2>/dev/null' TERM INT
+wait \$child
 EOF
 chmod +x "$APP/Contents/MacOS/Dikte"
 

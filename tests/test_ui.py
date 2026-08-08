@@ -180,13 +180,19 @@ class Settings(DikteTest):
 
     def test_emptying_a_shortcut_turns_it_off_but_not_the_toggle(self):
         """The application is unusable without the toggle, so that one box
-        falls back. The rest stay empty, which is how they are switched off."""
+        falls back. The rest stay empty, which is how they are switched off.
+
+        Which combination it falls back to is the platform's and is pinned in
+        test_hotkey; MacSettings runs this too, and there the answer is not
+        Ctrl+Space.
+        """
         conf = cfg.Config()
         window = self.window(conf)
         for box, _status, _missing in window._shortcut_rows.values():
             box.setCurrentText("")
         window._save()
-        self.assertEqual(conf["shortcut"], "Ctrl+Space")
+        self.assertTrue(conf["shortcut"])
+        self.assertEqual(conf["shortcut"], hotkey.default_combo("toggle"))
         self.assertEqual(conf["cancel_shortcut"], "")
         self.assertEqual(conf["assistant_shortcut"], "")
         self.assertEqual(conf["meeting_shortcut"], "")
