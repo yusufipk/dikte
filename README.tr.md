@@ -93,7 +93,7 @@ Güvenlik altında.
 Başka her yerde varsayılan `Ctrl+Space` ama burada değil: macOS onu giriş
 kaynağı değiştirmeye, `Cmd+Space`'i de Spotlight'a ayırmış; varsayılan
 `Ctrl+Option+Space`. Mac'te kısayol kaydı diye bir şey yok, Dikte kombinasyonu
-çalışırken kendisi ister ve kapanırken geri verir — bu yüzden KDE'nin aksine
+çalışırken kendisi ister ve kapanırken geri verir; bu yüzden KDE'nin aksine
 hiçbir şey için oturumu kapatıp açman gerekmez.
 
 Burada derlenmesi gereken tek şey sesi yazıya çevirme. whisper.cpp'nin macOS

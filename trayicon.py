@@ -190,7 +190,7 @@ def write_iconset(directory):
 
 
 def _main(argv):
-    """`python3 trayicon.py <path>.iconset` — what install-mac.sh calls.
+    """`python3 trayicon.py <path>.iconset`, which install-mac.sh calls.
 
     A QGuiApplication has to exist before a QPixmap can, and offscreen because
     this runs from a shell script with no window to open.

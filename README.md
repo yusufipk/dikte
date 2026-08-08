@@ -95,7 +95,7 @@ under System Settings → Privacy & Security.
 `Ctrl+Space` is the default everywhere else but not here, where macOS holds it
 for the input-source switch and `Cmd+Space` for Spotlight; the default is
 `Ctrl+Option+Space`. There is no shortcut registry on a Mac, so Dikte asks for
-the combination itself while it runs and gives it back when it quits — which
+the combination itself while it runs and gives it back when it quits, which
 also means nothing needs a logout, unlike KDE.
 
 Speech to text here is the one thing that has to be compiled. whisper.cpp

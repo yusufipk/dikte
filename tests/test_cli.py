@@ -369,7 +369,7 @@ class ShortcutStatus(DikteTest):
         send.assert_called_once_with("status")
 
     def test_nothing_running_falls_back_to_what_this_process_can_read(self):
-        """Which on Linux is the registry, and on macOS is nothing — correctly
+        """Which on Linux is the registry, and on macOS is nothing, correctly
         so, because there the keys really are gone with the process."""
         code, answer, _ = self.status(None)
         self.assertEqual(code, 0)

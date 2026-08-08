@@ -207,7 +207,7 @@ esac
 # 5. Starting at login ------------------------------------------------------
 # A LaunchAgent rather than a Login Item: it is a file this script can write
 # and uninstall.sh can delete, where a Login Item is a database only the user
-# can edit by hand. KeepAlive is off on purpose — quitting from the tray menu
+# can edit by hand. KeepAlive is off on purpose: quitting from the tray menu
 # should quit it, not restart it.
 mkdir -p "$AGENT_DIR"
 cat > "$AGENT" <<EOF
@@ -267,8 +267,8 @@ fi
 # person at the keyboard.
 echo
 say "Two permissions have to be granted the first time, and macOS will ask:"
-say "  • Microphone     — when the first recording starts"
-say "  • Accessibility  — when the first transcript is pasted"
+say "  • Microphone,     when the first recording starts"
+say "  • Accessibility,  when the first transcript is pasted"
 say "Both are under System Settings → Privacy & Security."
 if ! system_profiler SPAudioDataType 2>/dev/null | grep -qi 'blackhole\|loopback\|soundflower'; then
   echo
