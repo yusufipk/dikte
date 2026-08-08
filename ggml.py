@@ -45,14 +45,17 @@ import urllib.error
 import urllib.request
 
 import hub
+import paths
 from i18n import t
 
 HOST = "127.0.0.1"
 # The path api.py asks for, so its URL and the server's line up.
 INFERENCE_PATH = "/v1/audio/transcriptions"
 
-DATA_DIR = (pathlib.Path(os.environ.get("XDG_DATA_HOME")
-                         or os.path.expanduser("~/.local/share")) / "dikte")
+# Not worked out here: a Mac keeps its data under ~/Library, and a copy of the
+# rule that did not know that put several gigabytes of models somewhere no Mac
+# user looks and uninstall.sh never deleted from.
+DATA_DIR = paths.DATA_DIR
 BIN_DIR = DATA_DIR / "bin"
 MODELS_DIR = DATA_DIR / "models"
 

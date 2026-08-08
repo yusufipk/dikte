@@ -11,29 +11,15 @@ import api
 import ggml
 import i18n
 import paste
+import paths
 from i18n import t
-
-
-def _xdg(var, default):
-    return pathlib.Path(os.environ.get(var) or os.path.expanduser(default))
-
-
-def _directories(platform=None):
-    """(settings, data), in the two places this system keeps them.
-
-    macOS keeps both in the one directory a Mac user's backup already knows
-    about. Everywhere else they are separate and follow the XDG variables.
-    """
-    if (platform or sys.platform) == "darwin":
-        support = pathlib.Path.home() / "Library/Application Support/Dikte"
-        return support, support
-    return (_xdg("XDG_CONFIG_HOME", "~/.config") / "dikte",
-            _xdg("XDG_DATA_HOME", "~/.local/share") / "dikte")
 
 
 _MACOS = sys.platform == "darwin"
 
-CONFIG_DIR, DATA_DIR = _directories()
+# In paths.py rather than here, because ggml.py needs the same answer and
+# cannot ask this module: the import already runs the other way.
+CONFIG_DIR, DATA_DIR = paths.CONFIG_DIR, paths.DATA_DIR
 CONFIG_FILE = CONFIG_DIR / "config.json"
 HISTORY_FILE = DATA_DIR / "history.jsonl"
 RECORDINGS_DIR = DATA_DIR / "recordings"

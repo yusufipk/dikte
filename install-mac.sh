@@ -23,6 +23,12 @@ SHORTCUT="${1:-Ctrl+Option+Space}"
 # how update.sh says "this one was turned off", as against not saying anything.
 CANCEL_SHORTCUT="${2-Ctrl+Option+D}"
 
+# The two places Homebrew installs to, in front, for the same reason dikte.py
+# puts them there: a shell that has not been logged into since Homebrew was
+# installed does not have them, and this script would then report ffmpeg as
+# missing while the application finds it perfectly well.
+PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+
 say()  { printf '  %s\n' "$1"; }
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; }
 warn() { printf '  \033[33m!\033[0m %s\n' "$1"; }
@@ -103,24 +109,37 @@ fi
 # 3. The application bundle -------------------------------------------------
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 
-# The launcher, and the one thing here that must not be written the obvious
-# way. `exec "$PY" …` reads better and costs Dikte its menu bar icon: macOS
-# hands the bundle's application registration to the process it started, and
-# exec throws that process away. What is left is a running Python that answers
-# the socket, draws nothing, and gives no hint that anything is wrong. So the
-# interpreter is a child, and this script stays alive as its parent for as long
-# as it runs, holding the registration the status item hangs off.
+# The interpreter is copied in rather than run where it lies, and that copy is
+# what the whole of macOS's idea of "which application is this" rests on.
 #
-# The child does not inherit LSUIElement along with the registration, which is
-# why dikte.py asks for the accessory policy itself once Qt is up.
+# A bundle whose launcher runs an interpreter somewhere else is not that
+# interpreter's application: the process is /opt/homebrew/…/python3.13, so that
+# is the name in the microphone dialog, that is the row in Accessibility, and
+# every application on the machine sharing that interpreter shares the
+# permission. Copied to Contents/MacOS and exec'd from there, the running
+# executable sits inside Dikte.app, macOS reads the Info.plist above it, and
+# the permissions are Dikte's: its name, its icon, its row.
+#
+# CPython is a single static binary linked against system libraries only, so
+# the copy runs; what it loses is the tree it was found in, which is what
+# PYTHONHOME and PYTHONPATH below hand back.
+PY_REAL="$("$PY" -c 'import os, sys; print(os.path.realpath(getattr(sys, "_base_executable", sys.executable)))')"
+PY_HOME="$("$PY" -c 'import sys; print(sys.base_prefix)')"
+PY_SITE="$("$PY" -c 'import site; print(site.getsitepackages()[0])')"
+cp -f "$PY_REAL" "$APP/Contents/MacOS/python3"
+
+# exec, and this time it is right. The earlier version of this script did not
+# exec, because exec'ing an interpreter outside the bundle throws away the
+# application registration LaunchServices handed to the process it started, and
+# what is left answers the socket while drawing no menu bar icon at all. The
+# target here is inside the bundle, so the registration survives it.
 cat > "$APP/Contents/MacOS/Dikte" <<EOF
 #!/bin/sh
 # Written by install-mac.sh. Edit that, not this.
-"$PY" "$DIR/dikte.py" --gui "\$@" &
-child=\$!
-# Quitting from the Force Quit list or a logout arrives here, not there.
-trap 'kill \$child 2>/dev/null' TERM INT
-wait \$child
+HERE=\$(cd "\$(dirname "\$0")" && pwd)
+export PYTHONHOME="$PY_HOME"
+export PYTHONPATH="$PY_SITE"
+exec "\$HERE/python3" "$DIR/dikte.py" --gui "\$@"
 EOF
 chmod +x "$APP/Contents/MacOS/Dikte"
 
