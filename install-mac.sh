@@ -80,7 +80,11 @@ if ((${#missing[@]})); then
   warn "Missing: ${missing[*]}"
   for item in "${missing[@]}"; do
     case "$item" in
-      PyQt6)  say "PyQt6:   $PY -m pip install PyQt6" ;;
+      # Not pip: Homebrew's python is marked externally managed, so installing
+      # into it is refused. `brew install pyqt` puts PyQt6 where its own
+      # interpreter already looks. A virtualenv is the other answer, and then
+      # DIKTE_PYTHON is how this script is pointed at it.
+      PyQt6)  say "PyQt6:   brew install pyqt" ;;
       ffmpeg) say "ffmpeg:  brew install ffmpeg" ;;
     esac
   done

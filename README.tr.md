@@ -57,8 +57,7 @@ sudo apt install pulseaudio-utils xclip xdotool ffmpeg
 macOS'ta da aynı `./install.sh` çalışır, işi `install-mac.sh`'a devreder:
 
 ```sh
-brew install python@3.13 ffmpeg cmake
-python3.13 -m pip install PyQt6
+brew install pyqt ffmpeg cmake     # pyqt yeterince yeni bir Python'ı da getirir
 
 ./install.sh               # ya da:  ./install.sh "Ctrl+Option+Space" "Ctrl+Option+D"
 open -a Dikte
@@ -67,6 +66,11 @@ open -a Dikte
 Apple'ın kendi `python3`'ü 3.9 ve öyle kalacak, bu yüzden kurulum daha yenisini
 arar ve bulduğu yolu kurduğu her şeyin içine yazar; `python3` sonradan başka bir
 PATH'e göre yeniden çözülmesin diye.
+
+PyQt6 pip'ten değil `brew install pyqt`'ten geliyor, çünkü Homebrew'un Python'u
+"externally managed" işaretli ve içine kurulmayı reddediyor. Diğer yol bir sanal
+ortam; kuruluma onu göstermek için `DIKTE_PYTHON=/yol/venv/bin/python
+./install.sh`.
 
 Kurduğu şeyler: `~/Applications` içinde bir `Dikte.app`, `dikte` komutu ve
 oturum açılışında başlatan bir LaunchAgent. Uygulama paketi süs değil: macOS

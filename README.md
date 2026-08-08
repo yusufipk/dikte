@@ -58,8 +58,7 @@ sudo apt install pulseaudio-utils xclip xdotool ffmpeg
 On macOS the same `./install.sh` runs, and hands over to `install-mac.sh`:
 
 ```sh
-brew install python@3.13 ffmpeg cmake
-python3.13 -m pip install PyQt6
+brew install pyqt ffmpeg cmake     # pyqt brings a Python new enough with it
 
 ./install.sh               # or:  ./install.sh "Ctrl+Option+Space" "Ctrl+Option+D"
 open -a Dikte
@@ -68,6 +67,11 @@ open -a Dikte
 Apple's own `python3` is 3.9 and stays 3.9, so the installer looks for a newer
 one and writes the path it found into everything it installs, rather than
 leaving `python3` to be resolved again later against a different PATH.
+
+PyQt6 comes from `brew install pyqt` rather than from pip because Homebrew's
+Python is marked externally managed and refuses to be installed into. A
+virtualenv is the other way, and `DIKTE_PYTHON=/path/to/venv/bin/python
+./install.sh` is how the installer is pointed at one.
 
 What it puts down is a `Dikte.app` in `~/Applications`, the `dikte` command, and
 a LaunchAgent that starts it at login. The bundle is not decoration: it is the
