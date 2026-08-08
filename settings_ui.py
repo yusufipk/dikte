@@ -676,6 +676,14 @@ class SettingsWindow(QDialog):
         self.local_threads = QSpinBox()
         self.local_threads.setRange(0, 64)
         self.local_threads.setSpecialValueText(t("Automatic"))
+        # A spin box asks for room for its numbers, and 64 is two characters:
+        # the word standing in for zero is what actually has to fit, and on
+        # macOS, where the stepper sits inside the frame, it does not. Widened
+        # to the word rather than to a number picked by eye, so that it still
+        # fits once the word is "Otomatik".
+        self.local_threads.setMinimumWidth(
+            self.local_threads.fontMetrics()
+            .horizontalAdvance(t("Automatic")) + 56)
         self.local_options = QWidget()
         options_form = QFormLayout(self.local_options)
         options_form.setContentsMargins(0, 0, 0, 0)
