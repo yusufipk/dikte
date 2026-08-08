@@ -1,5 +1,12 @@
 # Dikte
 
+> **Bu bir fork.** Dikte [Yusuf İpek'in](https://github.com/yusufipk/dikte), ve
+> güzel olan her yanı da ona ait. Burada eklenen kısım macOS tarafı: kurulum ve
+> uygulama paketi, ikon teması olmadığı için çizilmiş bir menü çubuğu ikonu,
+> Mac'e kimse yayınlamadığı için yerinde derlenen bir whisper.cpp, ve Mac'in
+> ihtiyaç duyduğu varsayılanlar. Amaç bunu üst projeye geri göndermek; hepsi
+> [macOS bölümünde](#kurulum) anlatılıyor.
+
 `Ctrl+Space`'e bas, konuş, tekrar bas. Ses varsayılan olarak bu makinede yazıya
 çevrilir, bir model transkripti temizler (ıı'lar, tekrarlar, eksik noktalama),
 sonuç panoya kopyalanır ve o an yazdığın pencereye yapıştırılır.

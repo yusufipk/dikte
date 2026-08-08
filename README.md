@@ -1,5 +1,12 @@
 # Dikte
 
+> **This is a fork.** Dikte is [Yusuf İpek's](https://github.com/yusufipk/dikte),
+> and so is everything good about it. What is added here is the macOS half: an
+> installer and an application bundle, a menu bar icon where there was no icon
+> theme to take one from, a whisper.cpp built on the spot because nobody
+> publishes one for a Mac, and the defaults a Mac needs. Meant to go back
+> upstream; the [macOS section](#install) is where all of it is described.
+
 Press `Ctrl+Space`, talk, press again. The recording is transcribed on this
 machine by default, a model cleans it up (dropping the *uh*s, the restarts, the
 missing punctuation), and the result lands in your clipboard and is pasted into
