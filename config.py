@@ -31,6 +31,8 @@ def _directories(platform=None):
             _xdg("XDG_DATA_HOME", "~/.local/share") / "dikte")
 
 
+_MACOS = sys.platform == "darwin"
+
 CONFIG_DIR, DATA_DIR = _directories()
 CONFIG_FILE = CONFIG_DIR / "config.json"
 HISTORY_FILE = DATA_DIR / "history.jsonl"
@@ -438,11 +440,16 @@ DEFAULTS = {
     "speech_margin_db": 10.0,     # how far speech must rise above the noise floor
     "min_voiced_seconds": 0.3,
     "filter_hallucinations": True,
-    "shortcut": "Ctrl+Space",
+    # Ctrl+Space everywhere except a Mac, where macOS itself holds it for the
+    # input-source switch and Cmd+Space for Spotlight: neither is ours to take,
+    # so there Dikte starts on a combination a stock system leaves free.
+    "shortcut": "Ctrl+Option+Space" if _MACOS else "Ctrl+Space",
     # Ctrl+Alt+Space rather than Escape: the combination the recording started
     # with, one modifier along. Escape belongs to whatever window has focus, and
-    # while you are dictating something else usually has it.
-    "cancel_shortcut": "Ctrl+Alt+Space",
+    # while you are dictating something else usually has it. On a Mac that same
+    # trick lands on the toggle, Alt and Option being one key, so discarding
+    # gets a letter instead.
+    "cancel_shortcut": "Ctrl+Option+D" if _MACOS else "Ctrl+Alt+Space",
     "evdev_hotkey": False,
     "overlay_corner": "bottom-left",
     "keep_audio": False,

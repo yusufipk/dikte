@@ -714,7 +714,8 @@ def cmd_shortcut(opts):
         return out(opts, {"ok": True, "removed": opts.which},
                    f"Removed the {opts.which} shortcut.")
 
-    combo = (opts.combo or conf[spec.setting] or spec.fallback).strip()
+    combo = (opts.combo or conf[spec.setting]
+             or hotkey.default_combo(opts.which)).strip()
     if not combo:
         return fail(opts, "no combination given and none stored; pass --combo", 2)
     if not hotkey.valid_shortcut(combo):

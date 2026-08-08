@@ -43,6 +43,7 @@ import hotkey  # noqa: E402
 import i18n  # noqa: E402
 import ipc  # noqa: E402
 import meeting  # noqa: E402
+import trayicon  # noqa: E402
 from i18n import t  # noqa: E402
 from meeting import MeetingPipeline  # noqa: E402
 from overlay import Overlay  # noqa: E402
@@ -218,7 +219,12 @@ class Dikte:
             self._toggle()
 
     def _set_icon(self, name):
+        # The theme first, so a Linux desktop keeps its own icons, then the ones
+        # drawn in trayicon.py. macOS has no theme at all and would otherwise be
+        # handed a null icon, which in a menu bar is an item you cannot see.
         icon = QIcon.fromTheme(name)
+        if icon.isNull():
+            icon = trayicon.icon(name)
         if icon.isNull():
             icon = QIcon.fromTheme("audio-input-microphone")
         self.tray.setIcon(icon)

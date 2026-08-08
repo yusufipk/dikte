@@ -55,11 +55,48 @@ tools instead:
 sudo apt install pulseaudio-utils xclip xdotool ffmpeg
 ```
 
-macOS has no shortcut registry for `install.sh` to install into, so the listener
-that catches the keys is the mechanism there and there is nothing to run:
-`brew install ffmpeg`, `pip install PyQt6`, then `python dikte.py`. A meeting
-needs BlackHole or Loopback, because nothing else offers what the speakers are
-playing.
+On macOS the same `./install.sh` runs, and hands over to `install-mac.sh`:
+
+```sh
+brew install python@3.13 ffmpeg cmake
+python3.13 -m pip install PyQt6
+
+./install.sh               # or:  ./install.sh "Ctrl+Option+Space" "Ctrl+Option+D"
+open -a Dikte
+```
+
+Apple's own `python3` is 3.9 and stays 3.9, so the installer looks for a newer
+one and writes the path it found into everything it installs, rather than
+leaving `python3` to be resolved again later against a different PATH.
+
+What it puts down is a `Dikte.app` in `~/Applications`, the `dikte` command, and
+a LaunchAgent that starts it at login. The bundle is not decoration: it is the
+identity macOS files the microphone and Accessibility permissions under, and it
+is signed ad-hoc so that a reinstall is recognised as the same application
+instead of asking for both again. Dikte is a menu bar application there, with no
+Dock icon.
+
+Two things macOS only takes from the person at the keyboard, and it asks for
+each the first time it is needed: **Microphone**, when the first recording
+starts, and **Accessibility**, when the first transcript is pasted. Both are
+under System Settings → Privacy & Security.
+
+`Ctrl+Space` is the default everywhere else but not here, where macOS holds it
+for the input-source switch and `Cmd+Space` for Spotlight; the default is
+`Ctrl+Option+Space`. There is no shortcut registry on a Mac, so Dikte asks for
+the combination itself while it runs and gives it back when it quits — which
+also means nothing needs a logout, unlike KDE.
+
+Speech to text here is the one thing that has to be compiled. whisper.cpp
+publishes no macOS binary, and Homebrew's `whisper-cpp` is built with
+`WHISPER_BUILD_SERVER=OFF`, so it installs `whisper-cli` and not the server
+Dikte talks to. Settings → API → Download builds it instead: a shallow clone of
+the release tag, cmake, and a few minutes, for a `whisper-server` with Metal
+compiled in. `cmake` is what that needs and the only reason it is in the brew
+line above. Cloud transcription needs none of it.
+
+A meeting needs BlackHole or Loopback (`brew install blackhole-2ch`), because
+macOS offers nothing that is what the speakers are playing. Dictation does not.
 
 `install.sh` adds the `dikte` command, a menu entry, an autostart entry and the
 two global shortcuts, whose keys are its two arguments. `./update.sh` pulls and
@@ -189,9 +226,13 @@ vad.py            deciding whether a recording holds speech at all
 filetranscribe.py file transcription: ffmpeg, chunking, timestamps
 overlay.py        the corner indicator
 settings_ui.py    settings window
-hotkey.py         KDE shortcut installation and the evdev listener
-paste.py          wl-clipboard and ydotool wrappers
+hotkey.py         KDE shortcut installation, the evdev listener, Carbon on a Mac
+paste.py          wl-clipboard and ydotool wrappers, pbcopy and CoreGraphics
+trayicon.py       the tray icons, drawn where there is no icon theme
 i18n.py           the string table
+
+install.sh        Linux: dependencies, launchers, shortcuts
+install-mac.sh    macOS: the same, as an app bundle and a LaunchAgent
 ```
 
 The indicator is drawn through XWayland, because a Wayland client cannot place a

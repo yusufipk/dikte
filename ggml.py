@@ -301,12 +301,16 @@ def _extract(archive, into):
 
 
 def install_program(program, tag="", on_progress=None, should_stop=None,
-                    refresh=False):
+                    refresh=False, on_status=None):
     """Fetch and unpack a release. The path to the binary, or "" when stopped.
 
     `tag` is empty for whatever the project released last, which is the point:
     a version pinned in Dikte's source would mean a release of Dikte every time
     whisper.cpp has one.
+
+    `on_status` is for the one path with no bytes to count: a Mac builds
+    whisper.cpp instead of downloading it, and a progress bar has nothing to
+    say about a compiler.
     """
     try:
         tag, assets = hub.release(program.repo, tag or "latest", refresh=refresh)
@@ -320,10 +324,7 @@ def install_program(program, tag="", on_progress=None, should_stop=None,
             break
     if item is None:
         if sys.platform == "darwin" and program is WHISPER:
-            raise LocalError(t(
-                "whisper.cpp publishes no macOS build. Install it with: "
-                "brew install whisper-cpp"
-            ))
+            return _build_whisper(tag, on_status, should_stop)
         raise LocalError(t("{repo} {tag} has no build for this machine.",
                            repo=program.repo, tag=tag))
 
@@ -351,6 +352,131 @@ def install_program(program, tag="", on_progress=None, should_stop=None,
             pass
     _drop_old_versions(program, keep=tag)
     return str(binary)
+
+
+# --- whisper.cpp on a Mac, which has to be built ---------------------------
+#
+# whisper.cpp publishes no macOS binary at all, and Homebrew's whisper-cpp is
+# configured with WHISPER_BUILD_SERVER=OFF, so it installs whisper-cli and not
+# the server Dikte talks to. That leaves building it, which is why this is the
+# one thing Dikte fetches as source.
+#
+# The trust here is weaker than everywhere else in this file and worth saying
+# plainly: a release asset carries a sha256 that GitHub published and download()
+# refuses anything without one, while this is a git clone of a tag, trusted for
+# having arrived over TLS from github.com. Nobody publishes a signed macOS
+# whisper-server to check against instead.
+
+WHISPER_SOURCE = "https://github.com/ggml-org/whisper.cpp.git"
+# Metal is the point of building rather than shipping a CPU binary, and
+# embedding the shader library is what lets the binary be moved afterwards:
+# without it the .metallib is looked for next to the executable at run time.
+WHISPER_CMAKE = (
+    "-DCMAKE_BUILD_TYPE=Release",
+    "-DBUILD_SHARED_LIBS=OFF",
+    "-DWHISPER_BUILD_SERVER=ON",
+    "-DWHISPER_BUILD_EXAMPLES=ON",
+    "-DWHISPER_BUILD_TESTS=OFF",
+    "-DWHISPER_SDL2=OFF",
+    "-DGGML_METAL=ON",
+    "-DGGML_METAL_EMBED_LIBRARY=ON",
+)
+BUILD_TIMEOUT = 30 * 60
+
+
+def _run_build(args, cwd, step):
+    """One step of the build, with its output kept for the failure message."""
+    try:
+        result = subprocess.run(
+            args, cwd=str(cwd), capture_output=True, text=True,
+            timeout=BUILD_TIMEOUT, check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise LocalError(t("{step} took longer than {minutes} minutes and was "
+                           "stopped.", step=step,
+                           minutes=BUILD_TIMEOUT // 60)) from exc
+    except OSError as exc:
+        raise LocalError(t("Could not run {step}: {error}",
+                           step=step, error=exc)) from exc
+    if result.returncode != 0:
+        # The last few lines, because cmake's full output is thousands of them
+        # and the error is at the bottom.
+        tail = "\n".join((result.stderr or result.stdout).strip().splitlines()[-8:])
+        raise LocalError(t("{step} failed:\n{error}", step=step, error=tail))
+    return result
+
+
+def _build_whisper(tag, on_status=None, should_stop=None):
+    """Build whisper-server from the given tag. Its path, or "" when stopped."""
+    def say(message):
+        if on_status is not None:
+            on_status(message)
+
+    def stopping():
+        return should_stop is not None and should_stop()
+
+    for tool, hint in (("git", "xcode-select --install"),
+                       ("cmake", "brew install cmake")):
+        if not shutil.which(tool):
+            raise LocalError(t(
+                "whisper.cpp has no macOS build to download, so it is built "
+                "here, and {tool} is missing. Install it with: {hint}",
+                tool=tool, hint=hint))
+
+    root = BIN_DIR / WHISPER.name
+    source = root / f"src-{tag}"
+    into = root / tag
+    shutil.rmtree(source, ignore_errors=True)
+    shutil.rmtree(into, ignore_errors=True)
+    try:
+        source.parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise LocalError(t("Could not create {path}: {error}",
+                           path=source.parent, error=exc)) from exc
+
+    try:
+        say(t("Fetching whisper.cpp {tag}…", tag=tag))
+        # Shallow and single-branch: the history is a hundred megabytes and
+        # nothing here ever reads it.
+        _run_build(["git", "clone", "--depth", "1", "--branch", tag,
+                    WHISPER_SOURCE, str(source)], root, "git clone")
+        if stopping():
+            return ""
+
+        say(t("Configuring the build…"))
+        _run_build(["cmake", "-S", ".", "-B", "build", *WHISPER_CMAKE],
+                   source, "cmake")
+        if stopping():
+            return ""
+
+        say(t("Compiling whisper.cpp. This takes a few minutes."))
+        _run_build(["cmake", "--build", "build", "--config", "Release",
+                    "--target", "whisper-server",
+                    "-j", str(os.cpu_count() or 4)],
+                   source, t("the compiler"))
+
+        binary = _find_binary(source / "build", WHISPER.binary)
+        if binary is None:
+            raise LocalError(t("{name} was not in the download.",
+                               name=WHISPER.binary))
+        # Lifted out of the build tree and the tree thrown away: it is a static
+        # binary, and keeping the source would leave a gigabyte behind for
+        # nothing. This is also why the shader library is embedded above.
+        into.mkdir(parents=True, exist_ok=True)
+        installed = into / WHISPER.binary
+        shutil.copy2(str(binary), str(installed))
+        installed.chmod(installed.stat().st_mode | 0o111)
+        _install_record(WHISPER).write_text(
+            json.dumps({"tag": tag, "binary": str(installed)}), encoding="utf-8")
+    except OSError as exc:
+        raise LocalError(t("Could not install {name}: {error}",
+                           name=WHISPER.name, error=exc)) from exc
+    finally:
+        shutil.rmtree(source, ignore_errors=True)
+
+    _drop_old_versions(WHISPER, keep=tag)
+    say("")
+    return str(installed)
 
 
 def _drop_old_versions(program, keep):

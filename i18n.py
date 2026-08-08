@@ -133,6 +133,21 @@ TR = {
     "Could not connect: {reason}": "Bağlantı kurulamadı: {reason}",
     "Could not parse the response: {error}": "Yanıt çözümlenemedi: {error}",
 
+    # --- building whisper.cpp on a Mac ----------------------------------
+    "whisper.cpp has no macOS build to download, so it is built here, and "
+    "{tool} is missing. Install it with: {hint}":
+        "whisper.cpp'nin indirilebilir bir macOS sürümü yok, bu yüzden burada "
+        "derleniyor ve {tool} eksik. Şununla kur: {hint}",
+    "Fetching whisper.cpp {tag}…": "whisper.cpp {tag} indiriliyor…",
+    "Configuring the build…": "Derleme hazırlanıyor…",
+    "Compiling whisper.cpp. This takes a few minutes.":
+        "whisper.cpp derleniyor. Bu birkaç dakika sürer.",
+    "the compiler": "derleyici",
+    "Could not run {step}: {error}": "{step} çalıştırılamadı: {error}",
+    "{step} failed:\n{error}": "{step} başarısız:\n{error}",
+    "{step} took longer than {minutes} minutes and was stopped.":
+        "{step} {minutes} dakikadan uzun sürdü ve durduruldu.",
+
     # --- settings: tabs and general ------------------------------------
     "Dikte Settings": "Dikte Ayarları",
     "General": "Genel",

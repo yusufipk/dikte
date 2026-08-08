@@ -3,6 +3,15 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Nothing below this line is true on a Mac: no XDG directories, no .desktop
+# files, no shortcut registry, and an application is a bundle rather than a
+# path. That is a second script rather than a branch through this one, and
+# update.sh reaches it through here without having to know which it is on.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  exec "$DIR/install-mac.sh" "$@"
+fi
+
 PY="$(command -v python3)"
 BIN_DIR="$HOME/.local/bin"
 APP_DIR="$HOME/.local/share/applications"

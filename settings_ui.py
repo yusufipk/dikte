@@ -142,6 +142,9 @@ class LocalModelBox(QGroupBox):
     # qint64 rather than int, which is C++'s 32-bit one: a 2.3 GB model is more
     # than fits in it, and the count comes out the far side negative.
     _progress = pyqtSignal("qint64", "qint64")
+    # A step with no bytes to count: building whisper.cpp on a Mac, where the
+    # progress line would otherwise say "Downloading…" through a compile.
+    _stage = pyqtSignal(str)
     _finished = pyqtSignal(str, str)
     _installed = pyqtSignal(str, str)
 
@@ -192,6 +195,7 @@ class LocalModelBox(QGroupBox):
         self._listed.connect(self._on_listed)
         self._quants.connect(self._on_listed)
         self._progress.connect(self._on_progress)
+        self._stage.connect(self.program_label.setText)
         self._finished.connect(self._on_finished)
         self._installed.connect(self._on_installed)
 
@@ -357,7 +361,8 @@ class LocalModelBox(QGroupBox):
 
         def work():
             try:
-                ggml.install_program(self.program, on_progress=self._report)
+                ggml.install_program(self.program, on_progress=self._report,
+                                     on_status=self._stage.emit)
                 self._installed.emit("", "")
             except ggml.LocalError as exc:
                 self._installed.emit("", str(exc))
@@ -1618,7 +1623,8 @@ class SettingsWindow(QDialog):
         # turns them off.
         for which, (box, _status, _missing) in self._shortcut_rows.items():
             spec = hotkey.SHORTCUTS[which]
-            conf[spec.setting] = box.currentText().strip() or spec.fallback
+            conf[spec.setting] = (box.currentText().strip()
+                                  or hotkey.default_combo(which))
         conf["evdev_hotkey"] = self.evdev_enabled.isChecked()
         conf["history_limit"] = self.history_limit.value()
         conf.save()
@@ -1864,7 +1870,7 @@ class SettingsWindow(QDialog):
     def _install_shortcut(self, which):
         spec = hotkey.SHORTCUTS[which]
         box, _status, _missing = self._shortcut_rows[which]
-        combo = box.currentText().strip() or spec.fallback
+        combo = box.currentText().strip() or hotkey.default_combo(which)
         if not combo:
             QMessageBox.information(self, t("Shortcut"),
                                     t("Type a key combination first."))

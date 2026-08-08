@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  test:
+  linux:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -38,3 +38,39 @@ jobs:
       # tests reach neither the network nor a sound device.
       - name: Run the tests
         run: python -m unittest discover --verbose
+
+  # The macOS backends are written to be checked from either side, so most of
+  # what runs here also runs above. What only this job can catch is the half
+  # that reads the real platform: the Carbon and CoreGraphics libraries have to
+  # be there to be opened, the paths under ~/Library have to be the ones macOS
+  # actually uses, and the Linux tests are skipped rather than failed.
+  macos:
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      # No apt step: PyQt6's wheel carries the frameworks it needs on a Mac.
+      - name: Install PyQt6
+        run: python -m pip install --quiet PyQt6
+
+      - name: Run the tests
+        run: python -m unittest discover --verbose
+
+      # The installer is most of what is new on a Mac, and a syntax error in it
+      # would otherwise only turn up on somebody's machine. Running it is not on
+      # the table here: it wants a microphone, a login session and a keychain.
+      - name: Check the installer parses
+        run: |
+          bash -n install.sh
+          bash -n install-mac.sh
+          bash -n update.sh
+          bash -n uninstall.sh
