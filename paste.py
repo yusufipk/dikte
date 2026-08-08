@@ -200,6 +200,14 @@ def _macos_api():
                            tool="CoreGraphics", error=exc)) from exc
     services.AXIsProcessTrusted.argtypes = []
     services.AXIsProcessTrusted.restype = ctypes.c_bool
+    services.AXIsProcessTrustedWithOptions.argtypes = [ctypes.c_void_p]
+    services.AXIsProcessTrustedWithOptions.restype = ctypes.c_bool
+    core.CFDictionaryCreate.argtypes = [
+        ctypes.c_void_p, ctypes.POINTER(ctypes.c_void_p),
+        ctypes.POINTER(ctypes.c_void_p), ctypes.c_long,
+        ctypes.c_void_p, ctypes.c_void_p,
+    ]
+    core.CFDictionaryCreate.restype = ctypes.c_void_p
     services.CGEventCreateKeyboardEvent.argtypes = [
         ctypes.c_void_p, ctypes.c_ushort, ctypes.c_bool,
     ]
@@ -224,16 +232,60 @@ def _macos_trusted():
 _asked_for_permission = False
 
 
-def _ask_for_permission():
-    """Open the one settings pane that grants it, and only the first time.
+def _macos_prompt_options(services, core):
+    """{kAXTrustedCheckOptionPrompt: true}, as a CFDictionary, or 0.
 
-    Every dictation would otherwise reopen it until the box is ticked, which is
-    a window in the user's face on top of the paste that did not happen.
+    Built by hand because there is no Objective-C bridge here and this is the
+    only dictionary Dikte ever makes. Its own function so that a test can hand
+    back something without a framework to read the constants out of.
+    """
+    keys = (ctypes.c_void_p * 1)(
+        ctypes.c_void_p.in_dll(services, "kAXTrustedCheckOptionPrompt"))
+    values = (ctypes.c_void_p * 1)(
+        ctypes.c_void_p.in_dll(core, "kCFBooleanTrue"))
+    return core.CFDictionaryCreate(
+        None, keys, values, 1,
+        ctypes.byref(ctypes.c_void_p.in_dll(core, "kCFTypeDictionaryKeyCallBacks")),
+        ctypes.byref(ctypes.c_void_p.in_dll(core, "kCFTypeDictionaryValueCallBacks")),
+    )
+
+
+def _macos_put_us_in_the_list():
+    """Ask with the prompt, which is what creates the row to switch on.
+
+    AXIsProcessTrusted only answers the question, and an application that has
+    only ever asked it is not in Accessibility at all: the pane opens on a list
+    Dikte is not in, and the only way through is the + button and a trip to the
+    Applications folder. Asking with kAXTrustedCheckOptionPrompt puts it there,
+    and macOS shows its own dialog with the button that opens the pane.
+    """
+    services, core = _macos_api()
+    options = _macos_prompt_options(services, core)
+    if not options:
+        return
+    try:
+        services.AXIsProcessTrustedWithOptions(options)
+    finally:
+        core.CFRelease(options)
+
+
+def _ask_for_permission():
+    """Get Dikte into the Accessibility list, and only the first time.
+
+    Every dictation would otherwise reopen the pane until the box is ticked,
+    which is a window in the user's face on top of the paste that did not
+    happen.
     """
     global _asked_for_permission
     if _asked_for_permission:
         return
     _asked_for_permission = True
+    try:
+        _macos_put_us_in_the_list()
+    except (PasteError, OSError, ValueError):
+        # An older macOS, or a framework that would not load: the pane below is
+        # still worth opening, even if the row has to be added by hand.
+        pass
     try:
         subprocess.Popen(
             ["open", ("x-apple.systempreferences:com.apple.preference.security"
