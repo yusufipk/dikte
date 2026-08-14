@@ -837,4 +837,3 @@ class Sizes(DikteTest):
         self.assertEqual(ggml.human_size(512), "512 B")
         self.assertEqual(ggml.human_size(574041195), "547.4 MB")
         self.assertEqual(ggml.human_size(3_095_033_483), "2.9 GB")
-
