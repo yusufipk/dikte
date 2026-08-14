@@ -22,11 +22,23 @@ def _directories(platform=None):
     """(settings, data), in the two places this system keeps them.
 
     macOS keeps both in the one directory a Mac user's backup already knows
-    about. Everywhere else they are separate and follow the XDG variables.
+    about. Windows separates roaming settings from machine-local data. Linux
+    keeps them separate too and follows the XDG variables.
     """
-    if (platform or sys.platform) == "darwin":
+    platform = platform or sys.platform
+    if platform == "darwin":
         support = pathlib.Path.home() / "Library/Application Support/Dikte"
         return support, support
+    if platform.startswith("win"):
+        roaming = pathlib.Path(
+            os.environ.get("APPDATA")
+            or pathlib.Path.home() / "AppData/Roaming"
+        )
+        local = pathlib.Path(
+            os.environ.get("LOCALAPPDATA")
+            or pathlib.Path.home() / "AppData/Local"
+        )
+        return roaming / "Dikte", local / "Dikte"
     return (_xdg("XDG_CONFIG_HOME", "~/.config") / "dikte",
             _xdg("XDG_DATA_HOME", "~/.local/share") / "dikte")
 

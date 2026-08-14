@@ -8,6 +8,7 @@ config and now shadows the default.
 
 import json
 import os
+import pathlib
 import unittest
 from unittest import mock
 
@@ -486,6 +487,22 @@ class Directories(unittest.TestCase):
         with mock.patch.dict(os.environ, {"XDG_CONFIG_HOME": "/c"}):
             config_dir, _ = cfg._directories("darwin")
         self.assertNotIn("/c", str(config_dir))
+
+    def test_windows_uses_roaming_settings_and_local_data(self):
+        with mock.patch.dict(os.environ, {"APPDATA": "C:/Roaming",
+                                          "LOCALAPPDATA": "C:/Local"},
+                             clear=True):
+            config_dir, data_dir = cfg._directories("win32")
+        self.assertEqual(config_dir, pathlib.Path("C:/Roaming/Dikte"))
+        self.assertEqual(data_dir, pathlib.Path("C:/Local/Dikte"))
+
+    def test_windows_does_not_read_xdg_variables(self):
+        with mock.patch.dict(os.environ, {"APPDATA": "C:/Roaming",
+                                          "LOCALAPPDATA": "C:/Local",
+                                          "XDG_CONFIG_HOME": "C:/Wrong"},
+                             clear=True):
+            config_dir, _ = cfg._directories("win32")
+        self.assertNotIn("Wrong", str(config_dir))
 
 
 if __name__ == "__main__":

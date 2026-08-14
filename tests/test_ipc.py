@@ -65,11 +65,21 @@ class Paths(unittest.TestCase):
         self.assertTrue(command.startswith(sys.executable))
         self.assertTrue(command.endswith(" toggle"))
 
-    @unittest.skipUnless(hasattr(os, "getuid"),
-                         "the socket is named after a user id, which Windows "
-                         "has no equivalent of")
     def test_the_socket_is_per_user(self):
-        self.assertEqual(ipc.SERVER_NAME, f"dikte-{os.getuid()}")
+        self.assertEqual(ipc.SERVER_NAME, f"dikte-{ipc.user_id()}")
+
+    def test_unix_uses_the_numeric_user_id(self):
+        if not hasattr(os, "getuid"):
+            self.skipTest("Windows has no numeric uid")
+        self.assertEqual(ipc.user_id("linux"), str(os.getuid()))
+
+    def test_windows_uses_a_short_hash_of_the_sid(self):
+        with mock.patch.object(ipc, "_windows_sid", return_value="S-1-5-21-42"):
+            first = ipc.user_id("win32")
+            second = ipc.user_id("win32")
+        self.assertEqual(first, second)
+        self.assertEqual(len(first), 16)
+        self.assertNotIn("S-1-5", first)
 
 
 class Send(unittest.TestCase):

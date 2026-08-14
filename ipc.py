@@ -9,12 +9,78 @@ shortcut may still send.
 """
 
 import json
+import hashlib
 import os
 import sys
 
 from PyQt6.QtNetwork import QLocalSocket
 
-SERVER_NAME = "dikte-" + str(os.getuid())
+def _windows_sid():
+    """The current Windows account SID, or an empty string on API failure."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        token_query = 0x0008
+        token_user = 1
+        token = wintypes.HANDLE()
+        kernel32 = ctypes.windll.kernel32
+        advapi32 = ctypes.windll.advapi32
+        advapi32.OpenProcessToken.argtypes = [
+            wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+        advapi32.OpenProcessToken.restype = wintypes.BOOL
+        advapi32.GetTokenInformation.argtypes = [
+            wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD)]
+        advapi32.GetTokenInformation.restype = wintypes.BOOL
+        advapi32.ConvertSidToStringSidW.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(wintypes.LPWSTR)]
+        advapi32.ConvertSidToStringSidW.restype = wintypes.BOOL
+        kernel32.LocalFree.argtypes = [wintypes.HLOCAL]
+        kernel32.LocalFree.restype = wintypes.HLOCAL
+        if not advapi32.OpenProcessToken(
+                kernel32.GetCurrentProcess(), token_query, ctypes.byref(token)):
+            return ""
+        try:
+            size = wintypes.DWORD()
+            advapi32.GetTokenInformation(token, token_user, None, 0,
+                                         ctypes.byref(size))
+            if not size.value:
+                return ""
+            buffer = ctypes.create_string_buffer(size.value)
+            if not advapi32.GetTokenInformation(
+                    token, token_user, buffer, size, ctypes.byref(size)):
+                return ""
+
+            class TokenUser(ctypes.Structure):
+                _fields_ = [("sid", ctypes.c_void_p),
+                            ("attributes", wintypes.DWORD)]
+
+            sid = ctypes.cast(buffer, ctypes.POINTER(TokenUser)).contents.sid
+            text = wintypes.LPWSTR()
+            if not advapi32.ConvertSidToStringSidW(sid, ctypes.byref(text)):
+                return ""
+            try:
+                return text.value or ""
+            finally:
+                kernel32.LocalFree(text)
+        finally:
+            kernel32.CloseHandle(token)
+    except (AttributeError, OSError, TypeError, ValueError):
+        return ""
+
+
+def user_id(platform=None):
+    """A filesystem/pipe-safe token that is stable for the current user."""
+    platform = platform or sys.platform
+    if not platform.startswith("win"):
+        return str(os.getuid())
+    identity = (_windows_sid() or os.environ.get("USERNAME")
+                or os.environ.get("USER") or "dikte")
+    return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+
+
+SERVER_NAME = "dikte-" + user_id()
 
 # Long enough for a process that is already running to answer, short enough that
 # "nothing is running" is not a noticeable pause in front of a key press.
