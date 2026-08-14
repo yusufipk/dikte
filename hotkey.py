@@ -717,34 +717,76 @@ def conflicting_shortcuts(shortcut, desktop_id=DESKTOP_ID):
     return hits
 
 
+_legacy_parse_shortcut = parse_shortcut
+_legacy_listener = listener
+_legacy_valid_shortcut = valid_shortcut
+_legacy_installs_shortcuts = installs_shortcuts
+_legacy_shortcut_needs_restart = shortcut_needs_restart
+_legacy_install_shortcut = install_shortcut
+_legacy_remove_shortcut = remove_shortcut
+_legacy_shortcut_status = shortcut_status
+_legacy_desktop_name = desktop_name
+_legacy_conflicting_shortcuts = conflicting_shortcuts
+
 if sys.platform.startswith("win"):
     from platforms import adapter as _platform_adapter
 
     _windows_hotkeys = _platform_adapter("hotkeys", "windows")
-    parse_shortcut = _windows_hotkeys.parse_shortcut
-    install_shortcut = _windows_hotkeys.install_shortcut
-    remove_shortcut = _windows_hotkeys.remove_shortcut
-    shortcut_status = _windows_hotkeys.shortcut_status
-    conflicting_shortcuts = _windows_hotkeys.conflicting_shortcuts
-    desktop_name = _windows_hotkeys.desktop_name
+    def parse_shortcut(text):
+        return (_windows_hotkeys.parse_shortcut(text)
+                if sys.platform.startswith("win")
+                else _legacy_parse_shortcut(text))
 
     def listener(parent=None):
-        return _windows_hotkeys.Listener(parent)
+        return (_windows_hotkeys.Listener(parent) if sys.platform.startswith("win")
+                else _legacy_listener(parent))
 
     def valid_shortcut(text):
-        return parse_shortcut(text)[1] is not None
+        return (_windows_hotkeys.parse_shortcut(text)[1] is not None
+                if sys.platform.startswith("win")
+                else _legacy_valid_shortcut(text))
 
     def installs_shortcuts():
         # RegisterHotKey lives in this process; there is no desktop registry
         # which can deliver a shortcut while Dikte is closed.
-        return False
+        return False if sys.platform.startswith("win") else _legacy_installs_shortcuts()
 
     def shortcut_needs_restart():
-        return False
+        return (False if sys.platform.startswith("win")
+                else _legacy_shortcut_needs_restart())
+
+    def install_shortcut(shortcut, exec_command,
+                         name="Dikte: start/stop recording",
+                         desktop_id=DESKTOP_ID):
+        if sys.platform.startswith("win"):
+            return _windows_hotkeys.install_shortcut(
+                shortcut, exec_command, name, desktop_id)
+        return _legacy_install_shortcut(shortcut, exec_command, name, desktop_id)
+
+    def remove_shortcut(desktop_id=DESKTOP_ID):
+        return (_windows_hotkeys.remove_shortcut(desktop_id)
+                if sys.platform.startswith("win")
+                else _legacy_remove_shortcut(desktop_id))
+
+    def shortcut_status(desktop_id=DESKTOP_ID):
+        return (_windows_hotkeys.shortcut_status(desktop_id)
+                if sys.platform.startswith("win")
+                else _legacy_shortcut_status(desktop_id))
+
+    def conflicting_shortcuts(shortcut, desktop_id=DESKTOP_ID):
+        return (_windows_hotkeys.conflicting_shortcuts(shortcut, desktop_id)
+                if sys.platform.startswith("win")
+                else _legacy_conflicting_shortcuts(shortcut, desktop_id))
+
+    def desktop_name():
+        return (_windows_hotkeys.desktop_name() if sys.platform.startswith("win")
+                else _legacy_desktop_name())
 
 
 # The updated application shell consumes these two platform-neutral names.
 # Keep the older function as well because CLI and macOS/Linux tests use it.
-Listener = (_windows_hotkeys.Listener if sys.platform.startswith("win")
-            else CarbonHotkey if sys.platform == "darwin" else EvdevHotkey)
+def Listener(parent=None):
+    return listener(parent)
+
+
 LISTENER_IS_PRIMARY = sys.platform == "darwin" or sys.platform.startswith("win")

@@ -662,12 +662,36 @@ def default_monitor():
 # Linux/macOS implementations above remain untouched.  Keeping this dispatch
 # at the boundary avoids regressing the newer macOS backend while the desktop
 # services are progressively moved into dedicated adapters.
+_LegacyRecorder = Recorder
+_LegacyMeetingRecorder = MeetingRecorder
+_legacy_list_sources = list_sources
+_legacy_list_monitors = list_monitors
+_legacy_default_monitor = default_monitor
+
 if sys.platform.startswith("win"):
     from platforms import adapter as _platform_adapter
 
     _windows_audio = _platform_adapter("audio", "windows")
-    Recorder = _windows_audio.Recorder
-    MeetingRecorder = _windows_audio.MeetingRecorder
-    list_sources = _windows_audio.list_sources
-    list_monitors = _windows_audio.list_monitors
-    default_monitor = _windows_audio.default_monitor
+
+    def Recorder(parent=None):
+        implementation = (_windows_audio.Recorder if sys.platform.startswith("win")
+                          else _LegacyRecorder)
+        return implementation(parent)
+
+    def MeetingRecorder(parent=None):
+        implementation = (_windows_audio.MeetingRecorder
+                          if sys.platform.startswith("win")
+                          else _LegacyMeetingRecorder)
+        return implementation(parent)
+
+    def list_sources():
+        return (_windows_audio.list_sources() if sys.platform.startswith("win")
+                else _legacy_list_sources())
+
+    def list_monitors():
+        return (_windows_audio.list_monitors() if sys.platform.startswith("win")
+                else _legacy_list_monitors())
+
+    def default_monitor():
+        return (_windows_audio.default_monitor() if sys.platform.startswith("win")
+                else _legacy_default_monitor())

@@ -46,7 +46,7 @@ import zipfile
 
 import hub
 from i18n import t
-from platforms import IS_WINDOWS, adapter
+from platforms import IS_MACOS, IS_WINDOWS, adapter
 
 runtime = adapter("runtime")
 
@@ -290,6 +290,12 @@ def _wanted_assets(program, backend="auto"):
     backend = backend if backend in BACKENDS else "auto"
     if IS_WINDOWS:
         return _windows_assets(program, backend, arch)
+    if IS_MACOS:
+        # llama.cpp publishes a native Metal-enabled macOS archive. whisper.cpp
+        # publishes no runnable macOS server archive; never mistake Ubuntu's
+        # arm64 build for a native one.
+        return (() if program is WHISPER
+                else (rf"bin-macos-{arch}\.tar\.gz$",))
     return _linux_assets(program, backend, arch)
 
 
@@ -560,6 +566,11 @@ def install_program(program, tag="", on_progress=None, should_stop=None,
         if item:
             break
     if item is None:
+        if IS_MACOS and program is WHISPER:
+            raise LocalError(t(
+                "whisper.cpp publishes no macOS build. Install it with: "
+                "brew install whisper-cpp"
+            ))
         raise LocalError(_no_build(program, tag, backend, assets))
 
     into = BIN_DIR / program.name / tag

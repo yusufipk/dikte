@@ -442,16 +442,18 @@ def press(shortcut="", delay=0.12):
     here.press(shortcut or here.shortcuts[0], delay)
 
 
+_LegacyPasteError = PasteError
+_legacy_desktop = desktop
+_legacy_read_clipboard = read_clipboard
+_legacy_copy = copy
+_legacy_copy_bytes = copy_bytes
+_legacy_paste_ready = paste_ready
+_legacy_press = press
+
 if sys.platform.startswith("win"):
     from platforms import adapter as _platform_adapter
 
     _windows_clipboard = _platform_adapter("clipboard", "windows")
-    PasteError = _windows_clipboard.PasteError
-    read_clipboard = _windows_clipboard.read_clipboard
-    copy = _windows_clipboard.copy
-    copy_bytes = _windows_clipboard.copy_bytes
-    paste_ready = _windows_clipboard.paste_ready
-    press = _windows_clipboard.press
 
     WINDOWS = Desktop(
         clipboard="Windows Clipboard",
@@ -465,4 +467,36 @@ if sys.platform.startswith("win"):
     )
 
     def desktop():
-        return WINDOWS
+        return WINDOWS if sys.platform.startswith("win") else _legacy_desktop()
+
+    def read_clipboard():
+        return (_windows_clipboard.read_clipboard()
+                if sys.platform.startswith("win") else _legacy_read_clipboard())
+
+    def _windows_call(function, *args, **kwargs):
+        try:
+            return function(*args, **kwargs)
+        except _windows_clipboard.PasteError as exc:
+            raise PasteError(str(exc)) from exc
+
+    def copy(text):
+        if sys.platform.startswith("win"):
+            return _windows_call(_windows_clipboard.copy, text)
+        return _legacy_copy(text)
+
+    def copy_bytes(data):
+        if isinstance(data, _MAC_SNAPSHOT):
+            return _legacy_copy_bytes(data)
+        if sys.platform.startswith("win"):
+            return _windows_call(_windows_clipboard.copy_bytes, data)
+        return _legacy_copy_bytes(data)
+
+    def paste_ready():
+        return (_windows_clipboard.paste_ready() if sys.platform.startswith("win")
+                else _legacy_paste_ready())
+
+    def press(shortcut="", delay=0.12):
+        if sys.platform.startswith("win"):
+            return _windows_call(_windows_clipboard.press,
+                                 shortcut or WINDOWS.shortcuts[0], delay)
+        return _legacy_press(shortcut, delay)

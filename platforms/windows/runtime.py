@@ -31,6 +31,7 @@ import pathlib
 import signal
 import socket
 import subprocess
+import sys
 from ctypes import wintypes
 
 # No console window for whisper, llama, ffmpeg, Claude or Codex: without this
@@ -48,6 +49,21 @@ MEETINGS_NAME = "Meetings"
 # press and the shortcuts all happen inside this process here; ffmpeg is what
 # turns somebody's .mp4 into something a transcription model will take.
 PROGRAMS = ("ffmpeg",)
+
+
+def _expose_bundled_programs():
+    """Put executables shipped beside a frozen Dikte on its private PATH."""
+    if not getattr(sys, "frozen", False):
+        return
+    directory = str(pathlib.Path(sys.executable).resolve().parent)
+    parts = [part for part in os.environ.get("PATH", "").split(os.pathsep)
+             if part]
+    if not any(os.path.normcase(part) == os.path.normcase(directory)
+               for part in parts):
+        os.environ["PATH"] = os.pathsep.join([directory, *parts])
+
+
+_expose_bundled_programs()
 
 # Version and salt for a stored secret. The prefix is what tells a plain key
 # written by an older version apart from an encrypted one, and the salt is
@@ -235,6 +251,15 @@ class _Blob(ctypes.Structure):
                 ("pbData", ctypes.POINTER(ctypes.c_char))]
 
 
+crypt32.CryptProtectData.argtypes = [
+    ctypes.POINTER(_Blob), wintypes.LPCWSTR, ctypes.POINTER(_Blob),
+    ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(_Blob)]
+crypt32.CryptUnprotectData.argtypes = [
+    ctypes.POINTER(_Blob), ctypes.POINTER(wintypes.LPWSTR),
+    ctypes.POINTER(_Blob), ctypes.c_void_p, ctypes.c_void_p, wintypes.DWORD,
+    ctypes.POINTER(_Blob)]
+
+
 def _blob(data):
     buffer = ctypes.create_string_buffer(data, len(data))
     return _Blob(len(data), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_char))), buffer
@@ -299,6 +324,18 @@ def unprotect(value):
         # the user to the one place that can fix it.
         return ""
     return _take(out).decode("utf-8", "replace")
+
+
+def dpapi_available():
+    """Whether this login has a usable DPAPI master key.
+
+    Normal interactive Windows accounts do. Some service/sandbox accounts do
+    not have a loaded profile and CryptProtectData returns ERROR_FILE_NOT_FOUND;
+    callers can then explain that encryption is unavailable instead of
+    claiming a plaintext fallback was protected.
+    """
+    probe = protect("dikte-dpapi-probe")
+    return probe.startswith(SECRET_PREFIX) and unprotect(probe) == "dikte-dpapi-probe"
 
 
 def secure_file(path):

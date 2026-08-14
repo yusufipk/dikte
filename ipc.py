@@ -25,7 +25,22 @@ from platforms import adapter
 
 runtime = adapter("runtime")
 
-SERVER_NAME = "dikte-" + runtime.user_id()
+
+def _windows_sid():
+    return getattr(adapter("runtime", "windows"), "_sid_string")()
+
+
+def user_id(platform=None):
+    platform = platform or sys.platform
+    if platform.startswith("win"):
+        identity = (_windows_sid() or os.environ.get("USERNAME")
+                    or os.environ.get("USER") or "dikte")
+        import hashlib
+        return hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
+    return str(os.getuid())
+
+
+SERVER_NAME = "dikte-" + user_id()
 
 # Whether this is a packaged application rather than a checkout being run by a
 # Python interpreter. It changes what "start Dikte again" means, and there is

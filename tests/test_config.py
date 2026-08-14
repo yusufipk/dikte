@@ -18,6 +18,9 @@ import ggml
 import i18n
 from tests.support import DikteTest, linux_only, windows_only
 
+DPAPI_AVAILABLE = (not hasattr(cfg.runtime, "SECRET_PREFIX")
+                   or cfg.runtime.dpapi_available())
+
 
 class Loading(DikteTest):
     def test_nothing_stored_yet(self):
@@ -130,6 +133,8 @@ class Secrets(DikteTest):
         self.write_config({"openai_api_key": "sk-written-by-hand"})
         self.assertEqual(cfg.Config()["openai_api_key"], "sk-written-by-hand")
 
+    @unittest.skipUnless(DPAPI_AVAILABLE,
+                         "this Windows login has no loaded DPAPI profile")
     def test_and_is_rewritten_the_way_this_platform_keeps_one(self):
         """Nobody has to migrate anything: the next save is the migration."""
         self.write_config({"openai_api_key": "sk-written-by-hand"})
@@ -141,6 +146,8 @@ class Secrets(DikteTest):
         self.assertEqual(cfg.Config()["openai_api_key"], "sk-written-by-hand")
 
     @windows_only
+    @unittest.skipUnless(DPAPI_AVAILABLE,
+                         "this Windows login has no loaded DPAPI profile")
     def test_on_windows_the_key_is_not_on_disk_in_plain_text(self):
         """The file's permissions are not the protection here, so the key is
         encrypted to this Windows account before it is written."""

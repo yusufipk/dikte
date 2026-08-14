@@ -68,16 +68,17 @@ class Overlay(QWidget):
         # is a request to a window manager that is not listening.
         if not IS_WINDOWS:
             flags |= Qt.WindowType.X11BypassWindowManagerHint
-        self.setWindowFlags(flags)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         # One that can be clicked away has to receive the click, which means it
         # also swallows one aimed at whatever is underneath it. The rest stay
-        # transparent to the mouse, as an indicator should be.
+        # transparent to input at the native window level. A QWidget attribute
+        # would only make Qt discard a click it had already taken.
         if dismissable:
             self.setCursor(Qt.CursorShape.PointingHandCursor)
         else:
-            self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+            flags |= Qt.WindowType.WindowTransparentForInput
+        self.setWindowFlags(flags)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.resize(MIN_WIDTH, HEIGHT)
 
@@ -198,6 +199,9 @@ class Overlay(QWidget):
         self.state = "hidden"
         self._concealed = True
         self.repaint()
+        # A mapped dismissable overlay must not leave an invisible dead zone.
+        if self.dismissable:
+            self.resize(1, 1)
 
     def _resize_to_content(self):
         if self.state in LIVE:

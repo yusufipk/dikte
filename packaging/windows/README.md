@@ -16,7 +16,7 @@ ones on this machine.
 
 - Python 3.11, 3.12 or 3.13 — the same versions the tests cover
 - `pip install PyQt6 PyAudioWPatch pyinstaller`
-- [Inno Setup 6](https://jrsoftware.org/isdl.php), for the installer
+- [Inno Setup 6 or 7](https://jrsoftware.org/isdl.php), for the installer
 
 ## Building
 

@@ -5,7 +5,7 @@
 #
 # Has to run on Windows: PyInstaller freezes the interpreter it is run by, and
 # there is no cross-compilation. Needs the environment Dikte runs in (PyQt6,
-# PyAudioWPatch, pyinstaller) and, for the installer, Inno Setup 6.
+# PyAudioWPatch, pyinstaller) and, for the installer, Inno Setup 6 or 7.
 
 [CmdletBinding()]
 param(
@@ -84,11 +84,14 @@ try {
     if (-not $SkipInstaller) {
         Step "installer"
         $iscc = @(
+            (Join-Path $root ".tools\Inno\ISCC.exe"),
+            "$env:ProgramFiles\Inno Setup 7\ISCC.exe",
+            "${env:ProgramFiles(x86)}\Inno Setup 7\ISCC.exe",
             "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
             "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
         ) | Where-Object { Test-Path $_ } | Select-Object -First 1
         if (-not $iscc) {
-            throw "Inno Setup 6 is not installed. Get it from https://jrsoftware.org/isdl.php, or pass -SkipInstaller."
+            throw "Inno Setup 6 or 7 is not installed. Get it from https://jrsoftware.org/isdl.php, or pass -SkipInstaller."
         }
         & $iscc "/DVersion=$Version" (Join-Path $here "dikte.iss")
         if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }

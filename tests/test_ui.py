@@ -354,6 +354,17 @@ class Overlay(DikteTest):
         self.assertTrue(flags & Qt.WindowType.WindowDoesNotAcceptFocus)
         self.assertTrue(flags & Qt.WindowType.WindowStaysOnTopHint)
 
+    def test_a_regular_indicator_is_transparent_to_native_input(self):
+        from PyQt6.QtCore import Qt
+        flags = self.overlay().windowFlags()
+        self.assertTrue(flags & Qt.WindowType.WindowTransparentForInput)
+
+    def test_a_dismissable_indicator_shrinks_when_concealed(self):
+        widget = self.overlay(dismissable=True)
+        widget.show_busy("Working")
+        widget._conceal()
+        self.assertEqual((widget.width(), widget.height()), (1, 1))
+
     def test_recording_then_working_then_done(self):
         widget = self.overlay()
         widget.show_recording()

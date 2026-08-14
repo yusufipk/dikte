@@ -186,6 +186,7 @@ class InstallProgram(Local):
     def setUp(self):
         super().setUp()
         self.patch_attr(ggml, "IS_WINDOWS", False)
+        self.patch_attr(ggml, "IS_MACOS", False)
         self.patch_attr(ggml, "EXE", "")
         # Built once, because the release listing has to publish its checksum
         # and a tarball is not the same bytes twice.
@@ -330,6 +331,17 @@ class InstallProgram(Local):
         """Asked for one, Linux is told so rather than handed the CPU build."""
         self.patch_attr(ggml, "_arch", lambda: "x64")
         self.assertEqual(ggml._wanted_assets(ggml.LLAMA, "cuda"), ())
+
+    def test_a_mac_does_not_take_an_ubuntu_whisper_archive(self):
+        self.patch_attr(ggml, "IS_MACOS", True)
+        self.patch_attr(ggml, "_arch", lambda: "arm64")
+        self.assertEqual(ggml._wanted_assets(ggml.WHISPER), ())
+
+    def test_a_mac_uses_the_native_llama_archive(self):
+        self.patch_attr(ggml, "IS_MACOS", True)
+        self.patch_attr(ggml, "_arch", lambda: "arm64")
+        self.assertEqual(ggml._wanted_assets(ggml.LLAMA),
+                         (r"bin-macos-arm64\.tar\.gz$",))
 
 
 def zipball(entries):

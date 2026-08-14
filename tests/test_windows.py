@@ -633,8 +633,20 @@ class Directories(unittest.TestCase):
         self.assertEqual(win_runtime.RECORDINGS_NAME, "Recordings")
         self.assertEqual(win_runtime.MEETINGS_NAME, "Meetings")
 
+    def test_a_packaged_app_can_find_programs_shipped_beside_it(self):
+        executable = str(win_runtime.data_dir() / "Dikte" / "dikte.exe")
+        with mock.patch.object(sys, "frozen", True, create=True), \
+                mock.patch.object(sys, "executable", executable), \
+                mock.patch.dict(os.environ, {"PATH": r"C:\Windows"}):
+            win_runtime._expose_bundled_programs()
+            first = os.environ["PATH"].split(os.pathsep)[0]
+        self.assertEqual(os.path.normcase(first),
+                         os.path.normcase(os.path.dirname(executable)))
+
 
 @windows_only
+@unittest.skipUnless(win_runtime and win_runtime.dpapi_available(),
+                     "this Windows login has no loaded DPAPI profile")
 class Secrets(unittest.TestCase):
     """DPAPI, which is what keeps an API key on a filesystem with no modes."""
 
