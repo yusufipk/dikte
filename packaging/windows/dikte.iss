@@ -169,7 +169,11 @@ begin
     RemoveFromPath(ExpandConstant('{app}'));
     // Asked rather than assumed, and answered no by default: what is in there
     // is somebody's dictation history and their API keys.
-    if MsgBox(CustomMessage('RemoveData'), mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+    // A silent uninstall must remain truly unattended. Preserve user data in
+    // that mode; deleting it always requires an explicit interactive choice.
+    if (not UninstallSilent) and
+       (MsgBox(CustomMessage('RemoveData'), mbConfirmation,
+               MB_YESNO or MB_DEFBUTTON2) = IDYES) then
       DeleteUserData();
   end;
 end;
