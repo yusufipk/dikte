@@ -1,12 +1,5 @@
 # Dikte
 
-> **Bu bir fork.** Dikte [Yusuf İpek'in](https://github.com/yusufipk/dikte), ve
-> güzel olan her yanı da ona ait. Burada eklenen kısım macOS tarafı: kurulum ve
-> uygulama paketi, ikon teması olmadığı için çizilmiş bir menü çubuğu ikonu,
-> Mac'e kimse yayınlamadığı için yerinde derlenen bir whisper.cpp, ve Mac'in
-> ihtiyaç duyduğu varsayılanlar. Amaç bunu üst projeye geri göndermek; hepsi
-> [macOS bölümünde](#kurulum) anlatılıyor.
-
 `Ctrl+Space`'e bas, konuş, tekrar bas. Ses varsayılan olarak bu makinede yazıya
 çevrilir, bir model transkripti temizler (ıı'lar, tekrarlar, eksik noktalama),
 sonuç panoya kopyalanır ve o an yazdığın pencereye yapıştırılır.
@@ -61,51 +54,32 @@ araçlarıyla çalışır:
 sudo apt install pulseaudio-utils xclip xdotool ffmpeg
 ```
 
-macOS'ta da aynı `./install.sh` çalışır, işi `install-mac.sh`'a devreder:
+macOS'ta da aynı `./install.sh` çalışır, işi `install-mac.sh`'a devreder;
+`~/Applications` içine bir `Dikte.app`, `dikte` komutunu ve bir LaunchAgent
+kurar:
 
 ```sh
-brew install pyqt ffmpeg cmake     # pyqt yeterince yeni bir Python'ı da getirir
+brew install pyqt ffmpeg   # pyqt Apple'ın 3.9'undan yeni bir Python'ı da getirir
 
 ./install.sh               # ya da:  ./install.sh "Ctrl+Option+Space" "Ctrl+Option+D"
 open -a Dikte
 ```
 
-Apple'ın kendi `python3`'ü 3.9 ve öyle kalacak, bu yüzden kurulum daha yenisini
-arar ve bulduğu yolu kurduğu her şeyin içine yazar; `python3` sonradan başka bir
-PATH'e göre yeniden çözülmesin diye.
+macOS **Mikrofon** ve **Erişilebilirlik** izinlerini uygulama paketinin kimliğine
+yazıyor, ikisini de ilk gerektiğinde soruyor. Varsayılan kısayol orada
+`Ctrl+Option+Space`, çünkü `Ctrl+Space` giriş kaynağını değiştirmeye ayrılmış; ve
+hiçbir şey için oturumu kapatman gerekmez, kombinasyonu Dikte çalışırken kendisi
+tutar. PyQt6 pip'ten değil brew'dan geliyor, Homebrew'un Python'u içine
+kurulmayı reddediyor; sanal ortam kullanacaksan
+`DIKTE_PYTHON=…/venv/bin/python ./install.sh`.
 
-PyQt6 pip'ten değil `brew install pyqt`'ten geliyor, çünkü Homebrew'un Python'u
-"externally managed" işaretli ve içine kurulmayı reddediyor. Diğer yol bir sanal
-ortam; kuruluma onu göstermek için `DIKTE_PYTHON=/yol/venv/bin/python
-./install.sh`.
-
-Kurduğu şeyler: `~/Applications` içinde bir `Dikte.app`, `dikte` komutu ve
-oturum açılışında başlatan bir LaunchAgent. Uygulama paketi süs değil: macOS
-mikrofon ve Erişilebilirlik izinlerini o kimliğe yazıyor, ve yeniden kurulum
-aynı uygulama sayılsın da iki izin baştan istenmesin diye ad-hoc imzalanıyor.
-Dikte orada bir menü çubuğu uygulaması, Dock'ta görünmez.
-
-macOS'un yalnızca klavye başındaki kişiden aldığı iki şey var, ikisini de ilk
-gerektiğinde sorar: ilk kayıt başlarken **Mikrofon**, ilk transkript
-yapıştırılırken **Erişilebilirlik**. İkisi de Sistem Ayarları → Gizlilik ve
-Güvenlik altında.
-
-Başka her yerde varsayılan `Ctrl+Space` ama burada değil: macOS onu giriş
-kaynağı değiştirmeye, `Cmd+Space`'i de Spotlight'a ayırmış; varsayılan
-`Ctrl+Option+Space`. Mac'te kısayol kaydı diye bir şey yok, Dikte kombinasyonu
-çalışırken kendisi ister ve kapanırken geri verir; bu yüzden KDE'nin aksine
-hiçbir şey için oturumu kapatıp açman gerekmez.
-
-Burada derlenmesi gereken tek şey sesi yazıya çevirme. whisper.cpp'nin macOS
-sürümü yok, Homebrew'un `whisper-cpp`'si de `WHISPER_BUILD_SERVER=OFF` ile
-derleniyor: `whisper-cli` kuruluyor, Dikte'nin konuştuğu sunucu değil. Ayarlar →
-API → İndir onun yerine derliyor: sürüm etiketinin sığ bir kopyası, cmake ve
-birkaç dakika, sonunda Metal derlenmiş bir `whisper-server`. Yukarıdaki brew
-satırındaki `cmake` sırf bunun için. Bulutta çevirirsen hiçbirine gerek yok.
-
-Toplantı için BlackHole ya da Loopback gerekiyor (`brew install blackhole-2ch`),
-çünkü macOS hoparlörden çıkanı kaydedilebilir bir şey olarak sunmuyor. Dikte
-için gerekmiyor.
+Orada elle derlenmesi gereken tek parça yerel transkripsiyon: whisper.cpp'nin
+macOS sürümü yok, Homebrew'unki de `WHISPER_BUILD_SERVER=OFF` ile derleniyor,
+yani `whisper-cli` kuruluyor, Dikte'nin konuştuğu sunucu değil. Kendin derle
+(`cmake -B build -DWHISPER_BUILD_SERVER=ON -DGGML_METAL=ON && cmake --build
+build -j`) ve yolunu Ayarlar → API'ye yaz, ya da buluta çevir. Toplantı için
+BlackHole veya Loopback gerekiyor (`brew install blackhole-2ch`); dikte için
+gerekmiyor.
 
 `install.sh` `dikte` komutunu, menü girdisini, oturum açılışında otomatik
 başlatmayı ve iki global kısayolu kurar; tuşları da iki argümanı. `./update.sh`
@@ -238,9 +212,6 @@ hotkey.py         KDE kısayol kurulumu, evdev dinleyici, Mac'te Carbon
 paste.py          wl-clipboard ve ydotool sarmalayıcıları, pbcopy ve CoreGraphics
 trayicon.py       tepsi simgeleri, ikon teması olmayan yerler için çizilmiş
 i18n.py           metin tablosu
-
-install.sh        Linux: bağımlılıklar, başlatıcılar, kısayollar
-install-mac.sh    macOS: aynısı, uygulama paketi ve LaunchAgent olarak
 ```
 
 Gösterge XWayland üzerinden çizilir; Wayland'da bir pencereyi belirli bir köşeye

@@ -120,9 +120,11 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 # executable sits inside Dikte.app, macOS reads the Info.plist above it, and
 # the permissions are Dikte's: its name, its icon, its row.
 #
-# CPython is a single static binary linked against system libraries only, so
-# the copy runs; what it loses is the tree it was found in, which is what
-# PYTHONHOME and PYTHONPATH below hand back.
+# The copy runs because the framework it links against is named by an absolute
+# path; what it loses is the tree it was found in, which is what PYTHONHOME and
+# PYTHONPATH below hand back. Both of those are what a `brew upgrade python`
+# moves out from under it, so the launcher checks before it starts: a bundle
+# that fails silently is a menu bar with nothing in it and no way to guess why.
 PY_REAL="$("$PY" -c 'import os, sys; print(os.path.realpath(getattr(sys, "_base_executable", sys.executable)))')"
 PY_HOME="$("$PY" -c 'import sys; print(sys.base_prefix)')"
 PY_SITE="$("$PY" -c 'import site; print(site.getsitepackages()[0])')"
@@ -139,6 +141,12 @@ cat > "$APP/Contents/MacOS/Dikte" <<EOF
 HERE=\$(cd "\$(dirname "\$0")" && pwd)
 export PYTHONHOME="$PY_HOME"
 export PYTHONPATH="$PY_SITE"
+# Started from the Finder there is no terminal to print to, so the one thing
+# that can go wrong on its own says so in a dialog.
+if [ ! -d "\$PYTHONHOME" ]; then
+  osascript -e 'display alert "Dikte" message "The Python this was installed against is gone, most likely after a brew upgrade. Run ./install.sh again."' >/dev/null 2>&1
+  exit 1
+fi
 exec "\$HERE/python3" "$DIR/dikte.py" --gui "\$@"
 EOF
 chmod +x "$APP/Contents/MacOS/Dikte"

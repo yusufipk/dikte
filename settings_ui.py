@@ -142,9 +142,6 @@ class LocalModelBox(QGroupBox):
     # qint64 rather than int, which is C++'s 32-bit one: a 2.3 GB model is more
     # than fits in it, and the count comes out the far side negative.
     _progress = pyqtSignal("qint64", "qint64")
-    # A step with no bytes to count: building whisper.cpp on a Mac, where the
-    # progress line would otherwise say "Downloading…" through a compile.
-    _stage = pyqtSignal(str)
     _finished = pyqtSignal(str, str)
     _installed = pyqtSignal(str, str)
 
@@ -195,7 +192,6 @@ class LocalModelBox(QGroupBox):
         self._listed.connect(self._on_listed)
         self._quants.connect(self._on_listed)
         self._progress.connect(self._on_progress)
-        self._stage.connect(self.program_label.setText)
         self._finished.connect(self._on_finished)
         self._installed.connect(self._on_installed)
 
@@ -361,8 +357,7 @@ class LocalModelBox(QGroupBox):
 
         def work():
             try:
-                ggml.install_program(self.program, on_progress=self._report,
-                                     on_status=self._stage.emit)
+                ggml.install_program(self.program, on_progress=self._report)
                 self._installed.emit("", "")
             except ggml.LocalError as exc:
                 self._installed.emit("", str(exc))

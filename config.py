@@ -4,7 +4,6 @@ import collections
 import hashlib
 import json
 import os
-import pathlib
 import sys
 
 import api

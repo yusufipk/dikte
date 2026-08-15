@@ -9,10 +9,7 @@ import contextlib
 import hashlib
 import io
 import os
-import pathlib
-import shutil
 import signal
-import subprocess
 import sys
 import tarfile
 import textwrap
@@ -223,17 +220,13 @@ class InstallProgram(Local):
         self.assertIn("this machine", str(caught.exception))
 
     def test_a_mac_does_not_install_an_ubuntu_archive_for_the_same_architecture(self):
-        """It builds instead, rather than running Ubuntu's arm64 binary."""
         self.patch_attr(sys, "platform", "darwin")
         self.patch_attr(ggml, "_arch", lambda: "arm64")
-        built = []
-        self.patch_attr(ggml, "_build_whisper",
-                        lambda tag, *_: built.append(tag) or "/built/whisper-server")
         listing = self.release("whisper-bin-ubuntu-arm64.tar.gz")
         with fake_urlopen(listing):
-            path = ggml.install_program(ggml.WHISPER)
-        self.assertEqual(path, "/built/whisper-server")
-        self.assertEqual(built, ["v1.9.1"])
+            with self.assertRaises(ggml.LocalError) as caught:
+                ggml.install_program(ggml.WHISPER)
+        self.assertIn("Build whisper-server yourself", str(caught.exception))
 
     def test_a_mac_uses_the_native_llama_archive_instead_of_ubuntu(self):
         self.patch_attr(sys, "platform", "darwin")
@@ -331,88 +324,6 @@ class InstallProgram(Local):
         self.patch_attr(ggml, "_arch", lambda: "x64")
         self.patch_attr(ggml, "_has_vulkan", lambda: False)
         self.assertEqual(ggml._wanted_assets(ggml.LLAMA), ("bin-ubuntu-x64.tar.gz",))
-
-
-# --- building whisper.cpp, which is the only way to have it on a Mac -------
-
-
-class BuildWhisper(Local):
-    """The build, without a compiler: what it runs, and what it does after.
-
-    Checked on every host rather than only on a Mac, the same way the macOS
-    paste and hotkey backends are: the point is that the steps and the
-    bookkeeping stay right, and none of that needs Metal to be true.
-    """
-
-    def setUp(self):
-        super().setUp()
-        self.patch_attr(sys, "platform", "darwin")
-        self.commands = []
-        self.patch_attr(shutil, "which", lambda name: f"/usr/bin/{name}")
-
-    def build(self, **kwargs):
-        def run(args, cwd=None, **_):
-            self.commands.append(list(args))
-            # The compiler step is the one that has to leave something behind.
-            if args[0] == "cmake" and "--build" in args:
-                out = pathlib.Path(cwd) / "build" / "bin"
-                out.mkdir(parents=True, exist_ok=True)
-                (out / "whisper-server").write_bytes(b"#!/bin/sh\nexit 0\n")
-            return subprocess.CompletedProcess(args, 0, "", "")
-
-        self.patch_attr(subprocess, "run", run)
-        return ggml._build_whisper("v1.9.2", **kwargs)
-
-    def test_the_binary_is_kept_and_the_source_tree_is_not(self):
-        path = self.build()
-        self.assertTrue(os.path.isfile(path))
-        self.assertTrue(os.access(path, os.X_OK))
-        self.assertFalse(self.path("data", "bin", "whisper", "src-v1.9.2").exists())
-
-    def test_it_is_remembered_the_same_way_a_download_is(self):
-        path = self.build()
-        self.assertEqual(ggml.installed_program(ggml.WHISPER), path)
-        self.assertEqual(ggml.installed_version(ggml.WHISPER), "v1.9.2")
-
-    def test_the_tag_asked_for_is_the_tag_cloned(self):
-        self.build()
-        clone = next(c for c in self.commands if c[0] == "git")
-        self.assertIn("--branch", clone)
-        self.assertEqual(clone[clone.index("--branch") + 1], "v1.9.2")
-
-    def test_the_server_and_metal_are_both_turned_on(self):
-        # Without the server there is nothing for Dikte to talk to, and without
-        # the embedded shader library the binary stops working once it is moved
-        # out of the build tree.
-        self.build()
-        configure = next(c for c in self.commands
-                         if c[0] == "cmake" and "--build" not in c)
-        for flag in ("-DWHISPER_BUILD_SERVER=ON", "-DGGML_METAL=ON",
-                     "-DGGML_METAL_EMBED_LIBRARY=ON"):
-            self.assertIn(flag, configure)
-
-    def test_stopping_between_steps_installs_nothing(self):
-        path = self.build(should_stop=lambda: True)
-        self.assertEqual(path, "")
-        self.assertEqual(ggml.installed_program(ggml.WHISPER), "")
-
-    def test_a_missing_compiler_is_a_sentence_about_installing_one(self):
-        self.patch_attr(shutil, "which",
-                        lambda name: "" if name == "cmake" else f"/usr/bin/{name}")
-        with self.assertRaises(ggml.LocalError) as caught:
-            ggml._build_whisper("v1.9.2")
-        self.assertIn("brew install cmake", str(caught.exception))
-
-    def test_a_step_that_fails_says_what_the_compiler_said(self):
-        def run(args, cwd=None, **_):
-            if "--build" in args:
-                return subprocess.CompletedProcess(args, 1, "", "ld: symbol not found")
-            return subprocess.CompletedProcess(args, 0, "", "")
-
-        self.patch_attr(subprocess, "run", run)
-        with self.assertRaises(ggml.LocalError) as caught:
-            ggml._build_whisper("v1.9.2")
-        self.assertIn("symbol not found", str(caught.exception))
 
 
 class WhichCopyRuns(Local):

@@ -133,20 +133,12 @@ TR = {
     "Could not connect: {reason}": "Bağlantı kurulamadı: {reason}",
     "Could not parse the response: {error}": "Yanıt çözümlenemedi: {error}",
 
-    # --- building whisper.cpp on a Mac ----------------------------------
-    "whisper.cpp has no macOS build to download, so it is built here, and "
-    "{tool} is missing. Install it with: {hint}":
-        "whisper.cpp'nin indirilebilir bir macOS sürümü yok, bu yüzden burada "
-        "derleniyor ve {tool} eksik. Şununla kur: {hint}",
-    "Fetching whisper.cpp {tag}…": "whisper.cpp {tag} indiriliyor…",
-    "Configuring the build…": "Derleme hazırlanıyor…",
-    "Compiling whisper.cpp. This takes a few minutes.":
-        "whisper.cpp derleniyor. Bu birkaç dakika sürer.",
-    "the compiler": "derleyici",
-    "Could not run {step}: {error}": "{step} çalıştırılamadı: {error}",
-    "{step} failed:\n{error}": "{step} başarısız:\n{error}",
-    "{step} took longer than {minutes} minutes and was stopped.":
-        "{step} {minutes} dakikadan uzun sürdü ve durduruldu.",
+    "whisper.cpp has no macOS build, and Homebrew's leaves out the server. "
+    "Build whisper-server yourself and give its path here, or transcribe in "
+    "the cloud. See the README.":
+        "whisper.cpp'nin macOS sürümü yok, Homebrew'unki de sunucuyu dışarıda "
+        "bırakıyor. whisper-server'ı kendin derleyip yolunu buraya yaz, ya da "
+        "buluta çevir. README'ye bak.",
 
     # --- settings: tabs and general ------------------------------------
     "Dikte Settings": "Dikte Ayarları",
