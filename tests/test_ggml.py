@@ -185,6 +185,10 @@ class InstallProgram(Local):
 
     def setUp(self):
         super().setUp()
+        # These tests describe the Linux release table even when the suite is
+        # running on a Mac.  _wanted_assets also honours sys.platform so the
+        # native macOS tests can exercise that path explicitly below.
+        self.patch_attr(sys, "platform", "linux")
         self.patch_attr(ggml, "IS_WINDOWS", False)
         self.patch_attr(ggml, "IS_MACOS", False)
         self.patch_attr(ggml, "EXE", "")

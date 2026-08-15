@@ -36,6 +36,18 @@ NAME = WINDOWS if IS_WINDOWS else MACOS if IS_MACOS else LINUX
 
 _loaded = {}
 
+# The macOS implementations still live in the original contract modules.  The
+# Windows port moved Linux and Windows behind dedicated adapter packages, but
+# routing macOS through a package that only contains ``runtime`` made calls
+# such as adapter("hotkeys") try to import modules that do not exist.  Keep the
+# established native implementations as the macOS adapters until they are
+# split out in their own right.
+_MACOS_LEGACY = {
+    "audio": "audio",
+    "clipboard": "paste",
+    "hotkeys": "hotkey",
+}
+
 
 def adapter(part, name=""):
     """The module implementing `part`, on this platform unless another is named.
@@ -51,7 +63,10 @@ def adapter(part, name=""):
     name = name or NAME
     key = (name, part)
     if key not in _loaded:
-        _loaded[key] = importlib.import_module(f"platforms.{name}.{part}")
+        module = (_MACOS_LEGACY.get(part)
+                  if name == MACOS else None)
+        _loaded[key] = importlib.import_module(
+            module or f"platforms.{name}.{part}")
     return _loaded[key]
 
 

@@ -61,9 +61,11 @@ class Contract(unittest.TestCase):
                     self.assertTrue(hasattr(module, attribute),
                                     f"{module.__name__} has no {attribute}")
 
-    def test_the_platform_is_one_of_the_two(self):
-        self.assertIn(platforms.NAME, (platforms.LINUX, platforms.WINDOWS))
+    def test_the_platform_is_supported(self):
+        self.assertIn(platforms.NAME,
+                      (platforms.LINUX, platforms.WINDOWS, platforms.MACOS))
         self.assertEqual(platforms.IS_WINDOWS, platforms.NAME == platforms.WINDOWS)
+        self.assertEqual(platforms.IS_MACOS, platforms.NAME == platforms.MACOS)
 
     def test_an_adapter_is_imported_once_and_remembered(self):
         self.assertIs(platforms.adapter("runtime"), platforms.adapter("runtime"))
