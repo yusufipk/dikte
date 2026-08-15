@@ -14,6 +14,16 @@ import keycapture
 _app = QApplication.instance() or QApplication([])
 
 
+class Launching(unittest.TestCase):
+    def test_opening_the_icon_again_brings_settings_back(self):
+        with mock.patch.object(dikte, "QApplication"), \
+                mock.patch.object(dikte.runtime, "single_instance",
+                                  return_value=None), \
+                mock.patch.object(dikte.ipc, "send") as send:
+            self.assertEqual(dikte.run_app([]), 0)
+        send.assert_called_once_with("settings")
+
+
 class Catcher(keycapture.ShortcutCatcher):
     """The real keyboard grab is replaced; events are handed in directly."""
 

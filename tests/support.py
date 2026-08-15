@@ -24,6 +24,7 @@ from unittest import mock
 
 import assistant
 import config as cfg
+import ggml
 import i18n
 import platforms
 
@@ -98,6 +99,13 @@ class DikteTest(unittest.TestCase):
         # Resolved from cfg.DATA_DIR when assistant was imported, so it needs
         # moving on its own.
         self.patch_attr(assistant, "SESSION_FILE", data_dir / "assistant.json")
+        # ggml resolves these paths when it is imported. Keep model discovery,
+        # downloaded programs and server logs inside the same throwaway home;
+        # otherwise a developer downloading a model while the suite runs can
+        # change what a settings test sees.
+        self.patch_attr(ggml, "DATA_DIR", data_dir)
+        self.patch_attr(ggml, "BIN_DIR", data_dir / "bin")
+        self.patch_attr(ggml, "MODELS_DIR", data_dir / "models")
 
         i18n.set_language("en")
         self.addCleanup(i18n.set_language, "en")

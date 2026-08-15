@@ -88,8 +88,8 @@ Name: "addtopath"; Description: "{cm:PathTask}"; Flags: unchecked
 Source: "{#SourceDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#TrayExe}"
-Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#TrayExe}"; Tasks: desktopicon
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\{#TrayExe}"; Parameters: "settings"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#TrayExe}"; Parameters: "settings"; Tasks: desktopicon
 
 [Registry]
 ; The Run key is how Windows starts a program when its user signs in. Under
@@ -102,7 +102,7 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; \
     Tasks: not autostart
 
 [Run]
-Filename: "{app}\{#TrayExe}"; Description: "{cm:LaunchApp}"; \
+Filename: "{app}\{#TrayExe}"; Parameters: "settings"; Description: "{cm:LaunchApp}"; \
     Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]

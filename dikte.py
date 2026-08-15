@@ -1043,10 +1043,10 @@ def run_app(args):
     # tray icon.
     instance = runtime.single_instance(SERVER_NAME)
     if instance is None:
-        if command:
-            ipc.send(command)
-        else:
-            print("dikte: already running")
+        # Launching the app icon a second time should bring back the only
+        # visible window, not appear to do nothing while the tray instance is
+        # already alive. Explicit commands keep their existing meaning.
+        ipc.send(command or "settings")
         return 0
     # Before Dikte is built, because building it is what may start a server, and
     # a signal arriving in the middle of that would otherwise take the default
