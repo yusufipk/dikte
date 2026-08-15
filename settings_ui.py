@@ -23,6 +23,7 @@ import ggml
 import hotkey
 import ipc
 import meeting
+import paste
 from filetranscribe import FileTranscriber
 from i18n import t
 from keycapture import ShortcutCatcher
@@ -110,7 +111,6 @@ REASONING_LEVELS = [
     ("Low", "low"), ("Medium", "medium"), ("High", "high"),
     ("Very high", "xhigh"), ("Maximum", "max"),
 ]
-PASTE_SHORTCUTS = ["ctrl+v", "ctrl+shift+v", "shift+insert"]
 # Offered for every global shortcut, which keeps them one kind of field rather
 # than four. The boxes stay editable: this is a shortlist of combinations that
 # are usually free, not the set of ones that work.
@@ -605,7 +605,10 @@ class SettingsWindow(QDialog):
         form.addRow("", self.auto_paste)
 
         self.paste_shortcut = QComboBox()
-        self.paste_shortcut.addItems(PASTE_SHORTCUTS)
+        # Offer this desktop's usual combinations while preserving a custom
+        # one already stored in the configuration.
+        self.paste_shortcut.setEditable(True)
+        self.paste_shortcut.addItems(paste.desktop().shortcuts)
         self.paste_shortcut.setToolTip(
             t("Terminals usually want ctrl+shift+v. Change this if pasting does nothing.")
         )
