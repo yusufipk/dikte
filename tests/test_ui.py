@@ -9,7 +9,7 @@ next time anybody presses Save. That is the failure this catches.
 import unittest
 from unittest import mock
 
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtWidgets import QApplication, QMessageBox, QScrollArea
 
 import cleanup
 import config as cfg
@@ -449,8 +449,14 @@ class LocalModels(DikteTest):
     def test_it_opens_where_the_missing_model_is_fixed(self):
         # Nothing can transcribe on a fresh install, which is why this window
         # was opened at all.
-        window = self.window(cfg.Config())
+        conf = cfg.Config()
+        with mock.patch.object(conf, "transcribe_ready", return_value=False):
+            window = self.window(conf)
         self.assertEqual(window.tabs.currentIndex(), window.api_tab_index)
+
+    def test_the_model_page_scrolls_without_pushing_save_off_screen(self):
+        window = self.window(cfg.Config())
+        self.assertIsInstance(window.tabs.widget(window.api_tab_index), QScrollArea)
 
     def test_it_opens_where_it_was_left_when_everything_works(self):
         conf = self.config(transcribe_provider="openai", openai_api_key="sk-test")

@@ -822,7 +822,16 @@ class SettingsWindow(QDialog):
 
         outer.addWidget(orr)
         outer.addStretch(1)
-        return page
+
+        # Local cleanup adds another program, model picker and its options to
+        # an already tall page.  On a short display that minimum height used to
+        # push the dialog's Save button below the screen with no way to reach
+        # it.  Scroll only this tab so the dialog footer stays put.
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        area.setFrameShape(QScrollArea.Shape.NoFrame)
+        area.setWidget(page)
+        return area
 
     def _prompt_tab(self):
         page = QWidget()

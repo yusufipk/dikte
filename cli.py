@@ -817,14 +817,39 @@ def cmd_doctor(opts):
         f"{'✓' if devices['outputs'] else '·'} speaker output "
         f"{devices['outputs']} recordable, for meetings",
     ]
+    if target.provider == "local":
+        transcription_line = (
+            f"{'✓' if conf.local_whisper_ready() else '✗'} local whisper.cpp, "
+            f"transcribing on {target.model}"
+        )
+    else:
+        transcription_line = (
+            f"{'✓' if target.api_key else '✗'} {target.service} key, "
+            f"transcribing on {target.model}"
+        )
+
+    if not conf["cleanup_enabled"]:
+        cleanup_line = "· transcript cleanup disabled"
+    elif cleaner == "openrouter":
+        cleanup_line = (
+            f"{'✓' if conf.openrouter_key() else '✗'} OpenRouter key, "
+            f"cleaning up on {conf['cleanup_model']}"
+        )
+    elif cleaner == "local":
+        cleanup_line = (
+            f"{'✓' if conf.local_llm_ready() else '✗'} local llama.cpp, "
+            f"cleaning up on {cleanup.model(conf)}"
+        )
+    else:
+        executable = cleanup.executable(cleaner)
+        cleanup_line = (
+            f"{'✓' if programs.get(executable) else '✗'} {executable}, "
+            f"cleaning up on {cleanup.model(conf)}"
+        )
+
     lines += [
-        f"{'✓' if target.api_key else '✗'} {target.service} key, transcribing on "
-        f"{target.model}",
-        # Cleanup on a CLI needs no key, so what is checked is the program.
-        (f"{'✓' if conf.openrouter_key() else '✗'} OpenRouter key, cleaning up on "
-         f"{conf['cleanup_model']}") if cleaner == "openrouter" else
-        (f"{'✓' if programs[cleanup.executable(cleaner)] else '✗'} "
-         f"{cleanup.executable(cleaner)}, cleaning up on {cleanup.model(conf)}"),
+        transcription_line,
+        cleanup_line,
         f"{'✓' if checks['running'] else '·'} application "
         + ("running" if checks["running"] else "not running"),
     ]

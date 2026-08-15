@@ -393,6 +393,18 @@ class Doctor(DikteTest):
                       self.run_doctor(as_json=False, cleanup_provider="codex",
                                       cleanup_codex_model="gpt-5.4"))
 
+    def test_disabled_local_cleanup_needs_no_external_program(self):
+        text = self.run_doctor(as_json=False, cleanup_enabled=False,
+                               cleanup_provider="local")
+        self.assertIn("transcript cleanup disabled", text)
+
+    def test_local_cleanup_reports_its_downloaded_server(self):
+        with mock.patch.object(cfg.Config, "local_llm_ready", return_value=True):
+            text = self.run_doctor(as_json=False, cleanup_enabled=True,
+                                   cleanup_provider="local",
+                                   local_llm_model="gemma.gguf")
+        self.assertIn("local llama.cpp, cleaning up on gemma.gguf", text)
+
 
 class Finding(DikteTest):
     def test_no_history_at_all(self):

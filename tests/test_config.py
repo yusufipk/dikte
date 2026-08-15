@@ -563,6 +563,7 @@ class LocalCleanup(DikteTest):
 class ReadyToRun(DikteTest):
     def setUp(self):
         super().setUp()
+        self.patch_attr(ggml, "BIN_DIR", self.path("bin"))
         self.patch_attr(ggml, "MODELS_DIR", self.path("models"))
 
     def install(self, name):
