@@ -366,6 +366,8 @@ class WindowsAssets(Local):
         self.patch_attr(ggml, "IS_WINDOWS", True)
         self.patch_attr(ggml, "EXE", ".exe")
         self.patch_attr(ggml, "_arch", lambda: "x64")
+        self.patch_attr(ggml.runtime, "cuda_driver_version", lambda: None)
+        self.patch_attr(ggml, "_has_vulkan", lambda: False)
         self.archive = zipball({
             "Release/whisper-server.exe": b"MZ not really",
             "Release/whisper.dll": b"nor this",
@@ -395,11 +397,24 @@ class WindowsAssets(Local):
     ]
 
     def test_the_cpu_build_is_what_nobody_asking_gets(self):
-        """It runs on every machine, and its failures are not about drivers."""
+        """Auto falls back to the build that runs without a graphics driver."""
         self.assertEqual(self.matched(ggml.WHISPER, self.WHISPER_RELEASE),
                          ["whisper-bin-x64.zip"])
         self.assertEqual(self.matched(ggml.LLAMA, self.LLAMA_RELEASE),
                          ["llama-b1-bin-win-cpu-x64.zip"])
+
+    def test_auto_prefers_cuda_when_an_nvidia_driver_is_available(self):
+        with mock.patch.object(ggml.runtime, "cuda_driver_version",
+                               return_value=(12, 4)):
+            patterns = ggml._wanted_assets(ggml.WHISPER, "auto")
+        self.assertIn("cublas", patterns[0])
+        self.assertEqual(patterns[-1], r"^whisper-bin-x64\.zip$")
+
+    def test_auto_prefers_vulkan_for_llama_without_nvidia(self):
+        with mock.patch.object(ggml, "_has_vulkan", return_value=True):
+            patterns = ggml._wanted_assets(ggml.LLAMA, "auto")
+        self.assertIn("vulkan", patterns[0])
+        self.assertIn("cpu", patterns[-1])
 
     def test_the_blas_and_cublas_builds_are_not_mistaken_for_the_plain_one(self):
         """All three end in bin-x64.zip and are three different downloads."""

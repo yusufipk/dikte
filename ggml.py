@@ -336,10 +336,19 @@ def _windows_assets(program, backend, arch):
             # graphics card that is simply slow.
             "vulkan": (),
         }
-    # Auto is the CPU build. It is the one that runs on every machine, and the
-    # one whose failure modes are not "which driver is installed"; a card is
-    # something to opt into, once, in the settings.
-    return table["cpu"] if backend == "auto" else table[backend]
+    if backend != "auto":
+        return table[backend]
+
+    # "Use the graphics card" cannot make a CPU-only archive grow a GPU
+    # backend. Prefer a build this machine can actually accelerate, while
+    # keeping CPU last as the safe fallback when a release has no compatible
+    # CUDA asset. Vulkan is the fallback for AMD/Intel on programs that publish
+    # it; whisper.cpp currently does not publish one for Windows.
+    if runtime.cuda_driver_version() is not None:
+        return table["cuda"] + table["cpu"]
+    if table["vulkan"] and _has_vulkan():
+        return table["vulkan"] + table["cpu"]
+    return table["cpu"]
 
 
 def backend_choices(program):
