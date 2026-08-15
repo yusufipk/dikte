@@ -54,10 +54,32 @@ araçlarıyla çalışır:
 sudo apt install pulseaudio-utils xclip xdotool ffmpeg
 ```
 
-macOS'ta `install.sh`'ın kuracağı bir kısayol kaydı yok, tuşları yakalayan
-dinleyici orada mekanizmanın kendisi, dolayısıyla kurulacak bir şey de yok:
-`brew install ffmpeg`, `pip install PyQt6`, sonra `python dikte.py`. Toplantı
-için BlackHole ya da Loopback gerekiyor, hoparlörden çıkanı kimse vermiyor.
+macOS'ta da aynı `./install.sh` çalışır, işi `install-mac.sh`'a devreder;
+`~/Applications` içine bir `Dikte.app`, `dikte` komutunu ve bir LaunchAgent
+kurar:
+
+```sh
+brew install pyqt ffmpeg   # pyqt Apple'ın 3.9'undan yeni bir Python'ı da getirir
+
+./install.sh               # ya da:  ./install.sh "Ctrl+Option+Space" "Ctrl+Option+D"
+open -a Dikte
+```
+
+macOS **Mikrofon** ve **Erişilebilirlik** izinlerini uygulama paketinin kimliğine
+yazıyor, ikisini de ilk gerektiğinde soruyor. Varsayılan kısayol orada
+`Ctrl+Option+Space`, çünkü `Ctrl+Space` giriş kaynağını değiştirmeye ayrılmış; ve
+hiçbir şey için oturumu kapatman gerekmez, kombinasyonu Dikte çalışırken kendisi
+tutar. PyQt6 pip'ten değil brew'dan geliyor, Homebrew'un Python'u içine
+kurulmayı reddediyor; sanal ortam kullanacaksan
+`DIKTE_PYTHON=…/venv/bin/python ./install.sh`.
+
+Orada elle derlenmesi gereken tek parça yerel transkripsiyon: whisper.cpp'nin
+macOS sürümü yok, Homebrew'unki de `WHISPER_BUILD_SERVER=OFF` ile derleniyor,
+yani `whisper-cli` kuruluyor, Dikte'nin konuştuğu sunucu değil. Kendin derle
+(`cmake -B build -DWHISPER_BUILD_SERVER=ON -DGGML_METAL=ON && cmake --build
+build -j`) ve yolunu Ayarlar → API'ye yaz, ya da buluta çevir. Toplantı için
+BlackHole veya Loopback gerekiyor (`brew install blackhole-2ch`); dikte için
+gerekmiyor.
 
 ### Windows
 
@@ -201,8 +223,9 @@ vad.py            kayıtta gerçekten konuşma var mı kararı
 filetranscribe.py dosyadan transkript: ffmpeg, parçalama, zaman damgaları
 overlay.py        köşedeki gösterge
 settings_ui.py    ayarlar penceresi
-hotkey.py         KDE kısayol kurulumu ve evdev dinleyici
-paste.py          wl-clipboard ve ydotool sarmalayıcıları
+hotkey.py         KDE kısayol kurulumu, evdev dinleyici, Mac'te Carbon
+paste.py          wl-clipboard ve ydotool sarmalayıcıları, pbcopy ve CoreGraphics
+trayicon.py       tepsi simgeleri, ikon teması olmayan yerler için çizilmiş
 i18n.py           metin tablosu
 ```
 

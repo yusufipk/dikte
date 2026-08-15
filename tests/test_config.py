@@ -14,6 +14,7 @@ from unittest import mock
 import api
 import cleanup
 import config as cfg
+import paste
 import ggml
 import i18n
 from tests.support import DikteTest, linux_only, windows_only
@@ -532,6 +533,10 @@ class Defaults(unittest.TestCase):
                 with self.subTest(prompt=f"{name}_{suffix}"):
                     self.assertTrue(getattr(cfg, f"{name}_{suffix}").strip())
 
+    def test_the_paste_key_is_the_one_this_desktop_pastes_with(self):
+        """cmd+v on a Mac, and it must be one paste.py can actually press."""
+        self.assertEqual(cfg.DEFAULTS["paste_shortcut"],
+                         paste.desktop().shortcuts[0])
 
 if __name__ == "__main__":
     unittest.main()

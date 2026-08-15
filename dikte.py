@@ -8,6 +8,8 @@ command line says "there is no instance to talk to, so be one".
 """
 
 import contextlib
+import ctypes
+import ctypes.util
 import json
 import os
 import signal
@@ -35,6 +37,7 @@ import i18n  # noqa: E402
 import icons  # noqa: E402
 import ipc  # noqa: E402
 import meeting  # noqa: E402
+import trayicon  # noqa: E402
 from i18n import t  # noqa: E402
 from meeting import MeetingPipeline  # noqa: E402
 from overlay import Overlay  # noqa: E402
@@ -219,10 +222,13 @@ class Dikte:
             self._toggle()
 
     def _set_icon(self, name):
-        # The desktop's own icon where there is one, so that a Linux tray keeps
-        # looking like the rest of the tray it sits in. Windows has no icon
-        # theme to ask, and icons.py draws the same three.
+        # The theme first, so a Linux desktop keeps its own icons, then the ones
+        # drawn in trayicon.py. macOS has no theme at all and would otherwise be
+        # handed a null icon, which in a menu bar is an item you cannot see.
+        # icons.py remains the final fallback for Windows.
         icon = QIcon.fromTheme(name)
+        if icon.isNull():
+            icon = trayicon.icon(name)
         if icon.isNull():
             icon = QIcon.fromTheme("audio-input-microphone")
         if icon.isNull():
@@ -480,6 +486,12 @@ class Dikte:
             "agent": assistant.display_name(self.conf),
             "provider": assistant.provider(self.conf),
             "listener": self.evdev.running,
+            # Asked here rather than by the command line, because on macOS
+            # there is no registry to read: a combination is held by this
+            # process and by nothing else, so this is the only process that
+            # can say whether it is.
+            "shortcuts": {name: hotkey.shortcut_status(spec.desktop_id)
+                          for name, spec in hotkey.SHORTCUTS.items()},
         }
 
     def reload_settings(self):
@@ -1025,6 +1037,51 @@ def _listen(server, attempts=10, delay=0.1):
     return False
 
 
+def _stay_out_of_the_dock():
+    """Ask macOS to treat this as a menu bar application, not a windowed one.
+
+    LSUIElement in the bundle says the same thing, but it is read for the
+    process LaunchServices started, and that is the launcher script rather than
+    the Python it runs: the interpreter is a child, and the child inherits the
+    registration without inheriting the policy. Said here it holds however Dikte
+    was started, including straight from a terminal.
+
+    Accessory rather than Prohibited: a prohibited application cannot put
+    anything in the menu bar, which is the whole interface.
+    """
+    if sys.platform != "darwin":
+        return
+    NS_ACCESSORY = 1               # NSApplicationActivationPolicyAccessory
+    try:
+        objc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("objc"))
+        objc.objc_getClass.restype = ctypes.c_void_p
+        objc.objc_getClass.argtypes = [ctypes.c_char_p]
+        objc.sel_registerName.restype = ctypes.c_void_p
+        objc.sel_registerName.argtypes = [ctypes.c_char_p]
+        # objc_msgSend is a trampoline with no signature of its own, and on
+        # arm64 the arguments have to be in the registers the real method
+        # expects, so each call gets a prototype of its own. Built from the
+        # address: handing CFUNCTYPE the imported function object would make a
+        # callback into it rather than a call through it, and the crash lands
+        # inside the Objective-C runtime with nothing to read.
+        send = ctypes.cast(objc.objc_msgSend, ctypes.c_void_p).value
+        shared = ctypes.CFUNCTYPE(
+            ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p,
+        )(send)
+        policy = ctypes.CFUNCTYPE(
+            ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_long,
+        )(send)
+
+        application = shared(objc.objc_getClass(b"NSApplication"),
+                             objc.sel_registerName(b"sharedApplication"))
+        if application:
+            policy(application, objc.sel_registerName(b"setActivationPolicy:"),
+                   NS_ACCESSORY)
+    except (OSError, AttributeError, TypeError):
+        # A Dock icon is a blemish, not a failure: everything still works.
+        pass
+
+
 def run_app(args):
     command = args[0] if args else ""
 
@@ -1033,8 +1090,11 @@ def run_app(args):
     app.setDesktopFileName("dikte")
     app.setQuitOnLastWindowClosed(False)
     window_icon = QIcon.fromTheme("audio-input-microphone")
+    if window_icon.isNull():
+        window_icon = trayicon.icon("audio-input-microphone")
     app.setWindowIcon(window_icon if not window_icon.isNull()
                       else icons.tray_icon("audio-input-microphone"))
+    _stay_out_of_the_dock()
 
     # Whether this is the only Dikte running. On Linux the socket settles it
     # and this always succeeds; on Windows two servers can hold the same pipe

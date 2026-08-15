@@ -55,11 +55,32 @@ tools instead:
 sudo apt install pulseaudio-utils xclip xdotool ffmpeg
 ```
 
-macOS has no shortcut registry for `install.sh` to install into, so the listener
-that catches the keys is the mechanism there and there is nothing to run:
-`brew install ffmpeg`, `pip install PyQt6`, then `python dikte.py`. A meeting
-needs BlackHole or Loopback, because nothing else offers what the speakers are
-playing.
+On macOS the same `./install.sh` runs and hands over to `install-mac.sh`, which
+puts down a `Dikte.app` in `~/Applications`, the `dikte` command and a
+LaunchAgent:
+
+```sh
+brew install pyqt ffmpeg   # pyqt brings a Python newer than Apple's 3.9 with it
+
+./install.sh               # or:  ./install.sh "Ctrl+Option+Space" "Ctrl+Option+D"
+open -a Dikte
+```
+
+The bundle is what macOS files the **Microphone** and **Accessibility**
+permissions against, and it asks for each the first time it needs one. The
+default there is `Ctrl+Option+Space`, since macOS keeps `Ctrl+Space` for the
+input-source switch, and nothing needs a logout: Dikte holds the combination
+itself while it runs. PyQt6 comes from brew rather than pip because Homebrew's
+Python refuses to be installed into, and `DIKTE_PYTHON=…/venv/bin/python
+./install.sh` points the installer at a virtualenv instead.
+
+Local speech to text is the one piece that has to be built by hand there:
+whisper.cpp publishes no macOS binary and Homebrew's is configured with
+`WHISPER_BUILD_SERVER=OFF`, so it installs `whisper-cli` and not the server
+Dikte talks to. Build it (`cmake -B build -DWHISPER_BUILD_SERVER=ON
+-DGGML_METAL=ON && cmake --build build -j`) and give Settings → API the path, or
+transcribe in the cloud. A meeting needs BlackHole or Loopback
+(`brew install blackhole-2ch`); dictation does not.
 
 ### Windows
 
@@ -203,8 +224,9 @@ vad.py            deciding whether a recording holds speech at all
 filetranscribe.py file transcription: ffmpeg, chunking, timestamps
 overlay.py        the corner indicator
 settings_ui.py    settings window
-hotkey.py         KDE shortcut installation and the evdev listener
-paste.py          wl-clipboard and ydotool wrappers
+hotkey.py         KDE shortcut installation, the evdev listener, Carbon on a Mac
+paste.py          wl-clipboard and ydotool wrappers, pbcopy and CoreGraphics
+trayicon.py       the tray icons, drawn where there is no icon theme
 i18n.py           the string table
 ```
 

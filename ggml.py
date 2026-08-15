@@ -37,6 +37,7 @@ import re
 import shutil
 import socket
 import subprocess
+import sys
 import tarfile
 import threading
 import time
@@ -290,7 +291,7 @@ def _wanted_assets(program, backend="auto"):
     backend = backend if backend in BACKENDS else "auto"
     if IS_WINDOWS:
         return _windows_assets(program, backend, arch)
-    if IS_MACOS:
+    if IS_MACOS or sys.platform == "darwin":
         # llama.cpp publishes a native Metal-enabled macOS archive. whisper.cpp
         # publishes no runnable macOS server archive; never mistake Ubuntu's
         # arm64 build for a native one.
@@ -575,10 +576,17 @@ def install_program(program, tag="", on_progress=None, should_stop=None,
         if item:
             break
     if item is None:
-        if IS_MACOS and program is WHISPER:
+        # Nothing to download and nothing to install for you: whisper.cpp
+        # publishes no macOS binary, and Homebrew's whisper-cpp is configured
+        # with WHISPER_BUILD_SERVER=OFF, so it is whisper-cli that lands and not
+        # the server Dikte talks to. Building it is a cmake line, and the
+        # binary is picked up from the PATH or from the box above, the same way
+        # a distribution's own build is on Linux.
+        if sys.platform == "darwin" and program is WHISPER:
             raise LocalError(t(
-                "whisper.cpp publishes no macOS build. Install it with: "
-                "brew install whisper-cpp"
+                "whisper.cpp has no macOS build, and Homebrew's leaves out the "
+                "server. Build whisper-server yourself and give its path here, "
+                "or transcribe in the cloud. See the README."
             ))
         raise LocalError(_no_build(program, tag, backend, assets))
 

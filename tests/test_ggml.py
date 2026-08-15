@@ -228,6 +228,23 @@ class InstallProgram(Local):
                 ggml.install_program(ggml.WHISPER)
         self.assertIn("this machine", str(caught.exception))
 
+    def test_a_mac_does_not_install_an_ubuntu_archive_for_the_same_architecture(self):
+        self.patch_attr(sys, "platform", "darwin")
+        self.patch_attr(ggml, "_arch", lambda: "arm64")
+        listing = self.release("whisper-bin-ubuntu-arm64.tar.gz")
+        with fake_urlopen(listing):
+            with self.assertRaises(ggml.LocalError) as caught:
+                ggml.install_program(ggml.WHISPER)
+        self.assertIn("Build whisper-server yourself", str(caught.exception))
+
+    def test_a_mac_uses_the_native_llama_archive_instead_of_ubuntu(self):
+        self.patch_attr(sys, "platform", "darwin")
+        self.patch_attr(ggml, "_arch", lambda: "arm64")
+        self.assertEqual(
+            ggml._wanted_assets(ggml.LLAMA),
+            (r"bin-macos-arm64\.tar\.gz$",),
+        )
+
     def test_what_was_installed_is_remembered(self):
         path, _ = self.install("whisper-bin-ubuntu-x64.tar.gz")
         self.assertEqual(ggml.installed_program(ggml.WHISPER), path)

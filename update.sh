@@ -3,8 +3,21 @@
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PY="$(command -v python3 || true)"
 USER_NAME="$(id -un)"
+
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  # Apple's python3 is 3.9 and will stay 3.9, so the one on PATH is the wrong
+  # question here. install-mac.sh names the interpreter it installed against in
+  # the wrapper it wrote, and that is the one this installation runs on.
+  # `|| true` because there may be no wrapper to read: pipefail would otherwise
+  # make a missing file the end of the script rather than a question answered no.
+  PY="$(sed -n 's/^exec "\([^"]*\)".*/\1/p' "$HOME/.local/bin/dikte" 2>/dev/null | head -1 || true)"
+  [[ -x "$PY" ]] || PY="$(command -v python3 || true)"
+  DEFAULT_SHORTCUT="Ctrl+Option+Space"
+else
+  PY="$(command -v python3 || true)"
+  DEFAULT_SHORTCUT="Ctrl+Space"
+fi
 
 say()  { printf '  %s\n' "$1"; }
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$1"; }
@@ -83,7 +96,7 @@ echo
 shortcut="$(setting shortcut)"
 cancel_shortcut="$(setting cancel_shortcut)"
 # Positional, so a chosen discard key cannot be passed without the other one.
-"$DIR/install.sh" "${shortcut:-Ctrl+Space}" "${cancel_shortcut:-}"
+"$DIR/install.sh" "${shortcut:-$DEFAULT_SHORTCUT}" "${cancel_shortcut:-}"
 
 # 5. The running instance ---------------------------------------------------
 # It is still running the code from before the pull.

@@ -126,6 +126,13 @@ TR = {
     "Could not connect: {reason}": "Bağlantı kurulamadı: {reason}",
     "Could not parse the response: {error}": "Yanıt çözümlenemedi: {error}",
 
+    "whisper.cpp has no macOS build, and Homebrew's leaves out the server. "
+    "Build whisper-server yourself and give its path here, or transcribe in "
+    "the cloud. See the README.":
+        "whisper.cpp'nin macOS sürümü yok, Homebrew'unki de sunucuyu dışarıda "
+        "bırakıyor. whisper-server'ı kendin derleyip yolunu buraya yaz, ya da "
+        "buluta çevir. README'ye bak.",
+
     # --- settings: tabs and general ------------------------------------
     "Dikte Settings": "Dikte Ayarları",
     "General": "Genel",

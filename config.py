@@ -12,35 +12,18 @@ import collections
 import hashlib
 import json
 import os
-import pathlib
 import sys
 
 import api
 import ggml
 import i18n
+import paste
 from i18n import t
 from platforms import adapter
 
 runtime = adapter("runtime")
 
-
-def _directories(platform=None):
-    """Compatibility seam used by tests and migrations for all three OSes."""
-    platform = platform or sys.platform
-    if platform == "darwin":
-        support = pathlib.Path.home() / "Library/Application Support/Dikte"
-        return support, support
-    if platform.startswith("win"):
-        roaming = pathlib.Path(os.environ.get("APPDATA")
-                               or pathlib.Path.home() / "AppData/Roaming")
-        local = pathlib.Path(os.environ.get("LOCALAPPDATA")
-                             or pathlib.Path.home() / "AppData/Local")
-        return roaming / "Dikte", local / "Dikte"
-    config_home = pathlib.Path(os.environ.get("XDG_CONFIG_HOME")
-                               or pathlib.Path.home() / ".config")
-    data_home = pathlib.Path(os.environ.get("XDG_DATA_HOME")
-                             or pathlib.Path.home() / ".local/share")
-    return config_home / "dikte", data_home / "dikte"
+_MACOS = sys.platform == "darwin"
 
 CONFIG_DIR = runtime.config_dir()
 CONFIG_FILE = CONFIG_DIR / "config.json"
@@ -450,7 +433,7 @@ DEFAULTS = {
     "local_llm_reasoning": "none",
     "cleanup_prompt": "",           # empty -> language-specific default
     "auto_paste": True,
-    "paste_shortcut": "ctrl+v",
+    "paste_shortcut": paste.desktop().shortcuts[0],
     "restore_clipboard": False,
     "mic_target": "",
     "max_seconds": 300,
@@ -459,11 +442,16 @@ DEFAULTS = {
     "speech_margin_db": 10.0,     # how far speech must rise above the noise floor
     "min_voiced_seconds": 0.3,
     "filter_hallucinations": True,
-    "shortcut": "Ctrl+Space",
+    # Ctrl+Space everywhere except a Mac, where macOS itself holds it for the
+    # input-source switch and Cmd+Space for Spotlight: neither is ours to take,
+    # so there Dikte starts on a combination a stock system leaves free.
+    "shortcut": "Ctrl+Option+Space" if _MACOS else "Ctrl+Space",
     # Ctrl+Alt+Space rather than Escape: the combination the recording started
     # with, one modifier along. Escape belongs to whatever window has focus, and
-    # while you are dictating something else usually has it.
-    "cancel_shortcut": "Ctrl+Alt+Space",
+    # while you are dictating something else usually has it. On a Mac that same
+    # trick lands on the toggle, Alt and Option being one key, so discarding
+    # gets a letter instead.
+    "cancel_shortcut": "Ctrl+Option+D" if _MACOS else "Ctrl+Alt+Space",
     "evdev_hotkey": False,
     "overlay_corner": "bottom-left",
     "keep_audio": False,

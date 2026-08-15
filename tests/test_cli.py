@@ -333,6 +333,57 @@ class ConfigCommands(DikteTest):
                          {"cleanup", "subtitles", "meeting", "agent"})
 
 
+class ShortcutStatus(DikteTest):
+    """Where the answer comes from, which is not one place on every system.
+
+    macOS keeps no shortcut registry: a combination is held by the running
+    process and by nothing else, so a command line that reads its own idea of
+    "installed" reports every shortcut as missing while all of them work.
+    """
+
+    def run_cmd(self, func, **values):
+        with captured() as (out, err):
+            code = func(Options(**values))
+        return code, out.getvalue(), err.getvalue()
+
+    def status(self, reply):
+        with mock.patch.object(ipc, "send", return_value=reply) as send:
+            code, out, _ = self.run_cmd(cli.cmd_shortcut, shortcut="status",
+                                        json=True)
+        return code, json.loads(out), send
+
+    def test_what_the_running_instance_holds_is_what_is_reported(self):
+        code, answer, _ = self.status({
+            "shortcuts": {"toggle": "Ctrl+Option+Space", "cancel": None,
+                          "ask": None, "meeting": None},
+            "listener": True,
+        })
+        self.assertEqual(code, 0)
+        self.assertEqual(answer["shortcuts"]["toggle"]["registered"],
+                         "Ctrl+Option+Space")
+        self.assertIsNone(answer["shortcuts"]["cancel"]["registered"])
+        self.assertIs(answer["listener"], True)
+
+    def test_the_instance_is_the_one_asked(self):
+        _, _, send = self.status({"shortcuts": {}, "listener": False})
+        send.assert_called_once_with("status")
+
+    def test_nothing_running_falls_back_to_what_this_process_can_read(self):
+        """Which on Linux is the registry, and on macOS is nothing, correctly
+        so, because there the keys really are gone with the process."""
+        code, answer, _ = self.status(None)
+        self.assertEqual(code, 0)
+        for name, spec in hotkey.SHORTCUTS.items():
+            with self.subTest(name=name):
+                self.assertEqual(answer["shortcuts"][name]["registered"],
+                                 hotkey.shortcut_status(spec.desktop_id))
+
+    def test_the_configured_combination_is_reported_either_way(self):
+        code, answer, _ = self.status(None)
+        self.assertEqual(answer["shortcuts"]["toggle"]["configured"],
+                         cfg.Config()["shortcut"])
+
+
 class Providers(DikteTest):
     """The terminal reaches every provider the settings window does."""
 

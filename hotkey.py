@@ -56,6 +56,11 @@ SHORTCUTS = {
                         "meeting_shortcut", ""),
 }
 
+# The fallbacks above are Linux's. macOS holds Ctrl+Space for the input-source
+# switch, so asking for it there gets a combination that either loses to the
+# system or fires while the keyboard layout changes underneath the dictation.
+MACOS_FALLBACKS = {"toggle": "Ctrl+Option+Space"}
+
 # --- evdev key codes (linux/input-event-codes.h) --------------------------
 
 EV_KEY = 0x01
@@ -549,6 +554,18 @@ def gnome_shortcut_status(desktop_id=DESKTOP_ID):
 def listener(parent=None):
     """The thing that hears the key, for whichever system this is."""
     return CarbonHotkey(parent) if _macos() else EvdevHotkey(parent)
+
+
+def default_combo(which):
+    """What to register for `which` when the setting has been cleared.
+
+    The one place the platforms disagree about a default, so that the command
+    line and the settings window cannot drift apart on it.
+    """
+    if _macos():
+        return MACOS_FALLBACKS.get(which, "")
+    spec = SHORTCUTS.get(which)
+    return spec.fallback if spec else ""
 
 
 def valid_shortcut(text):

@@ -275,9 +275,14 @@ class FakeCoreGraphics:
         self.flags = []      # (event, flags)
         self.posted = []     # (tap, event)
         self.released = []
+        self.prompted = []   # the options dictionaries asked with
 
     # --- ApplicationServices
     def AXIsProcessTrusted(self):
+        return self.trusted
+
+    def AXIsProcessTrustedWithOptions(self, options):
+        self.prompted.append(options)
         return self.trusted
 
     def CGEventCreateKeyboardEvent(self, source, keycode, down):
@@ -301,10 +306,16 @@ class MacOS(ClipboardContract, DikteTest):
     platform = "darwin"
     here = paste.MACOS
 
+    # A stand-in for the CFDictionary: the real one is built out of constants
+    # read from the frameworks, which a fake has none of.
+    OPTIONS = 4242
+
     def setUp(self):
         super().setUp()
         self.api = FakeCoreGraphics()
         self.patch_attr(paste, "_macos_api", lambda: (self.api, self.api))
+        self.patch_attr(paste, "_macos_prompt_options",
+                        lambda services, core: self.OPTIONS)
         self.patch_attr(paste.time, "sleep", lambda seconds: None)
         # It opens the settings pane once per run; each test gets its own run.
         self.patch_attr(paste, "_asked_for_permission", False)
@@ -384,6 +395,31 @@ class MacOS(ClipboardContract, DikteTest):
         with self.assertRaises(paste.PasteError) as caught:
             paste.press("cmd+v")
         self.assertIn("Accessibility", str(caught.exception))
+
+    def test_asking_is_what_puts_dikte_in_the_accessibility_list(self):
+        """Opening the pane is not enough on its own.
+
+        AXIsProcessTrusted only answers the question; an application that has
+        never asked with the prompt is not in the list, so the pane opens on a
+        list Dikte is not in and the only way through is the + button.
+        """
+        self.api.trusted = False
+        with self.assertRaises(paste.PasteError):
+            paste.press("cmd+v")
+        self.assertEqual(self.api.prompted, [self.OPTIONS])
+        # The dictionary is ours to release, and nothing else made an event.
+        self.assertIn(self.OPTIONS, self.api.released)
+
+    def test_it_asks_once_however_many_dictations_fail(self):
+        self.api.trusted = False
+        for _ in range(3):
+            with self.assertRaises(paste.PasteError):
+                paste.press("cmd+v")
+        self.assertEqual(len(self.api.prompted), 1)
+
+    def test_a_trusted_process_is_never_prompted(self):
+        paste.press("cmd+v")
+        self.assertEqual(self.api.prompted, [])
 
     def test_readiness_is_the_permission_rather_than_a_program(self):
         self.assertTrue(paste.paste_ready())
