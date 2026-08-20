@@ -21,6 +21,7 @@ from . import config as cfg
 from . import filetranscribe
 from . import ggml
 from . import hotkey
+from . import i18n
 from . import ipc
 from . import meeting
 from . import paste
@@ -512,6 +513,10 @@ class LocalModelBox(QGroupBox):
 
 class SettingsWindow(QDialog):
     applied = pyqtSignal()
+    # A save changed the interface language. Every label below is translated
+    # as the window is built, so the change cannot reach this window: the
+    # owner replaces it with a fresh one instead.
+    language_changed = pyqtSignal()
 
     _models_loaded = pyqtSignal(list, str)
     _transcribe_models_loaded = pyqtSignal(list, str)
@@ -533,6 +538,8 @@ class SettingsWindow(QDialog):
         self._key_fields = {}
         self._testers = {}
         self._shown_provider = ""
+        # What _save compares against to know a rebuild is due.
+        self._built_language = i18n.language()
         self.transcriber = FileTranscriber(conf, self)
         self.setWindowTitle(t("Dikte Settings"))
 
@@ -627,9 +634,6 @@ class SettingsWindow(QDialog):
         self.ui_language = QComboBox()
         for label, code in UI_LANGUAGES:
             self.ui_language.addItem(t(label), code)
-        self.ui_language.setToolTip(
-            t("Restart Dikte for the language change to reach every window.")
-        )
         form.addRow(t("Interface language"), self.ui_language)
 
         self.mic = QComboBox()
@@ -1762,7 +1766,14 @@ class SettingsWindow(QDialog):
             print(f"dikte: could not trim the history ({exc})")
         self._load_history()  # the trim may just have dropped rows from the list
         self.applied.emit()
+        # conf.save() has switched the language t() speaks, so the message box
+        # already answers in the new one; the labels around it were translated
+        # when the window was built and stay behind. Asking for the rebuild
+        # waits until the box is dismissed, so the window is not pulled out
+        # from under a dialog it is holding up.
         QMessageBox.information(self, t("Dikte Settings"), t("Saved successfully."))
+        if i18n.language() != self._built_language:
+            self.language_changed.emit()
 
     @staticmethod
     def _select_data(combo, value):

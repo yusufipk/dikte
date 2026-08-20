@@ -162,8 +162,6 @@ TR = {
     "Automatic (system)": "Otomatik (sistem)",
     "Turkish": "Türkçe",
     "English": "İngilizce",
-    "Restart Dikte for the language change to reach every window.":
-        "Dil değişikliğinin her pencereye işlemesi için Dikte'yi yeniden başlat.",
     "Microphone": "Mikrofon",
     "Default microphone": "Varsayılan mikrofon",
     "Speech language": "Konuşma dili",

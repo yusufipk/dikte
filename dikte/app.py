@@ -907,6 +907,7 @@ class Dikte:
         if self.settings_window is None:
             self.settings_window = SettingsWindow(self.conf, self.meetings)
             self.settings_window.applied.connect(self._apply_settings)
+            self.settings_window.language_changed.connect(self._reopen_settings)
             self.settings_window.finished.connect(self._settings_closed)
         self.settings_window.show()
         self.settings_window.raise_()
@@ -915,6 +916,31 @@ class Dikte:
     def _settings_closed(self, *_):
         # Don't drop the object while its own signal is still being delivered.
         QTimer.singleShot(0, lambda: setattr(self, "settings_window", None))
+
+    def _reopen_settings(self):
+        """Replace the settings window, so a language change reaches it too.
+
+        A save switches the language everywhere strings are made at the moment
+        they are shown: the tray is rebuilt, the indicator and the message box
+        translate as they speak. The settings window is the one place written
+        once, at construction, so the window that took the new language is the
+        one place still showing the old one. A fresh window comes up where the
+        old one stood, on the same tab.
+        """
+        old = self.settings_window
+        if old is None:
+            return
+        tab = old.tabs.currentIndex()
+        geometry = old.geometry()
+        # Replaced rather than merely closed: left connected, _settings_closed
+        # would drop the reference to the new window a moment after it is made.
+        old.finished.disconnect(self._settings_closed)
+        old.close()
+        old.deleteLater()
+        self.settings_window = None
+        self.open_settings()
+        self.settings_window.tabs.setCurrentIndex(tab)
+        self.settings_window.setGeometry(geometry)
 
     def _apply_local(self):
         """Pass the local settings on, and hold the models ready if asked to.
