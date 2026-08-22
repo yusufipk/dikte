@@ -1,9 +1,9 @@
-"""Who cleans the transcript up, and what they are asked.
+﻿"""Who cleans the transcript up, and what they are asked.
 
-The CLIs are faked at subprocess.run: what the tests read is the argument list
-each one is given, where the answer is picked up from, and what happens to the
-chain when the program is missing, slow or unhappy. The OpenRouter path is the
-one that was always there and is checked here only for still being taken.
+The CLIs are faked at subprocess.Popen: what the tests read is the argument
+list each one is given, where the answer is picked up from, and what happens to
+the chain when the program is missing, slow or unhappy. The OpenRouter path is
+the one that was always there and is checked here only for still being taken.
 """
 
 import os
@@ -18,18 +18,26 @@ from tests.support import DikteTest, fake_urlopen, sent_json, url_error
 from tests.test_api import FakeServer, chat_reply
 
 
-def fake_run(stdout="", code=0, stderr="", last_message=""):
-    """Stand in for subprocess.run, writing the file Codex would have written."""
+def fake_cli(stdout="", code=0, stderr="", last_message=""):
+    """Stand in for subprocess.Popen.
+
+    _output hands the process a temporary file for each stream, so the fake
+    writes into those, plus the file Codex would have written on its way out.
+    """
     calls = []
 
-    def run(cmd, **kwargs):
+    def popen(cmd, **kwargs):
         calls.append(cmd)
+        kwargs["stdout"].write(stdout.encode("utf-8"))
+        kwargs["stderr"].write(stderr.encode("utf-8"))
         if last_message and "-o" in cmd:
             with open(cmd[cmd.index("-o") + 1], "w", encoding="utf-8") as fh:
                 fh.write(last_message)
-        return subprocess.CompletedProcess(cmd, code, stdout, stderr)
+        proc = mock.Mock()
+        proc.returncode = code
+        return proc
 
-    return mock.patch.object(subprocess, "run", side_effect=run), calls
+    return mock.patch.object(subprocess, "Popen", side_effect=popen), calls
 
 
 class Provider(DikteTest):
@@ -80,7 +88,7 @@ class OpenRouter(DikteTest):
 
     def test_no_cli_is_started_for_it(self):
         conf = self.config(openrouter_api_key="sk-or-test")
-        patcher, calls = fake_run(stdout="never")
+        patcher, calls = fake_cli(stdout="never")
         with patcher, mock.patch.object(api, "cleanup", return_value="Done."):
             cleanup.run("uh, done", conf, "the rules")
         self.assertEqual(calls, [])
@@ -93,7 +101,7 @@ class ClaudeCode(DikteTest):
         self.patch_attr(cleanup.shutil, "which", lambda name: f"/usr/bin/{name}")
 
     def run_cleanup(self, text="uh, book it", **kwargs):
-        patcher, calls = fake_run(**kwargs)
+        patcher, calls = fake_cli(**kwargs)
         with patcher:
             answer = cleanup.run(text, self.conf, "the rules")
         return answer, calls[0]
@@ -146,14 +154,18 @@ class ClaudeCode(DikteTest):
             self.run_cleanup(stdout="Book it.")
         self.assertIn("claude", str(caught.exception))
 
-    def test_a_run_that_never_ends(self):
-        def run(cmd, **kwargs):
-            raise subprocess.TimeoutExpired(cmd, 180)
+    def test_a_run_that_never_ends_is_killed_with_its_whole_tree(self):
+        def popen(cmd, **kwargs):
+            proc = mock.Mock()
+            proc.wait.side_effect = subprocess.TimeoutExpired(cmd, 180)
+            return proc
 
-        with mock.patch.object(subprocess, "run", side_effect=run):
+        with mock.patch.object(subprocess, "Popen", side_effect=popen), \
+                mock.patch.object(cleanup.assistant, "kill_tree") as kill:
             with self.assertRaises(cleanup.CleanupError) as caught:
                 cleanup.run("uh, book it", self.conf, "the rules")
         self.assertIn("180", str(caught.exception))
+        kill.assert_called_once()
 
 
 class Codex(DikteTest):
@@ -163,7 +175,7 @@ class Codex(DikteTest):
         self.patch_attr(cleanup.shutil, "which", lambda name: f"/usr/bin/{name}")
 
     def run_cleanup(self, text="uh, book it", **kwargs):
-        patcher, calls = fake_run(**kwargs)
+        patcher, calls = fake_cli(**kwargs)
         with patcher:
             answer = cleanup.run(text, self.conf, "the rules")
         return answer, calls[0]
@@ -280,7 +292,8 @@ class Here(DikteTest):
         self.assertIn("out of memory", str(caught.exception))
 
     def test_no_cli_is_started_for_it(self):
-        patcher, calls = fake_run(stdout="never")
+        patcher, calls = fake_cli(stdout="never")
         with patcher, fake_urlopen(chat_reply("Done.")):
             cleanup.run("uh, done", self.conf, "the rules")
         self.assertEqual(calls, [])
+

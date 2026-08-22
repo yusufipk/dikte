@@ -61,6 +61,34 @@ class Directories(unittest.TestCase):
         self.assertTrue(data_dir.as_posix().endswith("/AppData/Local/Dikte"))
 
 
+class CacheDir(unittest.TestCase):
+    """The third place: files whose whole point is that they can be lost."""
+
+    def test_linux_follows_xdg(self):
+        with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": "/k"}):
+            self.assertEqual(paths.cache_dir("linux").as_posix(), "/k/dikte")
+
+    def test_linux_without_the_variable_set(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertTrue(paths.cache_dir("linux").as_posix()
+                            .endswith("/.cache/dikte"))
+
+    def test_a_mac_caches_under_library_caches(self):
+        """Where Time Machine already knows not to look."""
+        self.assertTrue(paths.cache_dir("darwin").as_posix()
+                        .endswith("/Library/Caches/Dikte"))
+
+    def test_windows_caches_outside_the_roaming_profile(self):
+        with mock.patch.dict(os.environ, {"LOCALAPPDATA": "C:/local"}):
+            self.assertEqual(paths.cache_dir("win32").as_posix(),
+                             "C:/local/Dikte/cache")
+
+    def test_windows_without_the_variable_set(self):
+        with mock.patch.dict(os.environ, {}, clear=True):
+            self.assertTrue(paths.cache_dir("win32").as_posix()
+                            .endswith("/AppData/Local/Dikte/cache"))
+
+
 class OnePlace(unittest.TestCase):
     """The programs and the models go where everything else goes.
 

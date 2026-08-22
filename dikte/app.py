@@ -18,6 +18,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 
 # A Wayland client cannot place a window in a screen corner, so the indicator
 # is drawn through XWayland.
@@ -116,6 +117,10 @@ class Dikte:
     def __init__(self, app):
         self.app = app
         self.conf = cfg.Config()
+        # run_app hands the one-instance lock over after construction; a Dikte
+        # built without one (the tests) restarts without touching a lock.
+        self.instance_lock = None
+        self._registry_shortcuts = True   # settled by _apply_settings below
         self.state = IDLE
         self.ask_state = IDLE
         # Which of the two the microphone is currently serving, or None.
@@ -160,9 +165,16 @@ class Dikte:
         # Before anything of ours is started: a server from a Dikte that was
         # killed outright is still holding a model in memory.
         ggml.sweep()
+        # The first dictation with no microphone picked would otherwise pay for
+        # the ffmpeg device listing on the key press itself, seconds of nothing
+        # happening at the least explicable moment. Warmed the way the models
+        # are, off the main thread; the listing caches itself.
+        if sys.platform == "win32" and not self.conf["mic_target"]:
+            threading.Thread(target=audio.list_sources, daemon=True).start()
 
         self.recorder.level.connect(self._on_level)
         self.recorder.stopped.connect(self._on_recorded)
+        self.recorder.died.connect(self._on_recorder_died)
         self.recorder.failed.connect(self._on_recorder_error)
         self.pipeline.stage.connect(self.overlay.show_busy)
         self.pipeline.finished.connect(self._on_finished)
@@ -184,7 +196,7 @@ class Dikte:
 
         self.elapsed = QElapsedTimer()
         self.meeting_elapsed = QElapsedTimer()
-        self.last_toggle = QElapsedTimer()
+        self.last_toggle = {}   # action name -> QElapsedTimer, see _repeated
         self.last_evdev = {}
         self.ticker = QTimer()
         self.ticker.setInterval(100)
@@ -429,7 +441,10 @@ class Dikte:
         # Where nothing was installed there is no shortcut to catch up, and
         # retiring the listener would leave the keys with nowhere to arrive.
         timer = self.last_evdev.get(name)
-        if (hotkey.installs_shortcuts() and self.evdev.running
+        # The snapshot from _apply_settings: which desktop this is cannot
+        # change under a running process, and asking hotkey again here costs a
+        # PATH scan on every key press.
+        if (self._registry_shortcuts and self.evdev.running
                 and timer is not None and timer.elapsed() < ECHO_MS):
             self._retire_listener()
             return
@@ -498,10 +513,6 @@ class Dikte:
 
     def _dictation_request(self, cmd, request, reply):
         before = self.state
-        # Only a request that said something about pasting changes it, so that
-        # the stop half of a `start --paste` does not undo the start half.
-        if "paste" in request:
-            self.paste_override[DICTATION] = request["paste"]
         if cmd == "toggle":
             self.toggle()
         elif cmd == "stop":
@@ -512,13 +523,20 @@ class Dikte:
             if seconds > 0 and self.state == RECORDING:
                 run = self._run_id
                 QTimer.singleShot(int(seconds * 1000), lambda: self._auto_stop(run))
+        # Armed only when the request actually moved this run along: a request
+        # that no-opped (the microphone held by the other one, or nothing to
+        # stop) must not leave a preference behind for some later, unrelated
+        # run to pick up. A stop that lands keeps changing the run it ends,
+        # so the stop half of a `start --paste` still does not undo the start.
+        if "paste" in request and self.state != before:
+            self.paste_override[DICTATION] = request["paste"]
         self._answer(DICTATION, before, self.state, request, reply)
 
     def _ask_request(self, request, reply):
         before = self.ask_state
-        if "paste" in request:
-            self.paste_override[ASK] = request["paste"]
         self.toggle_ask()
+        if "paste" in request and self.ask_state != before:
+            self.paste_override[ASK] = request["paste"]
         self._answer(ASK, before, self.ask_state, request, reply)
 
     def _meeting_request(self, cmd, request, reply):
@@ -583,7 +601,7 @@ class Dikte:
     def _toggle(self):
         # Two /dev/input nodes can carry the same keyboard, and a menu click can
         # land on top of a key press; swallow the immediate repeat.
-        if self._repeated():
+        if self._repeated("toggle"):
             return
         if self.state == RECORDING:
             self.stop()
@@ -592,17 +610,23 @@ class Dikte:
         # a request during its own BUSY is ignored; nothing queues up
 
     def _toggle_ask(self):
-        if self._repeated():
+        if self._repeated("ask"):
             return
         if self.ask_state == RECORDING:
             self.stop_ask()
         elif self.ask_state == IDLE:
             self.start_ask()
 
-    def _repeated(self):
-        if self.last_toggle.isValid() and self.last_toggle.elapsed() < 400:
+    def _repeated(self, name):
+        # Per action, the way last_evdev already is: the window is meant to
+        # swallow a duplicate delivery of the same press, not a pause landing
+        # right after the toggle that started the recording.
+        timer = self.last_toggle.get(name)
+        if timer is None:
+            timer = self.last_toggle[name] = QElapsedTimer()
+        if timer.isValid() and timer.elapsed() < 400:
             return True
-        self.last_toggle.restart()
+        timer.restart()
         return False
 
     def start(self):
@@ -610,6 +634,12 @@ class Dikte:
             return
         self.overlay.show_recording()
         self._begin_recording(DICTATION)
+        # A recorder that could not start has already said so, synchronously,
+        # and the error handler put everything back; setting RECORDING on top
+        # of that would strand the state machine with no signal ever coming.
+        # The same guard start_meeting has always had.
+        if not self.recorder.active:
+            return
         self._set_state(RECORDING)
 
     def start_ask(self):
@@ -617,6 +647,8 @@ class Dikte:
             return
         self.ask_overlay.show_recording(asking=True)
         self._begin_recording(ASK)
+        if not self.recorder.active:
+            return
         self._set_ask_state(RECORDING)
 
     def _begin_recording(self, owner):
@@ -654,7 +686,7 @@ class Dikte:
         the phone call in the middle of a dictation never reaches the model and
         the sentence around it is still one sentence.
         """
-        if not self.recording or self._repeated():
+        if not self.recording or self._repeated("pause"):
             return
         self.paused = not self.paused
         if self.paused:
@@ -686,6 +718,8 @@ class Dikte:
         self.ticker.stop()
         self._clear_pause()
         self.recorder.cancel()
+        # The preference dies with the run it was given for.
+        self.paste_override.pop(ASK if asking else DICTATION, None)
         self.recorder_owner = None
         # What goes over the socket is read by a program as often as by a
         # person, so it stays in one language; only what a run itself said
@@ -933,8 +967,27 @@ class Dikte:
     def _on_recorder_error(self, message):
         """The microphone itself could not run, so it belongs to whoever asked."""
         owner, self.recorder_owner = self.recorder_owner, None
+        self.paste_override.pop(owner, None)
         self.ticker.stop()
         (self._on_ask_error if owner == ASK else self._on_error)(message)
+
+    def _on_recorder_died(self):
+        """The capture quit under a live recording: keep what it caught.
+
+        Ended the way a key press would end it, so the captured half is
+        transcribed rather than thrown away, and said out loud, because the
+        user is still talking at a microphone nobody is reading.
+        """
+        owner = self.recorder_owner
+        self.tray.showMessage(
+            "Dikte",
+            t("The recording stopped on its own; transcribing what was captured."),
+            QSystemTrayIcon.MessageIcon.Warning, 8000,
+        )
+        if owner == ASK and self.ask_state == RECORDING:
+            self.stop_ask()
+        elif self.state == RECORDING:
+            self.stop()
 
     def _on_error(self, message):
         self._report(message, self.overlay)
@@ -1053,10 +1106,13 @@ class Dikte:
         self._apply_local()
         self._build_tray()
         self._refresh_tray()
+        # Taken once here for _external: the answer cannot change under a
+        # running process, and re-deriving it there is a PATH scan per press.
+        self._registry_shortcuts = hotkey.installs_shortcuts()
         # Where the desktop has no shortcut registry of its own, the listener is
         # not the fallback the setting offers to turn on: it is the only way the
         # keys arrive at all, so it runs whatever the setting says.
-        if self.conf["evdev_hotkey"] or not hotkey.installs_shortcuts():
+        if self.conf["evdev_hotkey"] or not self._registry_shortcuts:
             self.evdev.start({name: self.conf[spec.setting]
                               for name, spec in hotkey.SHORTCUTS.items()})
         else:
@@ -1078,22 +1134,25 @@ class Dikte:
         if self.server is not None:
             self.server.close()
         QLocalServer.removeServer(SERVER_NAME)
-        args = ipc.launcher() + ["--gui"]
-        if sys.platform == "win32":
-            # execv on Windows mangles arguments with spaces and leaves the two
-            # processes sharing a console; a detached start does neither.
-            subprocess.Popen(
-                args,
-                creationflags=(subprocess.DETACHED_PROCESS
-                               | subprocess.CREATE_NEW_PROCESS_GROUP),
-                close_fds=True,
-            )
-            QApplication.instance().quit()
-            return
-        os.execv(args[0], args)
+        # The lock too, or the replacement would take this restart for a
+        # double start and hand the attention back to a process on its way out.
+        if self.instance_lock is not None:
+            self.instance_lock.unlock()
+        ipc.respawn(["--gui"])
+        # respawn only returns on Windows, where the replacement was started
+        # detached and this process still has to leave on its own.
+        QApplication.instance().quit()
 
     def shutdown(self):
         self._quitting = True
+        # Waiters first, while the connections still work: a `--wait` left
+        # unanswered reads to the terminal as an instance too old to answer,
+        # which points the user at a version problem that does not exist.
+        # In one language, like every other error that goes over the socket:
+        # a script reads these as often as a person does.
+        for kind in (DICTATION, ASK, MEETING):
+            self._settle(kind, {"ok": False,
+                                "error": "the instance is shutting down"})
         self.evdev.stop()
         if self.recording:
             self.recorder.cancel()
@@ -1216,8 +1275,43 @@ def _stay_out_of_the_dock():
         pass
 
 
+def _hand_over(command):
+    """Give the running instance the attention this start was asking for.
+
+    A start carrying a verb forwards only that verb; a bare double start asks
+    for the Settings window as the sign of life the click was looking for.
+    Retried for a moment, because the copy that won the lock may not be
+    listening yet.
+    """
+    verb = command or "settings"
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if ipc.send(verb) is not None:
+            return
+        time.sleep(0.2)
+    print("dikte: another copy holds the lock but never answered")
+
+
 def run_app(args):
     command = args[0] if args else ""
+
+    # One Dikte per user. The lock closes the simultaneous-start window two
+    # probes would both fall through; the probe still runs behind it, because
+    # an instance from before the lock existed holds only the socket. Both
+    # sit before the QApplication, so a second copy costs a moment and not a
+    # second tray icon. The lock lives in this frame, which app.exec() below
+    # keeps alive for exactly the process's lifetime.
+    lock = ipc.instance_lock()
+    if lock is not None and not lock.tryLock(0):
+        _hand_over(command)
+        return 0
+    if ipc.already_serving():
+        print("dikte: already running; handing it the attention")
+        if command:
+            ipc.send(command)
+        else:
+            ipc.send("settings")
+        return 0
 
     app = QApplication(sys.argv)
     app.setApplicationName("Dikte")
@@ -1246,6 +1340,9 @@ def run_app(args):
         print("dikte: no system tray found, running anyway")
 
     dikte = Dikte(app)
+    # Handed over so that restart() can let go of it before the replacement
+    # tries to take it.
+    dikte.instance_lock = lock
 
     server = QLocalServer()
     # Qt puts the socket in /tmp, so keep it to this user: commands like

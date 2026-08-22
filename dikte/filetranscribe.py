@@ -31,6 +31,7 @@ from PyQt6.QtCore import QObject, pyqtSignal
 from . import api
 from . import cleanup
 from . import ggml
+from . import paths
 from .i18n import t
 
 UPLOAD_LIMIT = 24 * 1024 * 1024  # the APIs take 25 MB; leave the form its room
@@ -337,8 +338,11 @@ def _ffmpeg(args, out, aborter=None):
     proc = subprocess.Popen(
         ["ffmpeg", "-nostdin", "-y", *args],
         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-        text=True,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        # ffmpeg writes UTF-8 whatever the locale says; read as the Windows
+        # codepage its messages mojibake, and a byte the codepage cannot place
+        # raises from inside communicate itself.
+        text=True, encoding="utf-8", errors="replace",
+        creationflags=paths.NO_WINDOW,
     )
     # A two hour film is a minute of ffmpeg, which is a minute of a Stop button
     # doing nothing unless the abort reaches the process itself.

@@ -59,6 +59,13 @@ Name: "autostart"; Description: "Start Dikte when I sign in"
 [Files]
 Source: "{#Source}\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
 
+[InstallDelete]
+; A checkout's install.ps1 -Autostart is a shortcut in the Startup folder. The
+; registry entry this setup writes replaces it, and both left in place would be
+; two Diktes at every sign-in. Only under the autostart task: somebody who
+; unticked the box has not asked for their checkout's entry to go.
+Type: files; Name: "{userstartup}\Dikte.lnk"; Tasks: autostart
+
 [Icons]
 Name: "{autoprograms}\Dikte"; Filename: "{app}\Dikte.exe"
 
@@ -111,7 +118,14 @@ begin
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  Shim: AnsiString;
 begin
+  { Only the shim this setup wrote, which is the one naming its dikte-cli.exe.
+    install.ps1 writes the same file for a checkout, naming that checkout's
+    Python, and a shim somebody else wrote is not this uninstaller's to take. }
   if CurUninstallStep = usUninstall then
-    DeleteFile(ShimPath());
+    if LoadStringFromFile(ShimPath(), Shim)
+       and (Pos(ExpandConstant('{app}\dikte-cli.exe'), Shim) > 0) then
+      DeleteFile(ShimPath());
 end;

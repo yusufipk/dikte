@@ -63,6 +63,10 @@ MODELS_DIR = DATA_DIR / "models"
 # Loading a large model onto a GPU is the slow part of a start, and on a cold
 # page cache a large LLM read from a spinning disk is slower still.
 STARTUP_TIMEOUT = 180.0
+# A child that loses the bind race fails and exits at once; a model that fails
+# to load takes longer than this to be read in first. The line between "worth
+# another port" and "would fail the same way again" is drawn on time.
+EARLY_EXIT_WINDOW = 5.0
 DOWNLOAD_CHUNK = 1 << 20
 
 # `health` is the path that answers only once the model is in memory. whisper
@@ -193,7 +197,16 @@ def download(item, target, on_progress=None, should_stop=None, require_hash=True
             part.unlink(missing_ok=True)
             raise LocalError(t("{name} does not match its published checksum. "
                                "Nothing was installed.", name=item.name))
-        part.replace(target)
+        try:
+            part.replace(target)
+        except PermissionError as exc:
+            # Windows refuses to replace a file something has open, and a
+            # running server holds its model and its binary open. The bytes
+            # are complete and verified: keeping the .part costs a retry,
+            # deleting it costs the whole download again.
+            raise LocalError(t("{name} downloaded, but the old file is held "
+                               "open by the running server. Stop it and try "
+                               "again.", name=item.name)) from exc
         return True
     except urllib.error.HTTPError as exc:
         part.unlink(missing_ok=True)
@@ -268,22 +281,23 @@ def _install_record(program):
     return BIN_DIR / program.name / "installed.json"
 
 
-def installed_program(program):
-    """The binary Dikte downloaded, or "" when there is none that still runs."""
+def _read_record(program):
+    """The install record, or {} however it fails to read."""
     try:
         record = json.loads(_install_record(program).read_text(encoding="utf-8"))
-        path = record.get("binary") or ""
     except (OSError, ValueError):
-        return ""
+        return {}
+    return record if isinstance(record, dict) else {}
+
+
+def installed_program(program):
+    """The binary Dikte downloaded, or "" when there is none that still runs."""
+    path = _read_record(program).get("binary") or ""
     return path if os.path.isfile(path) and os.access(path, os.X_OK) else ""
 
 
 def installed_version(program):
-    try:
-        record = json.loads(_install_record(program).read_text(encoding="utf-8"))
-        return record.get("tag") or ""
-    except (OSError, ValueError):
-        return ""
+    return _read_record(program).get("tag") or ""
 
 
 def program_path(program, custom=""):
@@ -339,6 +353,19 @@ def _extract(archive, into):
                            name=os.path.basename(str(archive)), error=exc)) from exc
 
 
+def _under(path, root):
+    """Whether `path` lies inside `root`, symlinks and case resolved.
+
+    Resolved on both sides, because the same directory can be reached under
+    two spellings and this answer decides whether a server gets stopped.
+    """
+    try:
+        pathlib.Path(path).resolve().relative_to(pathlib.Path(root).resolve())
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 def install_program(program, tag="", on_progress=None, should_stop=None,
                     refresh=False):
     """Fetch and unpack a release. The path to the binary, or "" when stopped.
@@ -374,17 +401,52 @@ def install_program(program, tag="", on_progress=None, should_stop=None,
                            repo=program.repo, tag=tag))
 
     into = BIN_DIR / program.name / tag
-    shutil.rmtree(into, ignore_errors=True)
+    fresh = into.with_name(tag + ".new")
     archive = BIN_DIR / program.name / item.name
+
     try:
         if not download(item, archive, on_progress, should_stop):
             return ""
-        _extract(archive, into)
-        binary = _find_binary(into, _binary_file(program))
-        if binary is None:
-            raise LocalError(t("{name} was not in the download.",
-                               name=program.binary))
-        binary.chmod(binary.stat().st_mode | 0o111)
+        try:
+            # Unpacked into a sibling and swapped in only once the binary is
+            # known to be inside: a failure anywhere in here leaves the
+            # previous install, and its record, exactly as they were.
+            shutil.rmtree(fresh, ignore_errors=True)
+            _extract(archive, fresh)
+            binary = _find_binary(fresh, _binary_file(program))
+            if binary is None:
+                raise LocalError(t("{name} was not in the download.",
+                                   name=program.binary))
+            binary.chmod(binary.stat().st_mode | 0o111)
+            # A running server holds its binary open, and Windows will not
+            # delete an open file: whichever of our servers runs out of this
+            # program's directory is stopped here, after the download and the
+            # unpack are known good, so the outage is the swap and not the
+            # whole transfer.
+            for server in SERVERS:
+                current = program_path(server.program,
+                                       server.settings().get("binary", ""))
+                if current and _under(current, BIN_DIR / program.name):
+                    server.stop()
+            if into.exists():
+                try:
+                    shutil.rmtree(into)
+                except OSError as exc:
+                    # Not ignore_errors: silently losing this would rename the
+                    # new version somewhere it can never land, and the user can
+                    # actually fix it by closing whatever holds the directory.
+                    raise LocalError(t(
+                        "Could not replace {path}: a file in it is still "
+                        "open: {error}", path=into, error=exc)) from exc
+            fresh.rename(into)
+        except BaseException:
+            # Half an unpacked sibling is not worth keeping, and the swap
+            # never ran, so the previous install is still whole.
+            shutil.rmtree(fresh, ignore_errors=True)
+            raise
+        # Found under the sibling, run from the final directory.
+        binary = into / binary.relative_to(fresh)
+        # Written last, so the record never points at anything half-made.
         _install_record(program).write_text(
             json.dumps({"tag": tag, "binary": str(binary)}), encoding="utf-8")
     except OSError as exc:
@@ -404,8 +466,15 @@ def _drop_old_versions(program, keep):
     root = BIN_DIR / program.name
     try:
         for path in root.iterdir():
-            if path.is_dir() and path.name != keep:
-                shutil.rmtree(path, ignore_errors=True)
+            if not path.is_dir() or path.name == keep:
+                continue
+            # A ".new" sibling belongs to an install mid-swap; housekeeping
+            # must not pull it out from under it.
+            if path.name.endswith(".new"):
+                continue
+            # ignore_errors on purpose: this is housekeeping, and a locked old
+            # version is a little wasted disk rather than a failed install.
+            shutil.rmtree(path, ignore_errors=True)
     except OSError:
         pass
 
@@ -538,7 +607,12 @@ def _tail(path, lines=3):
 
 
 def _win_image_name(pid):
-    """The lower-cased file name of the process's executable, or ''."""
+    """The full, lower-cased path of the process's executable, or ''.
+
+    The full path rather than the base name, because the name alone is anyone's
+    whisper-server.exe and this answer decides what gets killed. MAX_PATH is a
+    convention rather than a limit, so the buffer grows until the query fits.
+    """
     import ctypes
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.OpenProcess.restype = ctypes.c_void_p
@@ -548,11 +622,18 @@ def _win_image_name(pid):
     if not handle:
         return ""
     try:
-        buffer = ctypes.create_unicode_buffer(260)
-        size = ctypes.c_uint32(len(buffer))
-        ok = kernel32.QueryFullProcessImageNameW(
-            ctypes.c_void_p(handle), 0, buffer, ctypes.byref(size))
-        return os.path.basename(buffer.value).lower() if ok else ""
+        length = 260
+        while length <= 32768:
+            buffer = ctypes.create_unicode_buffer(length)
+            size = ctypes.c_uint32(len(buffer))
+            ok = kernel32.QueryFullProcessImageNameW(
+                ctypes.c_void_p(handle), 0, buffer, ctypes.byref(size))
+            if ok:
+                return buffer.value.lower()
+            if ctypes.get_last_error() != 122:   # ERROR_INSUFFICIENT_BUFFER
+                return ""
+            length *= 2
+        return ""
     finally:
         kernel32.CloseHandle(handle)
 
@@ -578,6 +659,9 @@ class Server:
         self._port = 0
         self._log = ""
         self._key = None
+        # The pid this instance last wrote to its pid file, so _forget never
+        # removes a file some other Dikte wrote after us.
+        self._pid = 0
 
     # ---- settings --------------------------------------------------------
 
@@ -626,7 +710,9 @@ class Server:
             ready = self._current_url()
             if ready:
                 return ready
-            self.stop()
+            # _stop_now rather than stop(): this thread already holds
+            # _starting, and the public stop() waits for it.
+            self._stop_now()
             with self._lock:
                 settings, key = dict(self._settings), self._settings_key()
             proc, port, log = self._launch(settings)
@@ -659,7 +745,7 @@ class Server:
                         stdout=sink, stderr=subprocess.STDOUT,
                         stdin=subprocess.DEVNULL,
                         # No console window of its own on Windows.
-                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                        creationflags=paths.NO_WINDOW,
                     )
             except OSError as exc:
                 raise LocalError(t("Could not start {name}: {error}",
@@ -668,8 +754,9 @@ class Server:
             # Written before it is ready rather than after, so that a kill
             # during the model load leaves something for the sweep to find.
             self._remember(proc.pid)
+            began = time.monotonic()
             try:
-                ready = self._wait_ready(proc, port)
+                reason, listened = self._wait_ready(proc, port)
             except BaseException:
                 # Whatever went wrong while waiting, the process is ours and
                 # nothing else is left holding a reference to it. Leaving it
@@ -679,31 +766,52 @@ class Server:
                 self._kill(proc)
                 self._forget()
                 raise
-            if ready:
+            if reason == "ready":
                 return proc, port, str(log)
             last = _tail(log)
             self._forget()
-            # A port taken between the probe and the bind is the one failure
-            # worth another go; anything else will fail the same way again.
-            if "address" not in last.lower() and "bind" not in last.lower():
+            # Losing the port between the probe and the bind is the one
+            # failure another port fixes, and it has a shape rather than a
+            # message: the child died at once without the port ever having
+            # answered as its own. Grepping the log for "bind" would tie this
+            # to one program's wording in one language.
+            early = time.monotonic() - began < EARLY_EXIT_WINDOW
+            if reason != "exited" or listened or not early:
                 break
         raise LocalError(t("{name} did not start: {error}",
                            name=self.program.binary, error=last or t("no output")))
 
     def _wait_ready(self, proc, port):
+        """("ready" | "exited" | "timeout", whether the port answered as ours).
+
+        whisper binds after the model is loaded, so the open port is the
+        answer; llama binds first and answers /health with 503 until it is
+        ready. For the health-less case the open port alone is not proof: a
+        child that lost the bind race exits at once while the winner keeps the
+        port open, so "ready" also wants our child alive a beat after the port
+        was first seen open.
+        """
         deadline = time.monotonic() + STARTUP_TIMEOUT
+        seen_open = False
+        listened = False
         while time.monotonic() < deadline:
             if proc.poll() is not None:
-                return False
+                return "exited", listened
+            if seen_open:
+                # Port open on the last pass and our child still alive now:
+                # an imposter's port would have left our child dead by here.
+                return "ready", True
             if _listening(port):
-                # whisper binds after the model is loaded, so the open port is
-                # the answer. llama binds first and answers /health with 503
-                # until it is ready.
-                if not self.program.health or _healthy(port, self.program.health):
-                    return True
+                if self.program.health:
+                    # llama did the binding itself, so the port is its.
+                    listened = True
+                    if _healthy(port, self.program.health):
+                        return "ready", True
+                else:
+                    seen_open = True
             time.sleep(0.1)
         self._kill(proc)
-        return False
+        return "timeout", listened
 
     @staticmethod
     def _kill(proc, gently=False):
@@ -724,6 +832,14 @@ class Server:
             pass
 
     def stop(self):
+        # Taking _starting means a stop cannot slide past a launch in flight:
+        # serve() finishes registering its child first, and the child is then
+        # killed here rather than surviving the shutdown unowned.
+        with self._starting:
+            self._stop_now()
+
+    def _stop_now(self):
+        """stop() for a thread that already holds _starting."""
         with self._lock:
             proc, self._proc = self._proc, None
             self._port, self._log, self._key = 0, "", None
@@ -737,6 +853,8 @@ class Server:
         return DATA_DIR / f"{self.program.name}-server.pid"
 
     def _remember(self, pid):
+        with self._lock:
+            self._pid = pid
         try:
             path = self._pid_file()
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -744,28 +862,62 @@ class Server:
         except OSError:
             pass      # the sweep is a safety net, not something to fail a run over
 
-    def _forget(self):
+    def _forget(self, pid=None):
+        """Remove the pid file, but only while it still holds our own pid.
+
+        Another Dikte started after us writes its pid over ours, and removing
+        that file would hide its server from every future sweep.
+        """
+        if pid is None:
+            with self._lock:
+                pid = self._pid
         try:
-            self._pid_file().unlink()
-        except OSError:
+            if int(self._pid_file().read_text().strip()) == pid:
+                self._pid_file().unlink()
+        except (OSError, ValueError):
             pass
 
     def _is_ours(self, pid):
-        """Whether that pid is still the server this Dikte started.
+        """True: still our server. False: definitely not. None: cannot tell now.
 
         Asked because pids are handed out again: by the time anyone looks, the
         number could belong to something else entirely, and killing it would be
-        a good deal worse than the leak being cleaned up. The program name alone
-        could be somebody else's copy; the name together with Dikte's own data
-        directory on the command line could not. Windows offers no command line
-        to read, so the executable's name is the whole of the answer there.
+        a good deal worse than the leak being cleaned up. The tri-state matters
+        for the pid file: a definitive "not ours" means the file is stale and
+        safe to drop, while "cannot tell" means it has to stay so a later start
+        can ask again.
+
+        On Linux the program name alone could be somebody else's copy; the name
+        together with Dikte's own data directory on the command line could not.
+        Windows offers no command line to read, so the executable's full path
+        is the answer there: under our bin directory, or exactly the binary the
+        settings point this server at. Never the base name alone, which is
+        anyone's whisper-server.exe.
         """
         if sys.platform == "win32":
-            return _win_image_name(pid) == _binary_file(self.program).lower()
+            path = _win_image_name(pid)
+            if not path:
+                # OpenProcess said nothing: the process may be gone or merely
+                # unreadable from here, and the difference decides whether the
+                # pid file may be dropped, so no verdict rather than a wrong one.
+                return None
+            path = os.path.normcase(path)
+            if path.startswith(os.path.normcase(str(BIN_DIR)) + os.sep):
+                return True
+            with self._lock:
+                custom = self._settings.get("binary", "")
+            configured = program_path(self.program, custom)
+            if configured:
+                resolved = os.path.normcase(str(pathlib.Path(configured).resolve()))
+                if path == resolved:
+                    return True
+            return False
         try:
             blob = pathlib.Path(f"/proc/{pid}/cmdline").read_bytes()
+        except (FileNotFoundError, ProcessLookupError):
+            return False          # the process is definitively gone
         except OSError:
-            return False
+            return None           # /proc would not answer just now
         return (self.program.binary.encode() in blob
                 and str(DATA_DIR).encode() in blob)
 
@@ -781,13 +933,21 @@ class Server:
             pid = int(self._pid_file().read_text().strip())
         except (OSError, ValueError):
             return False
-        self._forget()
-        if not self._is_ours(pid):
+        owned = self._is_ours(pid)
+        if owned is None:
+            # Could not be verified rather than known stale: the file stays,
+            # so the next start asks again instead of losing track of a server
+            # that may still be holding a model.
+            return False
+        if not owned:
+            self._forget(pid)
             return False
         try:
             os.kill(pid, signal.SIGTERM)
         except OSError:
+            self._forget(pid)
             return False
+        self._forget(pid)
         return True
 
 

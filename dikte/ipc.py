@@ -11,11 +11,14 @@ shortcut may still send.
 import json
 import os
 import shlex
+import subprocess
 import sys
 
+from PyQt6.QtCore import QLockFile
 from PyQt6.QtNetwork import QLocalSocket
 
 from . import integrate
+from . import paths
 
 SERVER_NAME = "dikte-" + (
     str(os.getuid()) if hasattr(os, "getuid")
@@ -54,10 +57,9 @@ def launcher():
     if not getattr(sys, "frozen", False):
         return [sys.executable, script_path()]
     if sys.platform == "win32":
-        windowed = os.path.join(os.path.dirname(sys.executable),
-                                integrate.WINDOWS_APP)
-        if os.path.isfile(windowed):
-            return [windowed]
+        windowed = integrate.windowed_executable()
+        if windowed is not None:
+            return [str(windowed)]
     return [os.environ.get("APPIMAGE") or sys.executable]
 
 
@@ -70,6 +72,60 @@ def command_for(verb):
     and an AppImage lives wherever it was downloaded to.
     """
     return shlex.join(launcher() + ([verb] if verb else []))
+
+
+def already_serving():
+    """Whether a running instance answers on this user's name.
+
+    Asked before an instance opens a server of its own, because listen() is
+    not the check: a Windows named pipe takes a second server on the same name
+    rather than refusing it, and everywhere else removeServer() would first
+    take the live socket away from the instance holding it. Either way two
+    whole Diktes then run, and the newer one's sweep() kills the whisper the
+    older one is answering dictations with. The probe is "status" and nothing
+    else: a verb with a side effect here would fire it during the relaunch a
+    slow-to-answer instance provokes, on top of the verb being forwarded.
+    """
+    return send("status") is not None
+
+
+def instance_lock():
+    """This user's one-Dikte lock, taken before anything else is built.
+
+    The probe above has a hole: two copies started in the same moment both ask
+    before either listens, and both come up. A lock file closes it, and
+    QLockFile writes the holder's pid into it, so a lock a killed instance
+    left behind identifies itself as stale and clears. None when the data
+    directory cannot be made, which a start should survive: the probe still
+    stands guard, just without the simultaneous-start case.
+    """
+    try:
+        paths.DATA_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    lock = QLockFile(str(paths.DATA_DIR / "dikte.lock"))
+    # Never presume a lock is stale by age alone; the pid check is the truth.
+    lock.setStaleLockTime(0)
+    return lock
+
+
+def respawn(arguments):
+    """Start this installation again with `arguments`, leaving this process.
+
+    execv everywhere it works the way it says: the new process takes this
+    pid and nothing is left behind. On Windows execv mangles arguments with
+    spaces and leaves the two processes sharing a console, so the replacement
+    is started detached instead and the caller exits on its own.
+    """
+    args = launcher() + list(arguments)
+    if sys.platform == "win32":
+        # By value where the names are missing, so the Windows half of this is
+        # testable from the suite's other platforms too.
+        detached = (getattr(subprocess, "DETACHED_PROCESS", 0x00000008)
+                    | getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0x00000200))
+        subprocess.Popen(args, creationflags=detached, close_fds=True)
+        return
+    os.execv(args[0], args)
 
 
 def send(cmd, wait=False, timeout=0, **args):

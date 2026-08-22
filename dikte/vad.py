@@ -17,13 +17,15 @@ import unicodedata
 
 # Stock phrases the models produce when handed silence. Kept deliberately
 # narrow: only sentences nobody dictates on purpose in a two-second clip.
+# Whisper does invent "you" and "bye" too, but people dictate both as whole
+# answers, so a single word never belongs here.
 HALLUCINATIONS = {
     "altyazi mk", "altyazi m k", "altyazi", "altyazilar",
     "abone olmayi unutmayin", "izlediginiz icin tesekkurler",
     "izlediginiz icin tesekkur ederim", "izlediginiz icin tesekkur ederiz",
     "kanalima abone olmayi unutmayin", "altyazi mk altyazi mk",
     "thanks for watching", "thank you for watching", "thanks for watching!",
-    "please subscribe", "subscribe to my channel", "you", "bye",
+    "please subscribe", "subscribe to my channel",
     "mbc masr", "sous titres realises par la communaute damara org",
     "amara org community", "sous titrage st 501",
 }

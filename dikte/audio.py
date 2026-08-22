@@ -31,11 +31,21 @@ import wave
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
+from . import paths
 from .i18n import t
 
-# Console programs started from a windowless process would otherwise each open
-# a console window of their own on Windows.
-NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+# Squaring a chunk sample by sample in Python is the most expensive thing the
+# level meter does, and it does it for every chunk of every recording. sumprod
+# stays in C for the whole sum; it arrived in 3.12 and the floor here is 3.11,
+# so the plain loop remains as the fallback. Both produce the same integer.
+try:
+    from math import sumprod
+except ImportError:
+    sumprod = None
+
+# See paths.NO_WINDOW; re-exported here because this module's callers and
+# tests have always read it under this name.
+NO_WINDOW = paths.NO_WINDOW
 
 RATE = 16000
 CHANNELS = 1
@@ -79,12 +89,15 @@ class Recorder(QObject):
 
     level = pyqtSignal(float)              # 0.0 - 1.0, for the waveform
     stopped = pyqtSignal(str, float, object)  # wav path, duration (s), per-chunk RMS
+    died = pyqtSignal()                    # the capture quit mid-recording
     failed = pyqtSignal(str)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self._proc = None
         self._thread = None
+        self._log = None
+        self._run = None
         self._buffer = bytearray()
         self._rms = []
         self._cancelled = False
@@ -126,12 +139,17 @@ class Recorder(QObject):
             self.failed.emit(t(sound().missing))
             return
 
+        # The recorder keeps talking to stderr for as long as it runs; a pipe
+        # nobody drains would eventually block it, so it writes to a file.
+        self._drop_log()
+        self._log = tempfile.TemporaryFile()
         try:
             self._proc = subprocess.Popen(
-                cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0,
+                cmd, stdout=subprocess.PIPE, stderr=self._log, bufsize=0,
                 creationflags=NO_WINDOW,
             )
         except OSError as exc:
+            self._drop_log()
             self.failed.emit(t("Could not start recording: {error}", error=exc))
             return
 
@@ -141,15 +159,21 @@ class Recorder(QObject):
         self._stopping = False
         self._paused = False
         self._max_bytes = int(max_seconds * RATE * SAMPLE_WIDTH * CHANNELS)
-        self._thread = threading.Thread(target=self._pump, daemon=True)
+        # The pump is handed this run's objects rather than reading them off
+        # self, and a token to say whose run it still is: a pump that outlives
+        # its 2 s join must not touch the recording that comes after it.
+        self._run = object()
+        self._thread = threading.Thread(
+            target=self._pump, daemon=True,
+            args=(self._run, self._proc, self._proc.stdout,
+                  self._buffer, self._rms, self._max_bytes),
+        )
         self._thread.start()
 
-    def _pump(self):
-        proc = self._proc
-        stdout = proc.stdout
+    def _pump(self, run, proc, stdout, buffer, rms, max_bytes):
         try:
             while True:
-                chunk = stdout.read(CHUNK_BYTES)
+                chunk = _read_exact(stdout, CHUNK_BYTES)
                 if not chunk:
                     break
                 if self._paused:
@@ -157,33 +181,58 @@ class Recorder(QObject):
                     # nobody empties fills up, and the capture program blocks on
                     # a full one instead of waiting quietly for the resume.
                     continue
-                peak, rms = chunk_levels(chunk)
+                peak, chunk_rms = chunk_levels(chunk)
                 with self._lock:
-                    self._buffer.extend(chunk)
-                    self._rms.append(rms)
-                    too_long = len(self._buffer) >= self._max_bytes
+                    buffer.extend(chunk)
+                    rms.append(chunk_rms)
+                    too_long = len(buffer) >= max_bytes
+                if self._run is not run:
+                    # This recording was given up on; whatever happens now
+                    # belongs to the run that replaced it, not to this one.
+                    return
                 self.level.emit(peak)
                 if too_long:
                     self._terminate()
                     break
         except (OSError, ValueError):
             pass
+        if self._run is not run:
+            return
+        if self._stopping or self._cancelled:
+            return
+        with self._lock:
+            captured = bool(buffer)
+        if captured:
+            # Sound had already arrived and nobody asked it to end: the device
+            # went away, or the recorder fell over mid-dictation. That has to
+            # be said while there is still something worth keeping.
+            self.died.emit()
+            return
         # Nobody asked it to end and it captured nothing: the recorder is not
         # installed properly, or the device was refused. Said out loud here,
         # because stop() would otherwise report it as a recording that was too
         # short, which sends the user looking in the wrong place.
-        with self._lock:
-            captured = bool(self._buffer)
-        if self._stopping or self._cancelled or captured:
-            return
-        try:
-            detail = proc.stderr.read().decode("utf-8", "replace").strip()
-        except (AttributeError, OSError):
-            detail = ""
-        self.failed.emit(t(
-            "Audio recorder stopped before receiving sound: {error}",
-            error=detail or f"exit code {proc.returncode}",
-        ))
+        detail = self._error_tail()
+        # poll() first, because returncode stays None until somebody reaps the
+        # process, and "exit code None" answers nothing.
+        code = proc.poll()
+        if not detail and code is not None:
+            detail = f"exit code {code}"
+        if detail:
+            self.failed.emit(t(
+                "Audio recorder stopped before receiving sound: {error}",
+                error=detail,
+            ))
+        else:
+            self.failed.emit(t("Audio recorder stopped before receiving sound"))
+
+    def _error_tail(self):
+        log = self._log
+        return _last_log_line(log) if log is not None else ""
+
+    def _drop_log(self):
+        log, self._log = self._log, None
+        _close_log(log)
 
     def _terminate(self):
         self._stopping = True
@@ -195,7 +244,10 @@ class Recorder(QObject):
             except (subprocess.TimeoutExpired, OSError):
                 try:
                     proc.kill()
-                except OSError:
+                    # Reaped even after a kill, or the child stays a zombie
+                    # holding its slot in the process table.
+                    proc.wait(timeout=1)
+                except (subprocess.TimeoutExpired, OSError):
                     pass
 
     def cancel(self):
@@ -205,6 +257,8 @@ class Recorder(QObject):
             self._thread.join(timeout=2)
         self._thread = None
         self._proc = None
+        self._run = None
+        self._drop_log()
         with self._lock:
             self._buffer = bytearray()
 
@@ -217,7 +271,11 @@ class Recorder(QObject):
             self._thread.join(timeout=2)
         self._thread = None
         self._proc = None
+        self._run = None
+        self._drop_log()
 
+        # The same buffer object the pump was handed, harvested under the same
+        # lock it appends with.
         with self._lock:
             pcm = bytes(self._buffer)
             rms = list(self._rms)
@@ -231,7 +289,13 @@ class Recorder(QObject):
             self.failed.emit(t("Recording too short, speak for at least 0.3 s"))
             return
 
-        path = write_wav(pcm)
+        try:
+            path = write_wav(pcm)
+        except (OSError, wave.Error) as exc:
+            # A full disk or an unwritable temp directory costs this recording
+            # either way; a message beats a traceback in the journal.
+            self.failed.emit(t("Could not write the recording: {error}", error=exc))
+            return
         self.stopped.emit(path, frames / RATE, rms)
 
 
@@ -284,6 +348,7 @@ class MeetingRecorder(QObject):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._procs = []
+        self._interrupted = set()
         self._thread = None
         self._wav = None
         self._logs = []
@@ -336,6 +401,7 @@ class MeetingRecorder(QObject):
             # nobody drains would eventually block it, so it writes to a file.
             self._logs = [tempfile.TemporaryFile() for _ in commands]
             self._procs = []
+            self._interrupted = set()
             for command, log in zip(commands, self._logs):
                 self._procs.append(subprocess.Popen(
                     command, stdout=subprocess.PIPE, stderr=log, bufsize=0,
@@ -440,14 +506,20 @@ class MeetingRecorder(QObject):
             try:
                 _interrupt(proc)
             except OSError:
-                pass
+                continue
+            # ffmpeg reports being interrupted as a failure; stop() needs to
+            # know which exits were our own doing and which were real deaths.
+            self._interrupted.add(proc)
         for proc in running:
             try:
                 proc.wait(timeout=2)
             except (subprocess.TimeoutExpired, OSError):
                 try:
                     proc.kill()
-                except OSError:
+                    # Reaped even after a kill, or the child stays a zombie
+                    # holding its slot in the process table.
+                    proc.wait(timeout=1)
+                except (subprocess.TimeoutExpired, OSError):
                     pass
 
     def _close_file(self):
@@ -460,24 +532,23 @@ class MeetingRecorder(QObject):
                 pass
 
     def _error_tail(self):
-        tails = []
-        for log in self._logs:
-            try:
-                log.seek(0)
-                text = log.read().decode("utf-8", "replace").strip()
-            except OSError:
-                continue
-            lines = [line for line in text.splitlines() if line.strip()]
-            if lines:
-                tails.append(lines[-1])
-        return " | ".join(tails)
+        tails = [_last_log_line(log) for log in self._logs]
+        return " | ".join(tail for tail in tails if tail)
 
     def _finish_process(self):
         self._terminate()
         if self._thread:
             self._thread.join(timeout=3)
         self._thread = None
-        codes = [proc.poll() for proc in self._procs]
+        codes = []
+        for proc in self._procs:
+            code = proc.poll()
+            # A nonzero exit from a process we interrupted ourselves is ffmpeg
+            # complaining about our own stop; one that had already died on its
+            # own keeps its code, because that one is the story.
+            if code and proc in self._interrupted:
+                code = 0
+            codes.append(code)
         code = next((value for value in codes if value), 0)
         self._procs = []
         self._close_file()
@@ -534,11 +605,28 @@ class MeetingRecorder(QObject):
 
     def _drop_log(self):
         for log in self._logs:
-            try:
-                log.close()
-            except OSError:
-                pass
+            _close_log(log)
         self._logs = []
+
+
+def _last_log_line(log):
+    """The last thing a recorder said before it ended, or ''."""
+    try:
+        log.seek(0)
+        text = log.read().decode("utf-8", "replace").strip()
+    except (OSError, ValueError):
+        return ""
+    lines = [line for line in text.splitlines() if line.strip()]
+    return lines[-1] if lines else ""
+
+
+def _close_log(log):
+    if log is None:
+        return
+    try:
+        log.close()
+    except OSError:
+        pass
 
 
 def chunk_levels(chunk):
@@ -549,7 +637,9 @@ def chunk_levels(chunk):
         return 0.0, 0.0
     samples.frombytes(chunk[:usable])
     peak = max(abs(min(samples)), abs(max(samples))) / 32768.0
-    rms = math.sqrt(sum(s * s for s in samples) / len(samples)) / 32768.0
+    power = (sumprod(samples, samples) if sumprod is not None
+             else sum(s * s for s in samples))
+    rms = math.sqrt(power / len(samples)) / 32768.0
     return min(1.0, peak), min(1.0, rms)
 
 
@@ -638,6 +728,13 @@ MERGE_FILTER = (
 )
 
 
+# Whether pw-record takes --raw, asked of the binary once per process: the
+# probe costs a subprocess, and the answer cannot change under a running
+# application. Kept here rather than inside _pw_record_raw_option so the probe
+# itself stays testable against different binaries.
+_PW_RAW = None
+
+
 def _pulse_record(target):
     """parec, or pw-record where PulseAudio's tools were left out.
 
@@ -645,6 +742,7 @@ def _pulse_record(target):
     service, and its source names are the same ones shown by list_sources().
     Keep pw-record as the fallback for minimal native-PipeWire installations.
     """
+    global _PW_RAW
     if shutil.which("parec"):
         cmd = [
             "parec", "--record", "--raw", f"--rate={RATE}",
@@ -660,8 +758,10 @@ def _pulse_record(target):
             cmd.append(f"--device={target}")
         return cmd
     if shutil.which("pw-record"):
+        if _PW_RAW is None:
+            _PW_RAW = _pw_record_raw_option()
         cmd = [
-            "pw-record", *_pw_record_raw_option(), f"--rate={RATE}",
+            "pw-record", *_PW_RAW, f"--rate={RATE}",
             f"--channels={CHANNELS}", "--format=s16",
         ]
         if target:
@@ -682,8 +782,11 @@ def _pw_record_raw_option():
     that line, so ask the installed binary which form it understands.
     """
     try:
+        # utf-8 spelled out: subprocess otherwise decodes with the locale's
+        # codec, and help text through a codec it was not written in raises.
         result = subprocess.run(
-            ["pw-record", "--help"], capture_output=True, text=True, timeout=2
+            ["pw-record", "--help"], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=2,
         )
         help_text = (result.stdout or "") + (result.stderr or "")
     except (subprocess.SubprocessError, OSError):
@@ -708,9 +811,12 @@ def _pactl_sources():
     if not shutil.which("pactl"):
         return []
     try:
+        # utf-8 spelled out: device descriptions carry whatever alphabet the
+        # machine speaks, and the locale's codec is not always able to say so.
         out = subprocess.run(
             ["pactl", "-f", "json", "list", "sources"],
-            capture_output=True, text=True, timeout=5, check=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=5, check=True,
         ).stdout
         return json.loads(out)
     except (subprocess.SubprocessError, OSError, json.JSONDecodeError):
@@ -739,7 +845,8 @@ def _pulse_default_output():
     try:
         sink = subprocess.run(
             ["pactl", "get-default-sink"],
-            capture_output=True, text=True, timeout=5, check=True,
+            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            timeout=5, check=True,
         ).stdout.strip()
     except (subprocess.SubprocessError, OSError):
         return ""

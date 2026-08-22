@@ -719,11 +719,20 @@ class LocalModels(DikteTest):
         # Qt's int is C++'s 32-bit one, and a 2.3 GB model is more than fits in
         # it: the count came out the far side negative, at "-1%".
         box = self.window(cfg.Config()).local_llm
-        box._downloading = True
-        box._report(1_048_576, 2_489_757_856)
+        box._report("model", 1_048_576, 2_489_757_856)
         _app.processEvents()
         self.assertIn("2.3 GB", box.status.text())
         self.assertNotIn("-", box.status.text())
+
+    def test_each_download_reports_into_its_own_label(self):
+        """The two can run at once; the tag, not a flag read later, says
+        which label the bytes belong to."""
+        box = self.window(cfg.Config()).local_llm
+        box._report("program", 10, 100)
+        box._report("model", 20, 100)
+        _app.processEvents()
+        self.assertIn("10", box.program_label.text())
+        self.assertIn("20", box.status.text())
 
     def test_a_long_model_name_is_not_cut_in_half(self):
         # The list under a combo box takes the box's width and elides what does

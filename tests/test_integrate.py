@@ -475,6 +475,17 @@ class Windows(unittest.TestCase):
         self.installed = pathlib.Path(self.tmp.name).resolve()
         self.app = self.installed / "Dikte.exe"
         self.app.write_text("")
+        # APPDATA pointed into the sandbox, so that the Startup folder these
+        # tests delete from is never the machine's own.
+        appdata = mock.patch.dict(os.environ,
+                                  {"APPDATA": str(self.installed / "Roaming")})
+        appdata.start()
+        self.addCleanup(appdata.stop)
+
+    def startup_shortcut(self):
+        """Where install.ps1 -Autostart puts a checkout's sign-in entry."""
+        return (self.installed / "Roaming" / "Microsoft" / "Windows"
+                / "Start Menu" / "Programs" / "Startup" / "Dikte.lnk")
 
     def _write(self, command):
         self.value = command
@@ -510,6 +521,45 @@ class Windows(unittest.TestCase):
         self.assertEqual(len(self.install()), 1)
         self.assertEqual(self.value, f'"{self.app}"')
 
+    def test_an_entry_for_another_working_install_is_left_alone(self):
+        """The same courtesy the Linux half pays another menu entry: an entry
+        naming an executable that still exists is an installation that still
+        works, and a start of this one has no business redirecting it."""
+        other = self.installed / "Elsewhere" / "Dikte.exe"
+        other.parent.mkdir()
+        other.write_text("")
+        self.value = f'"{other}"'
+        self.assertEqual(self.install(), [])
+        self.assertEqual(self.value, f'"{other}"')
+
+    def test_asking_outright_overrules_a_working_other_install(self):
+        other = self.installed / "Elsewhere" / "Dikte.exe"
+        other.parent.mkdir()
+        other.write_text("")
+        self.value = f'"{other}"'
+        self.assertEqual(self.install(force=True), [integrate._run_entry_name()])
+        self.assertEqual(self.value, f'"{self.app}"')
+
+    def test_typing_it_sweeps_away_a_checkout_startup_shortcut(self):
+        """install.ps1 -Autostart writes it, the Run value replaces it, and
+        both left in place would be two Diktes at every sign-in."""
+        shortcut = self.startup_shortcut()
+        shortcut.parent.mkdir(parents=True)
+        shortcut.write_text("")
+        changed = self.install(force=True)
+        self.assertIn(shortcut, changed)
+        self.assertFalse(shortcut.exists())
+
+    def test_a_start_leaves_a_checkout_startup_shortcut_alone(self):
+        """The silent call on every start has not been asked to move the
+        machine off its checkout."""
+        shortcut = self.startup_shortcut()
+        shortcut.parent.mkdir(parents=True)
+        shortcut.write_text("")
+        self.value = f'"{self.app}"'
+        self.assertEqual(self.install(), [])
+        self.assertTrue(shortcut.exists())
+
     def test_running_it_again_changes_nothing(self):
         self.install(force=True)
         self.assertEqual(self.install(), [])
@@ -519,6 +569,31 @@ class Windows(unittest.TestCase):
         self.assertEqual(len(self.remove()), 1)
         self.assertEqual(self.value, "")
         self.assertEqual(self.remove(), [])
+
+
+class WindowedExecutable(unittest.TestCase):
+    """The windowed executable, looked up beside whichever one is running.
+
+    Beside rather than at a known place: the setup lays both executables into
+    one directory wherever that directory was put, so either can find the
+    other without knowing where the install is.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.installed = pathlib.Path(self.tmp.name).resolve()
+
+    def test_found_beside_the_named_executable(self):
+        windowed = self.installed / "Dikte.exe"
+        windowed.write_text("")
+        self.assertEqual(
+            integrate.windowed_executable(str(self.installed / "dikte-cli.exe")),
+            windowed)
+
+    def test_none_when_no_setup_installed_one(self):
+        self.assertIsNone(
+            integrate.windowed_executable(str(self.installed / "dikte-cli.exe")))
 
 
 class WindowsExecutableNames(unittest.TestCase):

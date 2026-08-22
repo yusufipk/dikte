@@ -21,6 +21,7 @@ import tempfile
 from . import api
 from . import assistant
 from . import ggml
+from . import paths
 from .i18n import t
 
 PROVIDERS = ("openrouter", "local", "claude", "codex")
@@ -194,21 +195,43 @@ def _output(cmd, timeout, service):
             "{binary} not found. Install it, or have OpenRouter clean up "
             "instead, under Settings → API and models.", binary=binary,
         ))
+    # Both streams land in files rather than pipes: nobody drains a pipe while
+    # the process is being waited out, and a CLI chatty enough would fill the
+    # buffer and wedge. And a timeout must end the CLI's tool subprocesses too,
+    # not just the CLI, which subprocess.run's timeout does not do; hence the
+    # own session on POSIX and assistant.kill_tree on the way out.
+    out_file = tempfile.TemporaryFile()
+    err_file = tempfile.TemporaryFile()
+    grouped = {"start_new_session": True} if os.name == "posix" else {}
     try:
-        done = subprocess.run(
-            cmd, cwd=os.path.expanduser("~"), stdin=subprocess.DEVNULL,
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=timeout,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-    except subprocess.TimeoutExpired:
-        raise CleanupError(t("{service} did not finish within {seconds} seconds.",
-                             service=service, seconds=timeout)) from None
-    except OSError as exc:
-        raise CleanupError(t("Could not run {binary}: {error}",
-                             binary=binary, error=exc)) from exc
-    if done.returncode != 0:
-        raise CleanupError(assistant.last_line(done.stderr) or t(
+        try:
+            proc = subprocess.Popen(
+                cmd, cwd=os.path.expanduser("~"), stdin=subprocess.DEVNULL,
+                stdout=out_file, stderr=err_file,
+                creationflags=paths.NO_WINDOW,
+                **grouped,
+            )
+        except OSError as exc:
+            raise CleanupError(t("Could not run {binary}: {error}",
+                                 binary=binary, error=exc)) from exc
+        try:
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            assistant.kill_tree(proc)
+            raise CleanupError(t("{service} did not finish within {seconds} seconds.",
+                                 service=service, seconds=timeout)) from None
+        out_file.seek(0)
+        stdout = out_file.read().decode("utf-8", "replace")
+        err_file.seek(0)
+        stderr = err_file.read().decode("utf-8", "replace")
+    finally:
+        for handle in (out_file, err_file):
+            try:
+                handle.close()
+            except OSError:
+                pass
+    if proc.returncode != 0:
+        raise CleanupError(assistant.last_line(stderr) or t(
             "{service} exited with code {code}.",
-            service=service, code=done.returncode))
-    return (done.stdout or "").strip()
+            service=service, code=proc.returncode))
+    return stdout.strip()

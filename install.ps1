@@ -23,8 +23,19 @@ $autostartLink = Join-Path $startup "Dikte.lnk"
 $cmdShim = Join-Path $env:LOCALAPPDATA "Microsoft\WindowsApps\dikte.cmd"
 
 if ($Uninstall) {
-    foreach ($path in @($shortcut, $autostartLink, $cmdShim)) {
+    foreach ($path in @($shortcut, $autostartLink)) {
         if (Test-Path $path) { Remove-Item $path -Force; Write-Host "removed: $path" }
+    }
+    # The packaged install writes the same shim, naming its own dikte-cli.exe.
+    # Only the one naming this checkout is ours to delete; taking the other
+    # would break the `dikte` command of an install this script never made.
+    if (Test-Path $cmdShim) {
+        if ((Get-Content $cmdShim -Raw).Contains($entry)) {
+            Remove-Item $cmdShim -Force
+            Write-Host "removed: $cmdShim"
+        } else {
+            Write-Host "left alone: $cmdShim (it names another install, not this checkout)"
+        }
     }
     Write-Host "Dikte's shortcuts are gone. The repository and your settings are not."
     exit 0
@@ -63,6 +74,15 @@ foreach ($path in @($shortcut) + $(if ($Autostart) { @($autostartLink) } else { 
     $link.Description = "Dikte: dictation"
     $link.Save()
     Write-Host "shortcut: $path"
+}
+
+if ($Autostart) {
+    # The packaged build keeps its sign-in entry in the registry. Left there
+    # beside the shortcut written above, both would start a Dikte at sign-in,
+    # and this install is the one being asked for.
+    Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Run" `
+        -Name "Dikte" -ErrorAction SilentlyContinue
+    Write-Host "autostart: the Startup shortcut replaces any registry Run entry a packaged install left"
 }
 
 # --- the dikte command ------------------------------------------------------
