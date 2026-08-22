@@ -50,16 +50,20 @@ class Pipeline(QObject):
     def busy(self):
         return self._thread is not None and self._thread.is_alive()
 
-    def run(self, wav_path, duration, rms_values=(), ask=False, paste=None):
+    def run(self, wav_path, duration, rms_values=(), ask=False, paste=None,
+            focus=None):
         """`paste` overrides the setting for this one run, which is what a
         dictation asked for from a terminal wants: the text comes back down the
-        socket, and pasting it into whatever had focus is nobody's intention."""
+        socket, and pasting it into whatever had focus is nobody's intention.
+
+        `focus` is the application that was in front when the recording began,
+        as a process id, and is where the paste is meant to land."""
         if self.busy:
             return
         self._stop.clear()
         self._thread = threading.Thread(
             target=self._work,
-            args=(wav_path, duration, list(rms_values), ask, paste),
+            args=(wav_path, duration, list(rms_values), ask, paste, focus),
             daemon=True,
         )
         self._thread.start()
@@ -73,7 +77,8 @@ class Pipeline(QObject):
         """
         self._stop.set()
 
-    def _work(self, wav_path, duration, rms_values, ask, paste_override=None):
+    def _work(self, wav_path, duration, rms_values, ask, paste_override=None,
+              focus=None):
         conf = self.conf
         started = time.monotonic()
         raw = ""
@@ -144,7 +149,7 @@ class Pipeline(QObject):
                     paste.copy(text)
                     if wants_paste:
                         self.stage.emit(t("Pasting…"))
-                        paste.press(conf["paste_shortcut"])
+                        paste.press(conf["paste_shortcut"], focus=focus)
                 finally:
                     if previous is not None:
                         # Let the focused application consume the temporary

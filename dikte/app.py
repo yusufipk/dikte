@@ -18,6 +18,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 
 # A Wayland client cannot place a window in a screen corner, so the indicator
 # is drawn through XWayland.
@@ -49,6 +50,7 @@ from . import hub  # noqa: E402
 from . import i18n  # noqa: E402
 from . import integrate  # noqa: E402
 from . import ipc  # noqa: E402
+from . import mac_window  # noqa: E402
 from . import meeting  # noqa: E402
 from . import trayicon  # noqa: E402
 from . import update  # noqa: E402
@@ -145,6 +147,12 @@ class Dikte:
         # Which recording is the current one, so a timer set for the run that
         # started it cannot stop the one that came after.
         self._run_id = 0
+        # The application that was in front when the recording started, which
+        # is where the transcript is meant to go, and the timer watching for
+        # the moment it has to be put back there. macOS only; see
+        # _give_the_front_back.
+        self.front_before = None
+        self._front_watch = None
 
         self.overlay = Overlay(self.conf["overlay_corner"])
         # The agent's indicator sits on top of the dictation one when both are
@@ -605,9 +613,19 @@ class Dikte:
         self.last_toggle.restart()
         return False
 
+    def _the_front(self):
+        """The application a recording is about to start from, or None.
+
+        Asked before the indicator goes up rather than alongside the
+        microphone: putting a window on screen can take the front as well, and
+        once it has, the only answer left to the question is Dikte.
+        """
+        return mac_window.frontmost_pid() if sys.platform == "darwin" else None
+
     def start(self):
         if self.state != IDLE or self.recording:
             return
+        self.front_before = self._the_front()
         self.overlay.show_recording()
         self._begin_recording(DICTATION)
         self._set_state(RECORDING)
@@ -615,6 +633,7 @@ class Dikte:
     def start_ask(self):
         if self.ask_state != IDLE or self.recording:
             return
+        self.front_before = self._the_front()
         self.ask_overlay.show_recording(asking=True)
         self._begin_recording(ASK)
         self._set_ask_state(RECORDING)
@@ -627,6 +646,68 @@ class Dikte:
         self.elapsed.restart()
         self.ticker.start()
         self.recorder.start(self.conf["mic_target"], self.conf["max_seconds"])
+        self._give_the_front_back(self.front_before)
+
+    def _give_the_front_back(self, was_in_front):
+        """Hand the front back to whoever had it when the recording started.
+
+        On macOS a recording goes through ffmpeg's avfoundation input, and
+        opening a capture session there brings the process that did it to the
+        front. ffmpeg is a child of Dikte with no bundle of its own, so the
+        system credits the move to Dikte: the window the user was typing in
+        loses the front, its caret stops, its title bar greys out, and the
+        Cmd+V at the end of the dictation has nowhere to land. Measured with a
+        TextEdit document in front:
+
+            press the shortcut          front = TextEdit
+            recorder.start returns      front = TextEdit
+            89 ms later                 front = Dikte
+
+        Nothing about the capture session can be asked not to do this. It is
+        not a window of ours and no flag reaches it. Starting ffmpeg in its own
+        session, and clearing __CFBundleIdentifier from its environment, were
+        both tried and both measured to make no difference. So it is undone
+        instead. The move lands a moment after the process starts rather than
+        during the call, hence the short watch rather than one attempt: it
+        gives up as soon as it has put the front back, and in any case after a
+        second and a half, which is longer than the microphone has ever taken
+        to open.
+
+        Silent off macOS, and silent when the recording started from Dikte
+        itself: there is nothing to give back.
+        """
+        # One watch at a time. A second recording started before the first
+        # watch had finished would otherwise leave two of them running, and the
+        # older one would put the front back where the older recording
+        # started, which by then is the wrong window.
+        if self._front_watch is not None:
+            self._front_watch.stop()
+            self._front_watch = None
+        if not was_in_front or was_in_front == os.getpid():
+            return
+        deadline = time.monotonic() + 1.5
+        watch = QTimer(self.app)
+        # Ten milliseconds because the front is already gone by the time this
+        # notices, and every tick it waits is a tick of the user's window drawn
+        # inactive: at forty the title bar visibly blinks, at ten it does not.
+        # Two messages to AppKit per tick, for at most a second and a half.
+        watch.setInterval(10)
+
+        def look():
+            if mac_window.is_frontmost():
+                mac_window.activate(was_in_front)
+                self._stop_watching_the_front()
+            elif time.monotonic() > deadline:
+                self._stop_watching_the_front()
+
+        watch.timeout.connect(look)
+        self._front_watch = watch
+        watch.start()
+
+    def _stop_watching_the_front(self):
+        if self._front_watch is not None:
+            self._front_watch.stop()
+            self._front_watch = None
 
     def stop(self):
         if self.state != RECORDING:
@@ -742,6 +823,12 @@ class Dikte:
             return
         base = meeting.new_base()
         _, wav_path = cfg.meeting_paths(base)
+        # A meeting opens the same capture as a dictation does, and takes the
+        # front the same way: whoever is being recorded is in a call, and
+        # having their window go inactive mid-sentence is worse here than
+        # anywhere else. Kept as a local rather than on self: a dictation may
+        # already be waiting on its own note for where to paste.
+        was_in_front = self._the_front()
         self.meeting_recorder.start(
             str(wav_path),
             self.conf["meeting_mic_target"] or self.conf["mic_target"],
@@ -750,6 +837,7 @@ class Dikte:
         )
         if not self.meeting_recorder.active:
             return  # start() has already said what went wrong
+        self._give_the_front_back(was_in_front)
         self.meeting_base = base
         self.meeting_elapsed.restart()
         self.meeting_ticker.start()
@@ -876,11 +964,13 @@ class Dikte:
     def _on_recorded(self, wav_path, duration, rms_values):
         owner, self.recorder_owner = self.recorder_owner, None
         wants_paste = self.paste_override.pop(owner, None)
+        focus, self.front_before = self.front_before, None
         if owner == ASK:
             self.ask_pipeline.run(wav_path, duration, rms_values, ask=True,
-                                  paste=wants_paste)
+                                  paste=wants_paste, focus=focus)
         else:
-            self.pipeline.run(wav_path, duration, rms_values, paste=wants_paste)
+            self.pipeline.run(wav_path, duration, rms_values,
+                              paste=wants_paste, focus=focus)
 
     def _on_finished(self, _raw, text, warning):
         if warning:

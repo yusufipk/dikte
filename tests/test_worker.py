@@ -32,7 +32,8 @@ class Chain(DikteTest):
                   transcript="uh, book it for Thursday",
                   cleaned="Book it for Thursday.",
                   cleanup_error=None, answer=("Booked.", ""), rms=None,
-                  clipboard=b"what was there before", paste_error=None):
+                  clipboard=b"what was there before", paste_error=None,
+                  focus=None):
         pipeline = worker.Pipeline(self.conf)
         done, failures, stages, cancels = [], [], [], []
         pipeline.finished.connect(lambda *args: done.append(args))
@@ -60,7 +61,8 @@ class Chain(DikteTest):
                      "copy": copy, "copy_bytes": copy_bytes, "press": press,
                      "read_clipboard": read_clipboard}
             pipeline._work(self.wav, duration,
-                           self.rms if rms is None else rms, ask, paste_override)
+                           self.rms if rms is None else rms, ask, paste_override,
+                           focus)
         return {"done": done, "failures": failures, "stages": stages,
                 "cancelled": cancels, **calls}
 
@@ -72,7 +74,15 @@ class Chain(DikteTest):
         self.assertEqual(run["done"][0],
                          ("uh, book it for Thursday", "Book it for Thursday.", ""))
         run["copy"].assert_called_once_with("Book it for Thursday.")
-        run["press"].assert_called_once_with(self.conf["paste_shortcut"])
+        run["press"].assert_called_once_with(self.conf["paste_shortcut"],
+                                             focus=None)
+
+    def test_the_paste_is_told_where_the_dictation_started(self):
+        """Whoever was in front when the recording began is where the keys are
+        meant to go, and the press is the only part that can act on it."""
+        run = self.run_chain(focus=4242)
+        run["press"].assert_called_once_with(self.conf["paste_shortcut"],
+                                             focus=4242)
 
     def test_the_stages_are_named_as_they_happen(self):
         run = self.run_chain()
