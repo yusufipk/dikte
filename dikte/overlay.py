@@ -264,6 +264,17 @@ class Overlay(QWidget):
         # the corner when it does rather than leaving a gap where it was.
         if self.below is not None and self.below.showing != self._stacked:
             self._reposition()
+        elif self.state in LIVE:
+            # Follow the screen the mouse is currently on.  Checked every ten
+            # ticks (~333 ms) rather than every frame: screenAt() is cheap but
+            # the user's hand moves slowly, so there is no value in sampling it
+            # at 30 Hz.
+            self._screen_check_ticks = getattr(self, "_screen_check_ticks", 0) + 1
+            if self._screen_check_ticks >= 10:
+                self._screen_check_ticks = 0
+                current_screen = QApplication.screenAt(QCursor.pos())
+                if current_screen is not None and current_screen != self.screen():
+                    self._reposition()
         if self.state in LIVE and not self.paused:
             # keep the ribbon moving even through a pause in speech
             self.levels = self.levels[1:] + [self.levels[-1] * 0.72]
