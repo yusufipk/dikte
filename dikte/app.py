@@ -1090,6 +1090,17 @@ class Dikte:
             )
             QApplication.instance().quit()
             return
+        bundle = ipc.macos_bundle()
+        if bundle is not None:
+            # Re-execing a UIElement process on macOS 26 keeps the PID but loses
+            # its registered status item. Ask LaunchServices for a fresh app
+            # instance instead; -n is needed while this one is still finishing.
+            subprocess.Popen(
+                ["/usr/bin/open", "-n", "-a", bundle],
+                close_fds=True,
+            )
+            QApplication.instance().quit()
+            return
         os.execv(args[0], args)
 
     def shutdown(self):
