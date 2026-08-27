@@ -577,6 +577,21 @@ class Doctor(DikteTest):
                       self.run_doctor(as_json=False, cleanup_provider="codex",
                                       cleanup_codex_model="gpt-5.4"))
 
+    def test_agent_on_hosted_provider_does_not_ask_for_a_cli_program(self):
+        for provider in ("openrouter", "opencode"):
+            with self.subTest(provider=provider):
+                reply = self.run_doctor(assistant_provider=provider)
+                self.assertEqual(reply["agent"]["provider"], provider)
+                for cli_name in ("claude", "codex", "agy"):
+                    self.assertNotIn(cli_name, reply["programs"])
+
+    def test_agent_on_a_cli_asks_for_the_program(self):
+        for provider, binary in (("claude", "claude"), ("codex", "codex"), ("agy", "agy")):
+            with self.subTest(provider=provider):
+                reply = self.run_doctor(assistant_provider=provider)
+                self.assertEqual(reply["agent"]["provider"], provider)
+                self.assertIn(binary, reply["programs"])
+
 
 class Devices(DikteTest):
     def test_a_machine_with_nothing_names_its_own_missing_program(self):

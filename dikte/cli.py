@@ -873,7 +873,7 @@ def cmd_doctor(opts):
         # Recording, the device list, and KDE's shortcut registry.
         wanted += ["pw-record", "pactl", "kwriteconfig6"]
     wanted += ["ffmpeg",
-               assistant.executable(assistant.provider(conf)) or "claude",
+               assistant.executable(assistant.provider(conf)),
                cleanup.executable(cleanup.provider(conf))]
     programs = {name: shutil.which(name) or "" for name in wanted if name}
     target = conf.transcribe_target()
