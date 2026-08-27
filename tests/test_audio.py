@@ -81,6 +81,14 @@ class ChunkLevels(unittest.TestCase):
         self.assertEqual(peak, 1.0)
         self.assertEqual(rms, 1.0)
 
+    def test_the_fast_and_plain_rms_paths_agree(self):
+        """sumprod is a speedup, not a different sum: on a 3.11 machine the
+        loop must land on the same integers."""
+        chunk = tone(0.1)
+        with mock.patch.object(audio, "sumprod", None):
+            plain = audio.chunk_levels(chunk)
+        self.assertEqual(audio.chunk_levels(chunk), plain)
+
 
 class StereoLevels(unittest.TestCase):
     def test_the_channels_are_read_apart(self):
@@ -280,6 +288,48 @@ class _StalledStream:
         self._released.set()
 
 
+class _DribblingStream:
+    """A pipe that never fills a whole chunk in one read, the way an unbuffered
+    pipe hands data over under load."""
+
+    def __init__(self, data, piece):
+        self._data = io.BytesIO(data)
+        self._piece = piece
+
+    def read(self, size):
+        return self._data.read(min(size, self._piece))
+
+
+class _RunSwappingStream:
+    """A pipe whose recorder moves on mid-read, the way a new recording starts
+    while a stale pump is still draining the old one."""
+
+    def __init__(self, data, recorder, swap_at, new_proc):
+        self._data = io.BytesIO(data)
+        self._recorder = recorder
+        self._swap_at = swap_at
+        self._new_proc = new_proc
+        self.reads = 0
+
+    def read(self, size):
+        if self.reads == self._swap_at:
+            self._recorder._run = object()
+            self._recorder._proc = self._new_proc
+        self.reads += 1
+        return self._data.read(size)
+
+
+class _SignalCrashingProcess(FakeProcess):
+    """An ffmpeg that calls being interrupted a failure, the way ffmpeg does."""
+
+    def __init__(self, data, code=255):
+        super().__init__(data)
+        self._code = code
+
+    def poll(self):
+        return None if self._alive else self._code
+
+
 class _HeldStream:
     """A capture that is paused and taken up again partway through, the way a
     key press lands in the middle of a recording rather than between two."""
@@ -307,7 +357,10 @@ class RecordingCommand(OnLinux, DikteTest):
         super().setUp()
         # Whether pw-record takes --raw is read off the installed binary, and
         # what is being tested here is the command rather than the machine the
-        # test is running on. PwRecordRawOption covers the reading itself.
+        # test is running on. PwRecordRawOption covers the reading itself. The
+        # answer is remembered between calls, so it cannot be remembered
+        # between tests.
+        self.enterContext(mock.patch.object(audio, "_PW_RAW", None))
         self.enterContext(mock.patch.object(
             audio, "_pw_record_raw_option", return_value=["--raw"]))
 
@@ -392,11 +445,30 @@ class PwRecordRawOption(DikteTest):
         self.assertEqual(["--raw"], self.option(return_value=FakeCompleted()))
 
 
+class PwRawMemo(OnLinux, DikteTest):
+    """The --raw probe runs once per process, not once per key press."""
+
+    def setUp(self):
+        super().setUp()
+        self.enterContext(mock.patch.object(audio, "_PW_RAW", None))
+
+    def test_the_probe_is_asked_once_and_remembered(self):
+        with only_these_tools("pw-record"), \
+                mock.patch.object(audio, "_pw_record_raw_option",
+                                  return_value=["--raw"]) as probe:
+            first = audio.recording_command()
+            second = audio.recording_command()
+        probe.assert_called_once_with()
+        self.assertIn("--raw", first)
+        self.assertEqual(first, second)
+
+
 class RecorderChain(OnLinux, DikteTest):
     """Start to WAV, with pw-record faked out."""
 
     def setUp(self):
         super().setUp()
+        self.enterContext(mock.patch.object(audio, "_PW_RAW", None))
         self.enterContext(mock.patch.object(
             audio, "_pw_record_raw_option", return_value=["--raw"]))
 
@@ -476,42 +548,121 @@ class RecorderChain(OnLinux, DikteTest):
         self.assertEqual(len(failures), 1)
         self.assertIn("pulseaudio-utils", failures[0])
 
-    def pump(self, data=b"", stderr=b"", stopping=False, cancelled=False):
+    def pump(self, data=b"", stderr=b"", stopping=False, cancelled=False,
+             alive=False):
         """Run the pump in this thread, where a queued signal would need an
         event loop nobody is running here."""
         recorder = audio.Recorder()
         failures = []
+        deaths = []
         recorder.failed.connect(failures.append)
+        recorder.died.connect(lambda: deaths.append(True))
         proc = FakeProcess(data)
-        proc.stderr = io.BytesIO(stderr)
-        proc._alive = False
+        proc._alive = alive
         recorder._proc = proc
-        recorder._max_bytes = 10 ** 9
+        recorder._log = io.BytesIO(stderr)
         recorder._stopping = stopping
         recorder._cancelled = cancelled
-        recorder._pump()
-        return failures
+        recorder._run = run = object()
+        recorder._pump(run, proc, proc.stdout, recorder._buffer,
+                       recorder._rms, 10 ** 9)
+        return failures, deaths
 
     def test_a_recorder_that_died_on_its_own_says_so(self):
         """parec refused the device, or the sound server went away."""
-        failures = self.pump(stderr=b"connection refused\n")
+        failures, _ = self.pump(stderr=b"connection refused\n")
         self.assertEqual(len(failures), 1)
         self.assertIn("connection refused", failures[0])
 
     def test_a_death_with_nothing_on_stderr_still_names_the_exit_code(self):
-        failures = self.pump()
+        failures, _ = self.pump()
         self.assertIn("exit code", failures[0])
+
+    def test_a_death_that_left_no_exit_code_is_not_named_none(self):
+        """A process nobody managed to reap has no code to show, and "exit
+        code None" would only puzzle the person reading it."""
+        failures, _ = self.pump(alive=True)
+        self.assertEqual(len(failures), 1)
+        self.assertNotIn("None", failures[0])
 
     def test_a_recording_we_ended_ourselves_is_not_a_death(self):
         """Otherwise a stray keypress produces two errors, and the first one
         sends the user looking for a broken sound server."""
-        self.assertEqual(self.pump(stopping=True), [])
+        self.assertEqual(self.pump(stopping=True), ([], []))
 
     def test_a_cancelled_recording_is_not_a_death(self):
-        self.assertEqual(self.pump(cancelled=True), [])
+        self.assertEqual(self.pump(cancelled=True), ([], []))
 
-    def test_a_recorder_that_captured_something_first_is_not_a_death(self):
-        self.assertEqual(self.pump(data=silence(0.5)), [])
+    def test_a_capture_that_ends_mid_recording_dies_rather_than_fails(self):
+        """Sound had already arrived, so this is not a broken installation:
+        the app is told the recording died and can rescue what there is."""
+        failures, deaths = self.pump(data=silence(0.5))
+        self.assertEqual(failures, [])
+        self.assertEqual(deaths, [True])
+
+    def test_short_pipe_reads_are_gathered_into_whole_chunks(self):
+        """Every RMS entry must stand for one full chunk, or the silence check
+        weighs a half-filled read as its own stretch of room tone."""
+        half = audio.CHUNK_BYTES // 2
+        data = pcm([1000] * (3 * half // 2))   # three half-chunk reads
+        recorder = audio.Recorder()
+        proc = FakeProcess(b"")
+        proc.stdout = _DribblingStream(data, half)
+        proc._alive = False
+        recorder._proc = proc
+        recorder._log = io.BytesIO(b"")
+        recorder._run = run = object()
+        buffer, rms = bytearray(), []
+        recorder._pump(run, proc, proc.stdout, buffer, rms, 10 ** 9)
+        self.assertEqual(len(buffer), len(data))
+        self.assertEqual(len(rms), 2)   # one whole chunk, then the tail
+
+    def test_a_stale_pump_cannot_touch_the_recording_that_replaced_it(self):
+        """A pump that outlives its join must not meter the next run, stop its
+        process, push audio into its buffer, or speak on its behalf."""
+        recorder = audio.Recorder()
+        levels, failures, deaths = [], [], []
+        recorder.level.connect(levels.append)
+        recorder.failed.connect(failures.append)
+        recorder.died.connect(lambda: deaths.append(True))
+        new_proc = FakeProcess(b"")
+        old_proc = FakeProcess(b"")
+        old_proc.stdout = _RunSwappingStream(tone(0.192), recorder,
+                                             swap_at=1, new_proc=new_proc)
+        recorder._proc = old_proc
+        recorder._log = io.BytesIO(b"")
+        old_run = object()
+        recorder._run = old_run
+        recorder._buffer = bytearray()   # the next recording's buffer
+        old_buffer, old_rms = bytearray(), []
+        recorder._pump(old_run, old_proc, old_proc.stdout, old_buffer, old_rms,
+                       2 * audio.CHUNK_BYTES)
+        # Metered once, then the new run took over: the over-length cutoff hit
+        # on the next chunk and had to stand down instead of stopping a
+        # process that was never its own.
+        self.assertEqual(len(levels), 1)
+        self.assertEqual(len(old_buffer), 2 * audio.CHUNK_BYTES)
+        self.assertEqual(new_proc.signals, [])
+        self.assertEqual(old_proc.signals, [])
+        self.assertEqual(recorder._buffer, bytearray())
+        self.assertEqual((failures, deaths), ([], []))
+
+    def test_a_wav_that_cannot_be_written_is_reported_not_raised(self):
+        recorder = audio.Recorder()
+        results, failures = [], []
+        recorder.stopped.connect(lambda *args: results.append(args))
+        recorder.failed.connect(failures.append)
+        proc = FakeProcess(tone(1.0))
+        with only_these_tools("pw-record"), \
+                mock.patch.object(subprocess, "Popen", return_value=proc), \
+                mock.patch.object(audio, "write_wav",
+                                  side_effect=OSError("disk full")):
+            recorder.start()
+            recorder._thread.join(timeout=5)
+            recorder.stop()
+        self.assertEqual(results, [])
+        self.assertEqual(len(failures), 1)
+        self.assertIn("disk full", failures[0])
 
     def test_a_short_recording_reports_only_that(self):
         _, results, failures, _ = self.record(silence(0.1))
@@ -721,6 +872,42 @@ class MacMeetingRecorder(OnMacOS, DikteTest):
     def test_stopping_ends_both_capture_processes(self):
         _, _, _, _, processes, _ = self.record(tone(0.5), tone(0.5))
         self.assertTrue(all(process.signals for process in processes))
+
+    def test_a_stop_we_asked_for_is_not_reported_as_an_ffmpeg_failure(self):
+        """ffmpeg exits 255 when interrupted, and the interruption was our own
+        stop: a meeting ended at once must say "too short", not "ffmpeg → 255"."""
+        path = str(self.path("meeting.wav"))
+        recorder = audio.MeetingRecorder()
+        failed = []
+        recorder.failed.connect(failed.append)
+        processes = [_SignalCrashingProcess(tone(0.1)),
+                     _SignalCrashingProcess(tone(0.1))]
+        with only_these_tools("ffmpeg"), self.devices(), \
+                mock.patch.object(subprocess, "Popen", side_effect=processes):
+            recorder.start(path, "MacBook Pro Microphone", "BlackHole 2ch")
+            recorder._thread.join(timeout=5)
+            recorder.stop()
+        self.assertEqual(len(failed), 1)
+        self.assertIn("0.3", failed[0])
+        self.assertNotIn("255", failed[0])
+
+    def test_an_ffmpeg_that_died_on_its_own_keeps_its_exit_code(self):
+        """A process nobody interrupted has a story to tell, and its code is
+        the only lead the user gets."""
+        path = str(self.path("meeting.wav"))
+        recorder = audio.MeetingRecorder()
+        failed = []
+        recorder.failed.connect(failed.append)
+        dead = _SignalCrashingProcess(tone(0.1))
+        dead._alive = False   # it fell over before stop() reached it
+        processes = [dead, FakeProcess(tone(0.1))]
+        with only_these_tools("ffmpeg"), self.devices(), \
+                mock.patch.object(subprocess, "Popen", side_effect=processes):
+            recorder.start(path, "MacBook Pro Microphone", "BlackHole 2ch")
+            recorder._thread.join(timeout=5)
+            recorder.stop()
+        self.assertEqual(len(failed), 1)
+        self.assertIn("255", failed[0])
 
     def test_a_legacy_numeric_target_fails_before_recording(self):
         recorder = audio.MeetingRecorder()
@@ -953,9 +1140,11 @@ class WindowsDevices(OnWindows, DikteTest):
     def setUp(self):
         super().setUp()
         # The listing is remembered between calls, so that a dictation does not
-        # run ffmpeg of its own. It cannot be remembered between tests.
+        # run ffmpeg of its own. It cannot be remembered between tests, and
+        # neither can the pw-record probe's answer.
         audio._DSHOW_SEEN.clear()
         self.addCleanup(audio._DSHOW_SEEN.clear)
+        self.enterContext(mock.patch.object(audio, "_PW_RAW", None))
 
     @contextlib.contextmanager
     def listing(self, stderr=None, tools=("ffmpeg",)):

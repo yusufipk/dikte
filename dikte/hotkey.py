@@ -970,9 +970,7 @@ def conflicting_shortcuts(shortcut, desktop_id=DESKTOP_ID):
         if "=" not in line or desktop_id in section:
             continue
         key, _, value = line.partition("=")
-        if shortcut.lower() in value.lower().split(","):
-            hits.append(f"{section} → {key}")
-        elif any(shortcut.lower() == part.strip().lower()
-                 for part in re.split(r"[,\t]", value)):
+        if any(shortcut.lower() == part.strip().lower()
+               for part in re.split(r"[,\t]", value)):
             hits.append(f"{section} → {key}")
     return hits

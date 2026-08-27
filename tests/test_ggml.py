@@ -9,6 +9,7 @@ import contextlib
 import hashlib
 import io
 import os
+import pathlib
 import signal
 import sys
 import tarfile
@@ -179,6 +180,21 @@ class Download(Local):
                 ggml.download(item("m.bin", b"x"), target)
         self.assertFalse(target.exists())
 
+    def test_a_target_held_open_keeps_the_finished_download(self):
+        # Windows refuses to replace a file a running server holds open. The
+        # bytes are complete and verified by then, so the .part must survive
+        # the failure rather than being deleted with everything else.
+        data = b"a finished, verified download"
+        target = self.path("data", "models", "m.bin")
+        with fake_urlopen(body(data)):
+            with mock.patch.object(pathlib.Path, "replace",
+                                   side_effect=PermissionError(13, "in use")):
+                with self.assertRaises(ggml.LocalError) as caught:
+                    ggml.download(item("m.bin", data), target)
+        self.assertIn("held open", str(caught.exception))
+        self.assertEqual(target.with_name("m.bin.part").read_bytes(), data)
+        self.assertFalse(target.exists())
+
 
 # --- installing a program -------------------------------------------------
 
@@ -274,6 +290,70 @@ class InstallProgram(Local):
         with self.assertRaises(ggml.LocalError) as caught:
             self.install("whisper-bin-ubuntu-x64.tar.gz", archive=empty)
         self.assertIn("whisper-server", str(caught.exception))
+
+    def test_a_failed_update_leaves_the_working_install_alone(self):
+        # The old install used to be deleted before the new bytes had even
+        # arrived, so a bad download left no local server at all.
+        path, _ = self.install("whisper-bin-ubuntu-x64.tar.gz")
+        with self.assertRaises(ggml.LocalError):
+            self.install("whisper-bin-ubuntu-x64.tar.gz",
+                         archive=b"not an archive at all")
+        self.assertEqual(ggml.installed_program(ggml.WHISPER), path)
+        self.assertTrue(os.path.isfile(path))
+        self.assertEqual(ggml.installed_version(ggml.WHISPER), "v1.9.1")
+        # And the half-made sibling did not linger either.
+        left = list(self.path("data", "bin", "whisper").glob("*.new"))
+        self.assertEqual(left, [])
+
+    def test_an_update_that_never_downloaded_leaves_the_install_alone(self):
+        path, _ = self.install("whisper-bin-ubuntu-x64.tar.gz")
+        listing = self.release("whisper-bin-ubuntu-x64.tar.gz")
+        with serving(listing, self.archive):
+            with mock.patch.object(ggml, "download",
+                                   side_effect=ggml.LocalError("no route")):
+                with self.assertRaises(ggml.LocalError):
+                    ggml.install_program(ggml.WHISPER)
+        self.assertEqual(ggml.installed_program(ggml.WHISPER), path)
+        self.assertTrue(os.path.isfile(path))
+
+    class StubServer:
+        """Owns the installed binary, remembers when it was told to stop."""
+
+        def __init__(self):
+            self.program = ggml.WHISPER
+            self.stops = 0
+            self.new_version_was_ready = False
+
+        def settings(self):
+            return {"binary": ""}
+
+        def stop(self):
+            self.stops += 1
+            self.new_version_was_ready = any(
+                (ggml.BIN_DIR / "whisper").glob("*.new"))
+
+    def test_the_running_server_is_stopped_only_for_the_swap(self):
+        # The outage is the swap, not the transfer: the server keeps answering
+        # through a download that can take minutes, and is stopped only once
+        # the replacement is unpacked next door and known to be whole.
+        self.install("whisper-bin-ubuntu-x64.tar.gz")
+        server = self.StubServer()
+        with mock.patch.object(ggml, "SERVERS", (server,)):
+            self.install("whisper-bin-ubuntu-x64.tar.gz")
+        self.assertEqual(server.stops, 1)
+        self.assertTrue(server.new_version_was_ready)
+
+    def test_a_download_that_fails_never_stops_the_server(self):
+        self.install("whisper-bin-ubuntu-x64.tar.gz")
+        server = self.StubServer()
+        listing = self.release("whisper-bin-ubuntu-x64.tar.gz")
+        with mock.patch.object(ggml, "SERVERS", (server,)):
+            with serving(listing, self.archive):
+                with mock.patch.object(ggml, "download",
+                                       side_effect=ggml.LocalError("no route")):
+                    with self.assertRaises(ggml.LocalError):
+                        ggml.install_program(ggml.WHISPER)
+        self.assertEqual(server.stops, 0)
 
 
     def test_a_release_without_a_published_checksum_is_refused(self):
@@ -456,11 +536,13 @@ STAND_IN = textwrap.dedent("""
     def opt(name, default=""):
         return args[args.index(name) + 1] if name in args else default
 
+    time.sleep(float(opt("--wait", "0")))
+
+    # After the sleep, so that --wait plus --die is a program that runs for a
+    # while and then crashes, the way a bad model dies mid-load.
     if "--die" in args:
         print("could not load model: no such file")
         sys.exit(2)
-
-    time.sleep(float(opt("--wait", "0")))
 
     started = time.monotonic()
     healthy_after = float(opt("--healthy-after", "0"))
@@ -539,12 +621,60 @@ class Servers(Local):
         self.assertTrue(server.running)
         self.assertTrue(second)
 
+    def count_ports(self):
+        """Record every port handed to a launch, one per attempt."""
+        ports = []
+        real = ggml._free_port
+        self.patch_attr(ggml, "_free_port",
+                        lambda: ports.append(real()) or ports[-1])
+        return ports
+
     def test_a_program_that_dies_reports_what_it_printed(self):
         server = self.server(extra=["--die"])
         with self.assertRaises(ggml.LocalError) as caught:
             server.serve()
         self.assertIn("no such file", str(caught.exception))
         self.assertFalse(server.running)
+
+    def test_an_early_death_that_never_listened_is_retried(self):
+        # A child that loses the bind race fails and exits at once, and which
+        # port was lost cannot be told from the log: the shape of the failure,
+        # not its wording, is what earns another port.
+        ports = self.count_ports()
+        server = self.server(extra=["--die"])
+        with self.assertRaises(ggml.LocalError):
+            server.serve()
+        self.assertEqual(len(ports), 3)
+
+    def test_a_late_crash_is_not_retried(self):
+        # A program that ran for a while before dying was not a bind race: it
+        # would die the same way on any port.
+        self.patch_attr(ggml, "EARLY_EXIT_WINDOW", 0.2)
+        ports = self.count_ports()
+        server = self.server(extra=["--wait", "0.5", "--die"])
+        with self.assertRaises(ggml.LocalError) as caught:
+            server.serve()
+        self.assertEqual(len(ports), 1)
+        self.assertIn("no such file", str(caught.exception))
+
+    def test_an_open_port_with_a_dead_child_is_not_ready(self):
+        # Another process winning the bind race leaves the port open while our
+        # child exits: the open port alone must not be read as ready.
+        polls = iter([None, 2])
+        proc = mock.Mock()
+        proc.poll = lambda: next(polls)
+        self.patch_attr(ggml, "_listening", lambda port: True)
+        reason, listened = self.server()._wait_ready(proc, 1)
+        self.assertEqual(reason, "exited")
+        self.assertFalse(listened)
+
+    def test_an_open_port_with_a_child_that_outlives_it_a_beat_is_ready(self):
+        proc = mock.Mock()
+        proc.poll = lambda: None
+        self.patch_attr(ggml, "_listening", lambda port: True)
+        reason, listened = self.server()._wait_ready(proc, 1)
+        self.assertEqual(reason, "ready")
+        self.assertTrue(listened)
 
     def test_a_model_that_is_still_loading_is_not_ready_yet(self):
         # llama binds its port first and answers /health with 503 until the
@@ -613,6 +743,72 @@ class Servers(Local):
 
     def test_no_pid_file_is_nothing_to_sweep(self):
         self.assertFalse(self.server().sweep())
+
+    def test_an_unverifiable_pid_is_kept_for_a_later_sweep(self):
+        # Could not be checked is not the same as known stale: dropping the
+        # file here would lose track of a server that may still hold a model.
+        server = self.server()
+        server._remember(4242)
+        with mock.patch.object(server, "_is_ours", return_value=None):
+            self.assertFalse(server.sweep())
+        self.assertTrue(server._pid_file().exists())
+
+    def test_a_pid_known_stale_is_forgotten(self):
+        server = self.server()
+        server._remember(4242)
+        with mock.patch.object(server, "_is_ours", return_value=False):
+            self.assertFalse(server.sweep())
+        self.assertFalse(server._pid_file().exists())
+
+    def test_the_pid_file_goes_once_the_kill_was_attempted(self):
+        server = self.server()
+        server._remember(4242)
+        with mock.patch.object(server, "_is_ours", return_value=True):
+            with mock.patch.object(ggml.os, "kill") as kill:
+                self.assertTrue(server.sweep())
+        kill.assert_called_once_with(4242, signal.SIGTERM)
+        self.assertFalse(server._pid_file().exists())
+
+    def test_forget_leaves_a_pid_file_that_is_no_longer_ours(self):
+        server = self.server()
+        server._remember(111)
+        # A Dikte started after us wrote its own server's pid over ours;
+        # removing the file would hide that server from every future sweep.
+        server._pid_file().write_text("222")
+        server._forget()
+        self.assertEqual(server._pid_file().read_text(), "222")
+
+    def test_forget_removes_the_pid_it_remembered(self):
+        server = self.server()
+        server._remember(111)
+        server._forget()
+        self.assertFalse(server._pid_file().exists())
+
+    def test_stop_waits_out_a_start_in_flight_and_kills_it(self):
+        # stop_all on quit must not slide past a launch that is mid-load: the
+        # child would then survive Dikte with nothing left that knows its pid.
+        children = []
+        real = ggml.subprocess.Popen
+
+        def popen(*args, **kwargs):
+            proc = real(*args, **kwargs)
+            children.append(proc)
+            return proc
+
+        self.patch_attr(ggml.subprocess, "Popen", popen)
+        server = self.server(extra=["--wait", "0.5"])
+        thread = threading.Thread(target=server.serve)
+        thread.start()
+        try:
+            deadline = time.monotonic() + 10
+            while not children and time.monotonic() < deadline:
+                time.sleep(0.01)     # until the launch is truly in flight
+            server.stop()
+        finally:
+            thread.join(timeout=10)
+        self.assertEqual(len(children), 1)
+        self.assertIsNotNone(children[0].poll())
+        self.assertFalse(server.running)
 
     def test_a_start_that_goes_wrong_takes_its_process_with_it(self):
         started = []
@@ -752,6 +948,10 @@ class InstallOnWindows(Local):
         super().setUp()
         self.patch_attr(sys, "platform", "win32")
         self.patch_attr(ggml, "_arch", lambda: "x64")
+        # shutil.which cannot be allowed through to the real one: standing on
+        # win32 from another system, Python 3.12's Windows branch of which()
+        # reaches for the nt module that is not there.
+        self.enterContext(mock.patch("shutil.which", return_value=None))
         self.archive = zipball({
             "Release/whisper-server.exe": b"MZ not really a program",
             "Release/whisper.dll": b"not really a library",
@@ -785,3 +985,43 @@ class InstallOnWindows(Local):
             with self.assertRaises(ggml.LocalError) as caught:
                 ggml.install_program(ggml.WHISPER)
         self.assertIn("this machine", str(caught.exception))
+
+
+class WindowsOwnership(Local):
+    """Sweeping on Windows goes by the executable's full path, never its name:
+    the base name alone is anyone's whisper-server.exe, and this answer decides
+    what gets killed."""
+
+    def setUp(self):
+        super().setUp()
+        self.patch_attr(sys, "platform", "win32")
+        # See InstallOnWindows: the real which() on win32 wants the nt module.
+        self.enterContext(mock.patch("shutil.which", return_value=None))
+        self.made = ggml.Server(ggml.WHISPER, lambda values: [], {"binary": ""})
+
+    def image(self, path):
+        self.patch_attr(ggml, "_win_image_name", lambda pid: path)
+
+    def test_a_binary_under_our_bin_directory_is_ours(self):
+        self.image(str(ggml.BIN_DIR / "whisper" / "v1.9.1" / "whisper-server.exe"))
+        self.assertIs(self.made._is_ours(1234), True)
+
+    def test_the_configured_binary_is_ours_wherever_it_lives(self):
+        mine = self.path("elsewhere", "whisper-server.exe")
+        mine.parent.mkdir(parents=True)
+        mine.write_bytes(b"MZ")
+        mine.chmod(0o755)
+        self.made._settings["binary"] = str(mine)
+        self.image(str(mine.resolve()))
+        self.assertIs(self.made._is_ours(1234), True)
+
+    def test_the_same_name_somewhere_else_is_not_ours(self):
+        self.image(str(self.path("theirs", "whisper-server.exe")))
+        with mock.patch("shutil.which", return_value=None):
+            self.assertIs(self.made._is_ours(1234), False)
+
+    def test_a_process_that_cannot_be_read_is_no_verdict(self):
+        # OpenProcess answering nothing covers both "gone" and "not readable
+        # from here", and only one of those makes the pid file safe to drop.
+        self.image("")
+        self.assertIsNone(self.made._is_ours(1234))

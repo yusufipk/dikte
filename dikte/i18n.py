@@ -69,6 +69,7 @@ TR = {
 
     # --- overlay / pipeline -------------------------------------------
     "Transcribing…": "Yazıya çevriliyor…",
+    "Waiting for the one before it…": "Öncekinin bitmesi bekleniyor…",
     "Cleaning up…": "Temizleniyor…",
     "Pasting…": "Yapıştırılıyor…",
     "Pasted": "Yapıştırıldı",
@@ -150,6 +151,7 @@ TR = {
     # --- settings: tabs and general ------------------------------------
     "Dikte Settings": "Dikte Ayarları",
     "General": "Genel",
+    "Display": "Ekran",
     "API and models": "API ve modeller",
     "Cleanup rules": "Temizleme kuralları",
     "Audio file": "Ses dosyası",
@@ -162,8 +164,6 @@ TR = {
     "Automatic (system)": "Otomatik (sistem)",
     "Turkish": "Türkçe",
     "English": "İngilizce",
-    "Restart Dikte for the language change to reach every window.":
-        "Dil değişikliğinin her pencereye işlemesi için Dikte'yi yeniden başlat.",
     "Microphone": "Mikrofon",
     "Default microphone": "Varsayılan mikrofon",
     "Speech language": "Konuşma dili",
@@ -180,6 +180,9 @@ TR = {
         "macOS bu ilk gönderildiğinde Erişilebilirlik izni ister.",
     "Restore the previous clipboard after pasting":
         "Yapıştırdıktan sonra eski pano içeriğini geri koy",
+    "Indicator screen": "Gösterge ekranı",
+    "Follow the mouse pointer": "Fare imlecini takip et",
+    "{name} (not connected)": "{name} (bağlı değil)",
     "Indicator corner": "Gösterge köşesi",
     "bottom-left": "sol-alt",
     "bottom-right": "sağ-alt",
@@ -556,6 +559,10 @@ TR = {
         "“sonnet” gibi bir ad her zaman o serinin en yenisini seçer. Opus daha "
         "çok düşünür ve daha geç cevaplar; bu da en çok burada hissedilir, "
         "çünkü ekranın başında bekliyorsun.",
+    "The list is a starting point, not a fence: any model name {name} accepts "
+    "can be typed straight in.":
+        "Liste başlangıç için, sınır değil: {name} hangi model adını kabul "
+        "ediyorsa buraya elle yazılabilir.",
     "Permissions": "İzinler",
     "Decide on its own, with the safety checks on":
         "Kendi karar versin, güvenlik denetimleri açık",
@@ -748,4 +755,135 @@ TR = {
     "This one is being written up right now.": "Bunun tutanağı şu anda çıkarılıyor.",
     "Delete this meeting, its minutes and its recording?":
         "Bu toplantı, tutanağı ve ses kaydı silinsin mi?",
+
+    # --- local models and downloads ------------------------------------
+    # The whole box was born after the last translation pass, which left the
+    # first-run screen half English on a Turkish machine.
+    "Download": "İndir",
+    "Delete": "Sil",
+    "Program": "Program",
+    "Publisher": "Yayıncı",
+    "Automatic": "Otomatik",
+    "Threads": "İş parçacığı",
+    "On this machine": "Bu makinede",
+    "Use the graphics card": "Ekran kartını kullan",
+    "Load the model when Dikte starts": "Modeli Dikte açılırken yükle",
+    "Local whisper": "Yerel whisper",
+    "Local model": "Yerel model",
+    "Not installed.": "Kurulu değil.",
+    "Installed on the system: {path}": "Sistemde kurulu: {path}",
+    "Downloaded, version {version}.": "İndirildi, sürüm {version}.",
+    "Fetching the model list…": "Model listesi çekiliyor…",
+    "Downloading…": "İndiriliyor…",
+    "Downloading: {done} of {total}{share}": "İndiriliyor: {done} / {total}{share}",
+    "Download stopped.": "İndirme durduruldu.",
+    "Ready: {name}.": "Hazır: {name}.",
+    "Nothing downloaded yet.": "Henüz bir şey indirilmedi.",
+    "{name} has not been downloaded yet.": "{name} henüz indirilmedi.",
+    "downloaded": "indirildi",
+    "not downloaded": "indirilmedi",
+    "Delete model": "Modeli sil",
+    "Delete {name} from this machine?": "{name} bu makineden silinsin mi?",
+    "Runs on this machine, on llama.cpp.": "Bu makinede, llama.cpp üzerinde çalışır.",
+    "A Hugging Face repository of GGUF files. The list is fetched; any other "
+    "one can be typed in.":
+        "GGUF dosyaları içeren bir Hugging Face deposu. Liste internetten "
+        "çekilir; başka bir depo da yazılabilir.",
+    "A large model takes a second or two to load. Loading it up front spends "
+    "that once instead of on the first dictation, at the cost of the memory "
+    "it sits in.":
+        "Büyük bir modelin yüklenmesi bir iki saniye sürer. Baştan yüklemek bu "
+        "bedeli ilk diktede değil bir kez öder; karşılığı, modelin oturduğu "
+        "bellektir.",
+    "An LLM is slower to load than a whisper model and sits in more memory. "
+    "Off means it is loaded on the first cleanup instead.":
+        "Bir LLM, whisper modelinden daha geç yüklenir ve daha çok bellekte "
+        "oturur. Kapalı, ilk temizlemede yüklenmesi demektir.",
+    "A model trained to think will think unless it is told not to, and "
+    "spending 300 tokens of reasoning on a comma is 300 tokens of waiting. "
+    "Off is what cleanup wants.":
+        "Düşünmeye eğitilmiş bir model, aksi söylenmedikçe düşünür; bir virgül "
+        "için 300 token akıl yürütmek 300 token'lık bekleyiştir. Temizleme için "
+        "doğrusu Kapalı.",
+    "OpenRouter is the quickest and the only one that needs nothing "
+    "installed. llama.cpp runs here, on a model downloaded below. Claude Code "
+    "and Codex clean up on the subscription you already have, without a "
+    "second key, and take a few seconds longer because each one opens a "
+    "session to do it.":
+        "OpenRouter en hızlısıdır ve kurulum istemeyen tek seçenektir. "
+        "llama.cpp burada, aşağıda indirilen bir modelle çalışır. Claude Code "
+        "ve Codex, ikinci bir anahtar olmadan zaten sahip olduğun abonelikle "
+        "temizler; her biri bunun için bir oturum açtığından birkaç saniye "
+        "daha sürer.",
+    "whisper.cpp reaches the card through CUDA, ROCm or Vulkan when the build "
+    "it is running was made with one. A build without any of them runs on the "
+    "processor whatever this says.":
+        "whisper.cpp karta CUDA, ROCm ya da Vulkan üzerinden ulaşır; koştuğu "
+        "derleme bunlardan biriyle yapılmışsa. Hiçbiri olmadan derlenmiş bir "
+        "kopya, bu ne derse desin işlemcide çalışır.",
+    "whisper.cpp is not installed. Settings → API and models → Download.":
+        "whisper.cpp kurulu değil. Ayarlar → API ve modeller → İndir.",
+    "llama.cpp is not installed. Settings → API and models → Download.":
+        "llama.cpp kurulu değil. Ayarlar → API ve modeller → İndir.",
+    "No whisper model has been downloaded yet. Settings → API and models → "
+    "Download.":
+        "Henüz whisper modeli indirilmedi. Ayarlar → API ve modeller → İndir.",
+    "No local cleanup model has been downloaded yet. Settings → API and "
+    "models → Download.":
+        "Henüz yerel temizleme modeli indirilmedi. Ayarlar → API ve modeller "
+        "→ İndir.",
+    "Hugging Face did not return a model list.":
+        "Hugging Face model listesi döndürmedi.",
+    "{repo} did not return a file list.": "{repo} dosya listesi döndürmedi.",
+    "{repo} has no downloadable release.":
+        "{repo} deposunun indirilebilir bir sürümü yok.",
+    "{repo} {tag} has no build for this machine.":
+        "{repo} {tag} bu makine için derleme içermiyor.",
+    "{url} answered HTTP {code}.": "{url} HTTP {code} yanıtı verdi.",
+    "Could not reach {url}: {error}": "{url} adresine ulaşılamadı: {error}",
+    "Could not read the answer from {url}: {error}":
+        "{url} yanıtı okunamadı: {error}",
+    "Could not create {path}: {error}": "{path} oluşturulamadı: {error}",
+    "Could not download {name}: HTTP {code}":
+        "{name} indirilemedi: HTTP {code}",
+    "Could not download {name}: {error}": "{name} indirilemedi: {error}",
+    "Could not write {name}: {error}": "{name} yazılamadı: {error}",
+    "Could not unpack {name}: {error}": "{name} açılamadı: {error}",
+    "Could not install {name}: {error}": "{name} kurulamadı: {error}",
+    "Could not start {name}: {error}": "{name} başlatılamadı: {error}",
+    "Could not delete the model: {error}": "Model silinemedi: {error}",
+    "Could not replace {path}: a file in it is still open: {error}":
+        "{path} değiştirilemedi: içindeki bir dosya hâlâ açık: {error}",
+    "{name} did not start: {error}": "{name} başlamadı: {error}",
+    "no output": "çıktı yok",
+    "The download stopped early ({done} of {total}).":
+        "İndirme erken kesildi ({done} / {total}).",
+    "{name} is longer than it said it would be.":
+        "{name} bildirdiğinden daha uzun çıktı.",
+    "{name} does not match its published checksum. Nothing was installed.":
+        "{name} yayımlanan sağlama toplamıyla uyuşmuyor. Hiçbir şey kurulmadı.",
+    "{name} is published without a checksum, so there is no way to tell what "
+    "arrived. Nothing was installed.":
+        "{name} sağlama toplamı olmadan yayımlanmış; gelenin ne olduğu "
+        "doğrulanamaz. Hiçbir şey kurulmadı.",
+    "{name} was not in the download.": "{name} indirilenin içinde yoktu.",
+    "{name} downloaded, but the old file is held open by the running server. "
+    "Stop it and try again.":
+        "{name} indirildi ama eski dosyayı çalışan sunucu açık tutuyor. "
+        "Sunucuyu durdurup yeniden dene.",
+    "The cleanup model spent its whole reply on thinking. Set Thinking to "
+    "“Off”.":
+        "Temizleme modeli bütün yanıtını düşünmeye harcadı. Düşünme'yi "
+        "“Kapalı” yap.",
+
+    # --- this pass's new messages ---------------------------------------
+    "Audio recorder stopped before receiving sound":
+        "Ses kayıt aracı veri alamadan kapandı",
+    "Could not write the recording: {error}": "Kayıt dosyası yazılamadı: {error}",
+    "Copied, but pasting failed: {error}":
+        "Kopyalandı ama yapıştırma başarısız: {error}",
+    "The recording was kept: {path}": "Kayıt saklandı: {path}",
+    "The recording stopped on its own; transcribing what was captured.":
+        "Kayıt kendi kendine durdu; yakalanan kısım yazıya dökülüyor.",
+    "Could not save the settings: {error}": "Ayarlar kaydedilemedi: {error}",
 }

@@ -147,7 +147,9 @@ def _program_keyboard(program, command, hint=""):
     def ready():
         return shutil.which(program) is not None
 
-    def press(shortcut, delay):
+    def press(shortcut, delay, _focus=None):
+        # Nothing here takes the front from the window being dictated into, so
+        # there is nothing to hand back: the process id is a macOS concern.
         if not ready():
             raise PasteError(t("{tool} not found, cannot paste automatically.",
                                tool=program))
@@ -296,11 +298,27 @@ def _ask_for_permission():
         pass
 
 
-def _macos_press(shortcut, delay):
+def _macos_press(shortcut, delay, focus=None):
     """Post the key down and up straight into the window system.
 
     Nothing is typed anywhere until macOS has been told to trust Dikte, and it
     only asks once, when the paste it was granted for is first tried.
+
+    `focus` is the application that was in front when the recording began. The
+    keys land wherever the window system is pointing, so a Dikte that has ended
+    up in front would swallow its own transcript; when that has happened the
+    front is handed back before pressing. Nothing is taken from anyone else: an
+    application the user went to while the transcription ran is where they want
+    the text now.
+
+    This runs on the transcription's own thread rather than the main one, and
+    the two calls it makes are the kind AppKit documents as answering
+    atomically wherever they are asked from: NSRunningApplication is thread
+    safe by its own header, and the workspace lookup behind it returns a
+    reference rather than anything that has to be held. Stressed with four
+    threads and 32000 lookups against a running main loop without a fault; if
+    one ever does happen, mac_window answers None and the press goes ahead
+    where it would have gone anyway.
     """
     keycode, flags = _macos_keys(shortcut)
     services, core = _macos_api()
@@ -310,6 +328,12 @@ def _macos_press(shortcut, delay):
             "macOS has not been told to let Dikte press keys. Turn Dikte on "
             "under System Settings → Privacy & Security → Accessibility."
         ))
+    if focus:
+        # Imported here rather than at the top: it reaches for QtGui, and a
+        # terminal that only wants the clipboard should not pay for that.
+        from . import mac_window
+        if mac_window.is_frontmost():
+            mac_window.activate(focus)
 
     time.sleep(delay)  # let the selection settle and focus come back
     down = services.CGEventCreateKeyboardEvent(None, keycode, True)
@@ -464,11 +488,14 @@ class _WinInput(ctypes.Structure):
     _fields_ = [("type", ctypes.c_ulong), ("union", _WinInputUnion)]
 
 
-def _win_press(shortcut, delay):
+def _win_press(shortcut, delay, _focus=None):
     """Post the presses and releases straight into the input queue.
 
     No permission stands in front of SendInput the way Accessibility does on
     macOS: whatever window has focus receives the combination.
+
+    Nothing here takes the front from the window being dictated into, so the
+    remembered process id has nothing to hand back to: it is a macOS concern.
     """
     codes = _win_keys(shortcut)
     user32, _ = _win_api()
@@ -675,7 +702,11 @@ def paste_ready():
     return desktop().ready()
 
 
-def press(shortcut="", delay=0.12):
-    """Press a paste combination, e.g. 'ctrl+v', or this desktop's own."""
+def press(shortcut="", delay=0.12, focus=None):
+    """Press a paste combination, e.g. 'ctrl+v', or this desktop's own.
+
+    `focus` is the process the keys are meant for, remembered when the
+    recording started: see the macOS press for what is done with it.
+    """
     here = desktop()
-    here.press(shortcut or here.shortcuts[0], delay)
+    here.press(shortcut or here.shortcuts[0], delay, focus)

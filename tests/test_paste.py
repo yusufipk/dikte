@@ -444,6 +444,45 @@ class MacOS(ClipboardContract, DikteTest):
         self.assertFalse(paste.paste_ready())
 
 
+class MacPasteGoesWhereTheDictationStarted(MacOS):
+    """The keys land in the frontmost window, so the front is what decides
+    where a transcript ends up."""
+
+    def setUp(self):
+        super().setUp()
+        from dikte import mac_window
+        self.mac_window = mac_window
+        self.activated = []
+        self.patch_attr(mac_window, "activate", self.activated.append)
+
+    def frontmost(self, dikte_is):
+        self.patch_attr(self.mac_window, "is_frontmost", lambda: dikte_is)
+
+    def test_a_dikte_that_took_the_front_hands_it_back_before_pressing(self):
+        self.frontmost(True)
+        paste.press("cmd+v", focus=4242)
+        self.assertEqual(self.activated, [4242])
+        self.assertEqual([event for _, event in self.api.posted], [1001, 1002])
+
+    def test_another_application_in_front_is_where_the_user_went_and_is_left(self):
+        self.frontmost(False)
+        paste.press("cmd+v", focus=4242)
+        self.assertEqual(self.activated, [])
+
+    def test_a_run_that_remembered_nobody_asks_nothing(self):
+        self.frontmost(True)
+        paste.press("cmd+v")
+        self.assertEqual(self.activated, [])
+
+    def test_the_front_is_handed_back_only_once_macos_trusts_dikte(self):
+        """Pulling the user out of their window and then failing to type would
+        be the worst of both."""
+        self.frontmost(True)
+        self.api.trusted = False
+        with self.assertRaises(paste.PasteError):
+            paste.press("cmd+v", focus=4242)
+        self.assertEqual(self.activated, [])
+
 class MacClipboardSnapshot(DikteTest):
     def test_every_native_type_is_restored_and_the_files_are_removed(self):
         directory = tempfile.mkdtemp(prefix="dikte-test-clipboard-")

@@ -56,6 +56,17 @@ def packaged():
     return bool(getattr(sys, "frozen", False))
 
 
+def windowed_executable(executable=None):
+    """The windowed executable installed beside this one, or None.
+
+    Beside rather than at a known place, because the setup program lays the two
+    executables into the same directory wherever that directory was put: asking
+    from either of them finds the other without knowing where the install is.
+    """
+    windowed = pathlib.Path(executable or sys.executable).with_name(WINDOWS_APP)
+    return windowed if windowed.is_file() else None
+
+
 def target():
     """The file a launcher has to name to start this build again.
 
@@ -74,8 +85,8 @@ def target():
         # The windowed executable, whichever of the two is running: the console
         # one is what the `dikte` command names, and a sign-in that started
         # that one would open a console window nobody asked for.
-        windowed = executable.with_name(WINDOWS_APP)
-        if windowed.is_file():
+        windowed = windowed_executable(executable)
+        if windowed is not None:
             return windowed
     return executable
 
@@ -572,24 +583,60 @@ def _run_entry_name():
     return f"HKCU\\{RUN_KEY}\\{RUN_VALUE}"
 
 
+def _run_target(value):
+    """The executable a Run value names, out of the quoting the setup wrote.
+
+    Only the first word matters here: it is the file whose existence says
+    whether the entry still starts anything.
+    """
+    if value.startswith('"'):
+        closing = value.find('"', 1)
+        return value[1:closing] if closing > 0 else ""
+    return value.split(" ", 1)[0]
+
+
+def _startup_shortcut():
+    """Where install.ps1 -Autostart puts a checkout's sign-in entry."""
+    appdata = os.environ.get("APPDATA")
+    if not appdata:
+        return None
+    return (pathlib.Path(appdata) / "Microsoft" / "Windows" / "Start Menu"
+            / "Programs" / "Startup" / "Dikte.lnk")
+
+
 def _windows_install(app, force=False):
     """Point the autostart entry at this build. What changed.
 
     Only `force`, which is what typing `dikte integrate` means, creates one.
     The call on every start repairs an entry that is already there and names an
-    executable somewhere else, which is what an installation moved to another
-    drive or reinstalled into another directory leaves behind; somebody who
-    unticked the box in the wizard, or turned it off since, is not asked again
-    by every start.
+    executable that is gone, which is what an installation moved to another
+    drive or reinstalled into another directory leaves behind. An entry naming
+    an executable that still exists is another installation that still works,
+    and is stood aside for the way the Linux half stands aside for another
+    menu entry; somebody who unticked the box in the wizard, or turned it off
+    since, is not asked again by every start either.
     """
     command = f'"{app}"'
     current = _run_entry()
+    changed = []
+    if force:
+        # install.ps1 -Autostart wrote this for a checkout. The Run value
+        # written below replaces it, and both left in place would be two
+        # Diktes at every sign-in. Only on force: the silent call on every
+        # start has not been asked to move the machine off its checkout.
+        shortcut = _startup_shortcut()
+        if shortcut is not None and shortcut.is_file():
+            shortcut.unlink()
+            changed.append(shortcut)
     if not current and not force:
-        return []
-    if current == command:
-        return []
-    _write_run_entry(command)
-    return [_run_entry_name()]
+        return changed
+    if current != command:
+        theirs = _run_target(current) if current else ""
+        if not force and theirs and theirs != str(app) and os.path.exists(theirs):
+            return changed
+        _write_run_entry(command)
+        changed.append(_run_entry_name())
+    return changed
 
 
 def _windows_remove():

@@ -7,6 +7,8 @@ from PyQt6.QtCore import Qt, QTimer, QRectF, QPointF
 from PyQt6.QtGui import QColor, QCursor, QFont, QPainter, QPainterPath, QPen, QFontMetrics
 from PyQt6.QtWidgets import QWidget, QApplication
 
+from . import mac_window
+
 BARS = 22
 HEIGHT = 56
 MIN_WIDTH = 210
@@ -40,9 +42,11 @@ class Overlay(QWidget):
     of covering it, which is what lets a dictation and a command to the agent be
     under way at the same time and still both be visible."""
 
-    def __init__(self, corner="bottom-left", below=None, dismissable=False):
+    def __init__(self, corner="bottom-left", below=None, dismissable=False,
+                 screen_name=""):
         super().__init__(None)
         self.corner = corner
+        self.screen_name = screen_name
         self.below = below
         # A job that can run for ten minutes should not have to be watched for
         # ten minutes. Clicking such an indicator puts the progress away; the
@@ -202,6 +206,11 @@ class Overlay(QWidget):
         self._reposition()
         if not self.isVisible():
             self.show()
+        if sys.platform == "darwin":
+            # After show(), because the window it works on does not exist until
+            # then, and every time, because a window Qt rebuilt has the setting
+            # again at its default.
+            mac_window.keep_on_screen(self)
         if self._concealed:
             self.raise_()
             self._concealed = False
@@ -244,8 +253,15 @@ class Overlay(QWidget):
         self.resize(width, HEIGHT)
 
     def _reposition(self):
-        # On a multi-monitor setup, show up where the user actually is.
-        screen = QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+        # The screen the settings name, or, when none is named or it is not
+        # plugged in right now, where the user actually is. Names are connector
+        # names on X11 and model names on macOS, where two identical monitors
+        # can share one; the first then wins.
+        screen = next(
+            (item for item in QApplication.screens() if item.name() == self.screen_name),
+            None,
+        )
+        screen = screen or QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
         area = screen.availableGeometry()
         left = "left" in self.corner
         top = "top" in self.corner

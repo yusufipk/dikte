@@ -128,6 +128,12 @@ class Hallucinations(DikteTest):
         self.assertFalse(vad.looks_like_hallucination("Bugün toplantı var.", 2.0))
         self.assertFalse(vad.looks_like_hallucination("Send it on Thursday.", 2.0))
 
+    def test_a_one_word_answer_is_believed(self):
+        # Whisper invents both over silence, but people dictate both as whole
+        # answers, and losing a real answer costs more than passing a fake one.
+        self.assertFalse(vad.looks_like_hallucination("You.", 1.5))
+        self.assertFalse(vad.looks_like_hallucination("Bye.", 1.5))
+
     def test_an_empty_transcript_counts_as_invented(self):
         self.assertTrue(vad.looks_like_hallucination("   ", 2.0))
         self.assertTrue(vad.looks_like_hallucination("...", 2.0))
@@ -138,8 +144,8 @@ class Hallucinations(DikteTest):
                 self.assertTrue(vad.looks_like_hallucination(text, 2.0))
 
     def test_the_boundary_is_the_max_duration(self):
-        self.assertTrue(vad.looks_like_hallucination("you", 6.0))
-        self.assertFalse(vad.looks_like_hallucination("you", 6.1))
+        self.assertTrue(vad.looks_like_hallucination("thanks for watching", 6.0))
+        self.assertFalse(vad.looks_like_hallucination("thanks for watching", 6.1))
 
 
 if __name__ == "__main__":

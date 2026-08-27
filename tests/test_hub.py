@@ -3,6 +3,7 @@
 import json
 
 from dikte import hub
+from dikte import paths
 from tests.support import DikteTest, fake_urlopen, http_error, url_error
 
 RELEASE = {
@@ -163,6 +164,15 @@ def os_utime(path):
     import time
     old = time.time() - hub.CACHE_TTL - 60
     os.utime(path, (old, old))
+
+
+class CacheLocation(DikteTest):
+    """Resolved at import, like every other path constant."""
+
+    def test_the_cache_lives_in_the_system_cache_directory(self):
+        # One answer for both, the same way ggml and config share DATA_DIR:
+        # hub asked paths once, at import, and kept what it was told.
+        self.assertEqual(hub.CACHE_DIR, paths.cache_dir())
 
 
 class CacheOnDisk(DikteTest):
