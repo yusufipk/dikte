@@ -42,6 +42,7 @@ CHANGED = {
     "paste_shortcut": "ctrl+shift+v",
     "restore_clipboard": True,
     "overlay_corner": "top-right",
+    "overlay_screen": "DP-1",
     "max_seconds": 120,
     "skip_silent": False,
     "silence_db": -42.0,
@@ -161,7 +162,7 @@ class Settings(DikteTest):
     def test_the_window_opens_with_every_tab_on_it(self):
         window = self.window(cfg.Config())
         tabs = window.findChildren(settings_ui.QTabWidget)[0]
-        self.assertEqual(tabs.count(), 9)
+        self.assertEqual(tabs.count(), 10)
         self.assertEqual(window.windowTitle(), "Dikte Settings")
 
     def test_no_tab_can_stretch_the_window_past_a_small_screen(self):
@@ -991,6 +992,17 @@ class Overlay(DikteTest):
             widget._tick()
         self.assertEqual(widget.pos(), QPoint(1000 + overlay_module.MARGIN,
                                               200 + overlay_module.MARGIN))
+
+    def test_a_named_screen_is_used_instead_of_the_pointer_screen(self):
+        screen = mock.Mock()
+        screen.name.return_value = "DP-1"
+        screen.availableGeometry.return_value = settings_ui.QRect(1920, 0, 1920, 1080)
+        widget = self.overlay(screen_name="DP-1")
+        with mock.patch.object(QApplication, "screens", return_value=[screen]), \
+                mock.patch.object(QApplication, "screenAt") as screen_at:
+            widget._reposition()
+        screen_at.assert_not_called()
+        self.assertEqual(widget.pos(), QPoint(1948, 995))
 
     def test_a_warning_and_an_error_both_show(self):
         widget = self.overlay()

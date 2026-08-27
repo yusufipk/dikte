@@ -596,6 +596,7 @@ class SettingsWindow(QDialog):
 
         tabs = self.tabs = QTabWidget(self)
         tabs.addTab(self._scrolled(self._general_tab()), t("General"))
+        tabs.addTab(self._scrolled(self._display_tab()), t("Display"))
         self.api_tab_index = tabs.addTab(
             self._scrolled(self._api_tab()), t("API and models"))
         tabs.addTab(self._scrolled(self._prompt_tab()), t("Cleanup rules"))
@@ -718,11 +719,6 @@ class SettingsWindow(QDialog):
         self.restore_clipboard = QCheckBox(t("Restore the previous clipboard after pasting"))
         form.addRow("", self.restore_clipboard)
 
-        self.corner = QComboBox()
-        for value in CORNERS:
-            self.corner.addItem(t(value), value)
-        form.addRow(t("Indicator corner"), self.corner)
-
         self.max_seconds = QSpinBox()
         self.max_seconds.setRange(10, 3600)
         self.max_seconds.setSuffix(t(" s"))
@@ -771,6 +767,31 @@ class SettingsWindow(QDialog):
         self.update_now.clicked.connect(self._check_for_update)
         form.addRow("", self._row(self.update_status, self.update_page,
                                   self.update_now))
+        return page
+
+    def _display_tab(self):
+        page = QWidget()
+        form = QFormLayout(page)
+
+        self.indicator_screen = QComboBox()
+        self.indicator_screen.addItem(t("Follow the mouse pointer"), "")
+        for screen in QGuiApplication.screens():
+            # The native resolution, so that a scaled 4K screen reads
+            # 3840 × 2160 and not the 1920 × 1080 Qt sees through the scale.
+            area = screen.geometry()
+            ratio = screen.devicePixelRatio()
+            self.indicator_screen.addItem(
+                t("{name} ({width} × {height})", name=screen.name(),
+                  width=round(area.width() * ratio),
+                  height=round(area.height() * ratio)),
+                screen.name(),
+            )
+        form.addRow(t("Indicator screen"), self.indicator_screen)
+
+        self.corner = QComboBox()
+        for value in CORNERS:
+            self.corner.addItem(t(value), value)
+        form.addRow(t("Indicator corner"), self.corner)
         return page
 
     def _api_tab(self):
@@ -1652,6 +1673,10 @@ class SettingsWindow(QDialog):
         self.auto_paste.setChecked(conf["auto_paste"])
         self.paste_shortcut.setCurrentText(conf["paste_shortcut"])
         self.restore_clipboard.setChecked(conf["restore_clipboard"])
+        screen_name = conf["overlay_screen"]
+        if screen_name and self.indicator_screen.findData(screen_name) < 0:
+            self.indicator_screen.addItem(t("{name} (not connected)", name=screen_name), screen_name)
+        self._select_data(self.indicator_screen, screen_name)
         self._select_data(self.corner, conf["overlay_corner"])
         self.max_seconds.setValue(conf["max_seconds"])
         self.skip_silent.setChecked(conf["skip_silent"])
@@ -1759,6 +1784,7 @@ class SettingsWindow(QDialog):
         conf["auto_paste"] = self.auto_paste.isChecked()
         conf["paste_shortcut"] = self.paste_shortcut.currentText().strip()
         conf["restore_clipboard"] = self.restore_clipboard.isChecked()
+        conf["overlay_screen"] = self.indicator_screen.currentData() or ""
         conf["overlay_corner"] = self.corner.currentData() or "bottom-left"
         conf["max_seconds"] = self.max_seconds.value()
         conf["skip_silent"] = self.skip_silent.isChecked()

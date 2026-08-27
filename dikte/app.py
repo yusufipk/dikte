@@ -163,11 +163,13 @@ class Dikte:
         self.front_before = None
         self._front_watch = None
 
-        self.overlay = Overlay(self.conf["overlay_corner"])
+        self.overlay = Overlay(self.conf["overlay_corner"],
+                               screen_name=self.conf["overlay_screen"])
         # The agent's indicator sits on top of the dictation one when both are
         # up, and drops into the corner when it is alone there.
         self.ask_overlay = Overlay(self.conf["overlay_corner"], below=self.overlay,
-                                   dismissable=True)
+                                   dismissable=True,
+                                   screen_name=self.conf["overlay_screen"])
         self.recorder = audio.Recorder()
         self.pipeline = Pipeline(self.conf)
         self.ask_pipeline = Pipeline(self.conf)
@@ -1296,7 +1298,9 @@ class Dikte:
 
     def _apply_settings(self):
         self.overlay.corner = self.conf["overlay_corner"]
+        self.overlay.screen_name = self.conf["overlay_screen"]
         self.ask_overlay.corner = self.conf["overlay_corner"]
+        self.ask_overlay.screen_name = self.conf["overlay_screen"]
         self._apply_local()
         self._build_tray()
         self._refresh_tray()

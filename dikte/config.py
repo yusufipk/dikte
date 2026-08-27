@@ -457,6 +457,7 @@ DEFAULTS = {
     "pause_shortcut": "",
     "evdev_hotkey": False,
     "overlay_corner": "bottom-left",
+    "overlay_screen": "",
     "keep_audio": False,
     "history_limit": 200,
     # A look at the releases page once a day, and nothing more than a look:

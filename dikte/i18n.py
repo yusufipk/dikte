@@ -151,6 +151,7 @@ TR = {
     # --- settings: tabs and general ------------------------------------
     "Dikte Settings": "Dikte Ayarları",
     "General": "Genel",
+    "Display": "Ekran",
     "API and models": "API ve modeller",
     "Cleanup rules": "Temizleme kuralları",
     "Audio file": "Ses dosyası",
@@ -179,6 +180,9 @@ TR = {
         "macOS bu ilk gönderildiğinde Erişilebilirlik izni ister.",
     "Restore the previous clipboard after pasting":
         "Yapıştırdıktan sonra eski pano içeriğini geri koy",
+    "Indicator screen": "Gösterge ekranı",
+    "Follow the mouse pointer": "Fare imlecini takip et",
+    "{name} (not connected)": "{name} (bağlı değil)",
     "Indicator corner": "Gösterge köşesi",
     "bottom-left": "sol-alt",
     "bottom-right": "sağ-alt",
