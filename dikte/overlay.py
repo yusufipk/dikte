@@ -260,7 +260,7 @@ class Overlay(QWidget):
         screen = next(
             (item for item in QApplication.screens() if item.name() == self.screen_name),
             None,
-        )
+        ) if self.screen_name else None
         screen = screen or QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
         area = screen.availableGeometry()
         left = "left" in self.corner
@@ -280,6 +280,10 @@ class Overlay(QWidget):
         # the corner when it does rather than leaving a gap where it was.
         if self.below is not None and self.below.showing != self._stacked:
             self._reposition()
+        elif self.state in LIVE and not self.screen_name:
+            current_screen = QApplication.screenAt(QCursor.pos())
+            if current_screen is not None and current_screen != self.screen():
+                self._reposition()
         if self.state in LIVE and not self.paused:
             # keep the ribbon moving even through a pause in speech
             self.levels = self.levels[1:] + [self.levels[-1] * 0.72]
