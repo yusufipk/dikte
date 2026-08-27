@@ -886,13 +886,13 @@ class SettingsWindow(QDialog):
               "spends that once instead of on the first dictation, at the cost of "
               "the memory it sits in."))
         self.local_threads = QSpinBox()
-        self.local_threads.setRange(0, 64)
+        max_threads = max(1, os.cpu_count() or 1)
+        self.local_threads.setRange(0, max_threads)
         self.local_threads.setSpecialValueText(t("Automatic"))
-        # A spin box asks for room for its numbers, and 64 is two characters:
-        # the word standing in for zero is what actually has to fit, and on
-        # macOS, where the stepper sits inside the frame, it does not. Widened
-        # to the word rather than to a number picked by eye, so that it still
-        # fits once the word is "Otomatik".
+        # A spin box asks for room for its numbers, and the word standing in for
+        # zero is what actually has to fit, and on macOS, where the stepper sits
+        # inside the frame, it does not. Widened to the word rather than to a
+        # number picked by eye, so that it still fits once the word is "Otomatik".
         self.local_threads.setMinimumWidth(
             self.local_threads.fontMetrics()
             .horizontalAdvance(t("Automatic")) + 56)
