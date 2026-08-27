@@ -57,7 +57,7 @@ SHORTCUTS = {
                       "Dikte: pause/resume the recording", "pause_shortcut", ""),
     "cancel": Shortcut("cancel", CANCEL_DESKTOP_ID, "Dikte: discard the recording",
                        "cancel_shortcut", ""),
-    "ask": Shortcut("ask", ASK_DESKTOP_ID, "Dikte: ask Claude Code",
+    "ask": Shortcut("ask", ASK_DESKTOP_ID, "Dikte: ask the agent",
                     "assistant_shortcut", ""),
     "meeting": Shortcut("meeting", MEETING_DESKTOP_ID,
                         "Dikte: start/end a meeting recording",
