@@ -261,6 +261,18 @@ class CleanupPrompt(DikteTest):
     def test_no_glossary_means_no_rule_about_one(self):
         self.assertEqual(cfg.Config().cleanup_prompt(), cfg.CLEANUP_PROMPT_EN)
 
+    def test_a_detected_turkish_recording_gets_the_turkish_prompt(self):
+        """Auto mode learns what was heard, and that decides the prompt rather
+        than the interface language."""
+        self.write_config({"ui_language": "en", "transcribe_prompt": "Paraşüt"})
+        conf = cfg.Config()
+        prompt = conf.cleanup_prompt(speech="tr")
+        self.assertEqual(prompt, cfg.CLEANUP_PROMPT_TR
+                         + cfg.GLOSSARY_RULE_TR.format(glossary="Paraşüt"))
+        self.assertIn("KONUŞMACININ KULLANDIĞI İSİM VE TERİMLER", prompt)
+        self.assertIn("NAMES AND TERMS THE SPEAKER USES",
+                      conf.cleanup_prompt(speech="de"))
+
     def test_subtitles_use_their_own_prompt(self):
         conf = cfg.Config()
         self.assertNotEqual(conf.cleanup_prompt(subtitles=True), conf.cleanup_prompt())

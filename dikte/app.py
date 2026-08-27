@@ -1058,7 +1058,7 @@ class Dikte:
         if not self._transcripts_pending:
             self._settle(DICTATION, payload)
 
-    def _on_finished(self, _raw, text, warning):
+    def _on_finished(self, _raw, text, warning, speech_language):
         if warning:
             # The text was still pasted, but cleanup did not run. Say so loudly:
             # a rejected key otherwise looks exactly like working dictation.
@@ -1079,9 +1079,10 @@ class Dikte:
                 t("{action}: {preview}", action=action, preview=_preview(text))
             )
         self._transcript_settled({"ok": True, "text": text, "raw": _raw,
-                                  "warning": warning})
+                                  "warning": warning,
+                                  "speech_language": speech_language})
 
-    def _on_ask_finished(self, _raw, text, warning):
+    def _on_ask_finished(self, _raw, text, warning, speech_language):
         agent = assistant.display_name(self.conf)
         if warning:
             # A tool the agent was not allowed to touch otherwise looks exactly
@@ -1102,7 +1103,8 @@ class Dikte:
             )
         self._set_ask_state(IDLE)
         self._settle(ASK, {"ok": True, "answer": text, "question": _raw,
-                           "warning": warning, "agent": agent})
+                           "warning": warning, "agent": agent,
+                           "speech_language": speech_language})
 
     def _on_ask_cancelled(self):
         self.ask_overlay.show_done(t("Stopped."), 2000)

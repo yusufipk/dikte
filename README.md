@@ -215,6 +215,11 @@ running.
   written for subtitles, so the lines keep their place and nothing is shortened.
 - **History** of every dictation under Settings → History, with a size limit and
   right-click to delete.
+- **The speech language is detected, not picked.** Auto is the default: whisper
+  on this machine says what it heard, the hosted providers transcribe in
+  whatever language comes in without being told, and the detected language
+  lands in the history and decides which cleanup prompt (Turkish or the
+  language-agnostic one) a run gets. A fixed language still overrides it.
 - **Turkish and English interface**, following the system locale by default.
 
 ## The global shortcuts, and the logout KDE needs

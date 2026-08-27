@@ -35,7 +35,7 @@ class Chain(DikteTest):
                   cleaned="Book it for Thursday.",
                   cleanup_error=None, answer=("Booked.", ""), rms=None,
                   clipboard=b"what was there before", paste_error=None,
-                  focus=None):
+                  detected="en", focus=None):
         pipeline = worker.Pipeline(self.conf)
         done, failures, stages, cancels = [], [], [], []
         pipeline.finished.connect(lambda *args: done.append(args))
@@ -45,14 +45,19 @@ class Chain(DikteTest):
 
         cleanup = (mock.Mock(side_effect=cleanup_error) if cleanup_error
                    else mock.Mock(return_value=cleaned))
+        # Auto mode takes the detection path; a fixed language the plain one.
+        # Both are mocked so the chain runs either way without a server.
+        behavior = {"side_effect": transcribe_error} if transcribe_error \
+            else {"return_value": transcript}
+        detect_behavior = {"side_effect": transcribe_error} if transcribe_error \
+            else {"return_value": (transcript, detected)}
         calls = {}
         # The chain reports its own failures on stderr, which a test run has no
         # use for.
         with contextlib.redirect_stderr(io.StringIO()), \
-                mock.patch.object(
-                    api, "transcribe",
-                    **({"side_effect": transcribe_error} if transcribe_error
-                       else {"return_value": transcript})) as tr, \
+                mock.patch.object(api, "transcribe", **behavior) as tr, \
+                mock.patch.object(api, "transcribe_detected",
+                                  **detect_behavior) as tdet, \
                 mock.patch.object(api, "cleanup", cleanup), \
                 mock.patch.object(assistant, "ask", return_value=answer) as ask_call, \
                 mock.patch.object(paste, "copy") as copy, \
@@ -62,7 +67,8 @@ class Chain(DikteTest):
                                   return_value=clipboard) as read_clipboard, \
                 mock.patch.object(worker.time, "sleep", lambda seconds: None):
             press.side_effect = paste_error
-            calls = {"transcribe": tr, "cleanup": cleanup, "ask": ask_call,
+            calls = {"transcribe": tr, "transcribe_detected": tdet,
+                     "cleanup": cleanup, "ask": ask_call,
                      "copy": copy, "copy_bytes": copy_bytes, "press": press,
                      "read_clipboard": read_clipboard}
             pipeline._work(self.wav, duration,
@@ -77,7 +83,8 @@ class Chain(DikteTest):
         run = self.run_chain()
         self.assertEqual(run["failures"], [])
         self.assertEqual(run["done"][0],
-                         ("uh, book it for Thursday", "Book it for Thursday.", ""))
+                         ("uh, book it for Thursday", "Book it for Thursday.",
+                          "", "en"))
         run["copy"].assert_called_once_with("Book it for Thursday.")
         run["press"].assert_called_once_with(self.conf["paste_shortcut"],
                                              focus=None)
@@ -129,7 +136,7 @@ class Chain(DikteTest):
         self.conf["restore_clipboard"] = True
         run = self.run_chain(paste_error=paste.PasteError("not trusted"))
         self.assertEqual(run["failures"], [])
-        raw, text, warning = run["done"][0]
+        raw, text, warning, _lang = run["done"][0]
         self.assertIn("not trusted", warning)
         run["copy_bytes"].assert_not_called()
 
@@ -182,17 +189,41 @@ class Chain(DikteTest):
         self.assertEqual(run["transcribe"].call_args.kwargs["language"], "tr")
         self.assertEqual(run["transcribe"].call_args.kwargs["prompt"], "Paraşüt")
 
+    def test_auto_mode_asks_for_the_detected_language_and_records_it(self):
+        run = self.run_chain(detected="tr")
+        told = run["transcribe_detected"].call_args.kwargs
+        self.assertEqual(told["language"], "auto")
+        self.assertEqual(cfg.read_history()[0]["speech_language"], "tr")
+        self.assertEqual(run["done"][0][3], "tr")
+        run["transcribe"].assert_not_called()
+
+    def test_the_detected_language_is_told_to_the_cleanup_prompt(self):
+        # The mock stands in for api.cleanup, which the cleanup module calls
+        # with (text, key, model, system_prompt, …); the prompt is the fourth.
+        self.conf["transcribe_prompt"] = "Paraşüt"
+        run = self.run_chain(detected="tr")
+        prompt = run["cleanup"].call_args.args[3]
+        # Turkish was detected, so the Turkish glossary rule is appended.
+        self.assertIn("KONUŞMACININ KULLANDIĞI İSİM VE TERİMLER", prompt)
+
+    def test_a_fixed_language_needs_no_detection(self):
+        self.conf["language"] = "en"
+        run = self.run_chain()
+        run["transcribe"].assert_called_once()
+        run["transcribe_detected"].assert_not_called()
+        self.assertEqual(cfg.read_history()[0]["speech_language"], "en")
+
     # ---- silence and stock phrases ----------------------------------------
 
     def test_room_tone_costs_no_api_call(self):
         run = self.run_chain(rms=[0.00001] * 60)
-        run["transcribe"].assert_not_called()
+        run["transcribe_detected"].assert_not_called()
         self.assertIn("No speech", run["failures"][0])
 
     def test_the_silence_check_can_be_switched_off(self):
         self.conf["skip_silent"] = False
         run = self.run_chain(rms=[0.00001] * 60)
-        run["transcribe"].assert_called_once()
+        run["transcribe_detected"].assert_called_once()
 
     def test_a_stock_phrase_from_a_short_clip_is_thrown_away(self):
         run = self.run_chain(duration=2.0, transcript="Altyazı M.K.")
@@ -208,7 +239,7 @@ class Chain(DikteTest):
 
     def test_a_failed_cleanup_still_pastes_the_transcript(self):
         run = self.run_chain(cleanup_error=api.ApiError("rate limited"))
-        _raw, text, warning = run["done"][0]
+        _raw, text, warning, _lang = run["done"][0]
         self.assertEqual(text, "uh, book it for Thursday")
         self.assertIn("rate limited", warning)
         run["copy"].assert_called_once_with("uh, book it for Thursday")
@@ -220,6 +251,9 @@ class Chain(DikteTest):
         self.assertEqual(cfg.read_history()[0]["cleanup_error"], "bad key")
 
     def test_a_failed_transcription_ends_the_run(self):
+        # This path mocks api.transcribe, so it wants
+        # the plain (fixed-language) transcription.
+        self.conf["language"] = "tr"
         pipeline = worker.Pipeline(self.conf)
         failures = []
         pipeline.failed.connect(failures.append)
@@ -231,6 +265,9 @@ class Chain(DikteTest):
         copy.assert_not_called()
 
     def test_a_clipboard_that_will_not_take_it(self):
+        # This path mocks api.transcribe, so it wants
+        # the plain (fixed-language) transcription.
+        self.conf["language"] = "tr"
         pipeline = worker.Pipeline(self.conf)
         failures = []
         pipeline.failed.connect(failures.append)
@@ -243,6 +280,9 @@ class Chain(DikteTest):
         self.assertIn("wl-copy", failures[0])
 
     def test_an_unexpected_error_is_reported_rather_than_swallowed(self):
+        # This path mocks api.transcribe, so it wants
+        # the plain (fixed-language) transcription.
+        self.conf["language"] = "tr"
         pipeline = worker.Pipeline(self.conf)
         failures = []
         pipeline.failed.connect(failures.append)
@@ -280,6 +320,9 @@ class Chain(DikteTest):
         run["press"].assert_not_called()
 
     def test_a_command_that_was_cancelled(self):
+        # This path mocks api.transcribe, so it wants
+        # the plain (fixed-language) transcription.
+        self.conf["language"] = "tr"
         pipeline = worker.Pipeline(self.conf)
         cancels = []
         pipeline.cancelled.connect(lambda: cancels.append(True))
@@ -289,6 +332,9 @@ class Chain(DikteTest):
         self.assertEqual(cancels, [True])
 
     def test_an_agent_that_is_not_installed(self):
+        # This path mocks api.transcribe, so it wants
+        # the plain (fixed-language) transcription.
+        self.conf["language"] = "tr"
         pipeline = worker.Pipeline(self.conf)
         failures = []
         pipeline.failed.connect(failures.append)

@@ -37,7 +37,7 @@ _paste_lock = threading.Lock()
 
 class Pipeline(QObject):
     stage = pyqtSignal(str)          # human-readable progress line
-    finished = pyqtSignal(str, str, str)  # raw transcript, final text, warning
+    finished = pyqtSignal(str, str, str, str)  # raw, final text, warning, language
     failed = pyqtSignal(str)
     cancelled = pyqtSignal()
 
@@ -120,12 +120,24 @@ class Pipeline(QObject):
         try:
             self.stage.emit(t("Transcribing…"))
             target = conf.transcribe_target()
-            raw = api.transcribe(
-                target,
-                wav_path,
-                language=conf["language"],
-                prompt=conf["transcribe_prompt"],
-            )
+            # The spoken language is only knowable after the fact, and only the
+            # local server says what it heard: auto mode asks it there, and
+            # every other run (a fixed language, or a hosted provider that
+            # detects but stays silent) transcribes as before.
+            auto = conf["language"] == "auto"
+            if auto:
+                raw, detected = api.transcribe_detected(
+                    target, wav_path, language=conf["language"],
+                    prompt=conf["transcribe_prompt"],
+                )
+            else:
+                raw = api.transcribe(
+                    target,
+                    wav_path,
+                    language=conf["language"],
+                    prompt=conf["transcribe_prompt"],
+                )
+                detected = ""
 
             if conf["filter_hallucinations"] and vad.looks_like_hallucination(raw, duration):
                 self._discard(wav_path)
@@ -134,6 +146,10 @@ class Pipeline(QObject):
 
             text = raw
             warning = ""
+            # The language the run actually spoke, reported to the window, the
+            # clipboard path and the history alike: the detected code, or the
+            # configured one when nothing was detected to replace it.
+            speech_language = detected or conf["language"]
             # Remembered rather than re-derived at the history write below: the
             # ask path runs cleanup under a different setting, and the record
             # should say what happened, not what one of the two gates implies.
@@ -145,7 +161,7 @@ class Pipeline(QObject):
                 self.stage.emit(t("Cleaning up…"))
                 cleaned = True
                 try:
-                    text = cleanup.run(raw, conf, conf.cleanup_prompt())
+                    text = cleanup.run(raw, conf, conf.cleanup_prompt(speech=detected))
                 except api.ApiError as exc:
                     # Keep the transcript, but never let the failure pass unseen:
                     # a rejected key would otherwise look like working dictation.
@@ -183,6 +199,7 @@ class Pipeline(QObject):
                 "question": question,
                 "assistant": assistant.provider(conf) if ask else "",
                 "assistant_model": assistant.model(conf) if ask else "",
+                "speech_language": speech_language,
                 "raw": raw,
                 "text": text,
             }
@@ -221,7 +238,7 @@ class Pipeline(QObject):
                     time.sleep(0.35)
                     paste.copy_bytes(previous)
 
-            self.finished.emit(raw, text, warning)
+            self.finished.emit(raw, text, warning, speech_language)
 
         except assistant.Cancelled:
             self.cancelled.emit()

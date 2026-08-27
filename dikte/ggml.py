@@ -967,12 +967,13 @@ def _whisper_args(settings):
         binary, "-m", str(model),
         "--inference-path", INFERENCE_PATH,
         # Whatever language the request does not name. api.py leaves the field
-        # out when the language is "auto", and the server's own default is
-        # English rather than detection.
+        # out when the language is "auto", and the server's own language is
+        # set here: "auto" makes whisper.cpp detect what it hears.
         "-l", "auto",
         # Stock phrases invented for near-silence come from non-speech tokens,
         # and verbose_json otherwise pays for a language probability sweep
-        # nothing here reads.
+        # nobody asked for. A request that wants the detected language switches
+        # that back on per request.
         "-sns", "-nlp",
     ]
     if int(settings["threads"]) > 0:

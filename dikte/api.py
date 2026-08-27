@@ -356,7 +356,8 @@ def local_failure(service, server, exc):
 
 
 def _transcribe_request(target, audio_path, language, prompt, response_format,
-                        granularity=None, timeout=300, aborter=None):
+                        granularity=None, timeout=300, aborter=None,
+                        detect_language=False):
     if target.provider == "local":
         # The timeouts here are sized for a hosted API, where a slow answer is a
         # bill running. Locally the only thing being spent is time.
@@ -368,6 +369,12 @@ def _transcribe_request(target, audio_path, language, prompt, response_format,
     fields = [("model", target.model), ("response_format", response_format)]
     if language and language != "auto":
         fields.append(("language", language))
+    if detect_language:
+        # whisper.cpp was started with -nlp, which keeps the language
+        # probability sweep off every request. Detection is only worth that
+        # sweep for the run that asked for it, so it is switched back on here,
+        # per request, and reported in the verbose_json answer.
+        fields.append(("no_language_probabilities", "false"))
     # OpenRouter takes the hint field and throws it away, so spare it the bytes.
     # The same words still reach the cleanup model as a glossary. whisper.cpp
     # takes it as the initial prompt, the way OpenAI does.
@@ -438,6 +445,44 @@ def transcribe(target, audio_path, language="", prompt="", timeout=300, aborter=
     if not text:
         raise ApiError(t("Transcript came back empty."))
     return text
+
+
+# whisper.cpp reports what it heard as a lowercase full name ("turkish",
+# "english", "german"…); the settings and the cleanup prompt speak in two-letter
+# codes. Only the handful Dikte offers as a fixed choice get a code; anything
+# else is left as the empty string, which the caller reads as "unknown" rather
+# than guessing at a language it has no label for.
+_DETECTED_TO_CODE = {
+    "english": "en", "turkish": "tr", "german": "de",
+    "french": "fr", "spanish": "es", "arabic": "ar",
+}
+
+
+def transcribe_detected(target, audio_path, language="", prompt="", timeout=300,
+                        aborter=None):
+    """(text, code) with the language the model heard.
+
+    The spoken language is only knowable when the transcription model reports
+    it, and only whisper.cpp does: the hosted endpoints accept "auto" but never
+    say what they heard. So detection is asked for exactly where it can be
+    answered, the local server in auto mode, and every other run transcribes
+    as before and hands back an empty code.
+    """
+    if target.provider == "local" and language == "auto":
+        data = _transcribe_request(
+            target, audio_path, language, prompt, "verbose_json",
+            detect_language=True, timeout=timeout, aborter=aborter,
+        )
+        text = _local_text(data.get("text") or "").strip()
+        if not text:
+            raise ApiError(t("Transcript came back empty."))
+        detected = data.get("detected_language")
+        code = _DETECTED_TO_CODE.get(
+            detected.strip().lower(), "") if isinstance(detected, str) else ""
+        return text, code
+    text = transcribe(target, audio_path, language=language, prompt=prompt,
+                      timeout=timeout, aborter=aborter)
+    return text, ""
 
 
 def transcribe_segments(target, audio_path, language="", prompt="", timeout=300,

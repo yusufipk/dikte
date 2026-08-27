@@ -209,6 +209,11 @@ olmasını ister.
   yerinde kalır, hiçbir şey kısaltılmaz.
 - **Geçmiş** Ayarlar → Geçmiş sekmesinde; boyut sınırı var, sağ tıklayıp
   silebilirsin.
+- **Konuşma dili seçilmez, algılanır.** Varsayılan otomatiktir: bu makinedeki
+  whisper ne duyduğunu söyler, bulut sağlayıcılar söylenmeden de hangi dilde
+  konuşuluyorsa o dilde yazar; algılanan dil geçmişe düşer ve bir kaydın hangi
+  temizleme promptunu alacağını belirler (Türkçe mi, dile duyarsız olanı mı).
+  Sabit bir dil yine de bunun önüne geçer.
 - **Türkçe ve İngilizce arayüz**, varsayılan olarak sistem dilini izler.
 
 ## Global kısayollar ve KDE'nin istediği oturum kapatma

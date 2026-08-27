@@ -691,6 +691,40 @@ class TranscribeHere(DikteTest):
             api.transcribe_segments(LOCAL, self.wav)
         self.assertEqual(multipart_fields(calls[0])["model"], "ggml-base.bin")
 
+    # ---- the detected language --------------------------------------------
+
+    def test_auto_mode_asks_whisper_for_the_detected_language(self):
+        # The -nlp the server was started with is switched back on for this one
+        # request, so whisper's verbose_json reports what it heard.
+        reply = {"text": " Merhaba dünya. ", "detected_language": "turkish"}
+        with fake_urlopen(reply) as calls:
+            text, code = api.transcribe_detected(LOCAL, self.wav, language="auto")
+        fields = multipart_fields(calls[0])
+        self.assertEqual(fields["response_format"], "verbose_json")
+        self.assertEqual(fields["no_language_probabilities"], "false")
+        self.assertNotIn("language", fields)
+        self.assertEqual(text, "Merhaba dünya.")
+        self.assertEqual(code, "tr")
+
+    def test_a_fixed_language_reports_no_detection(self):
+        with fake_urlopen({"text": "hello"}) as calls:
+            text, code = api.transcribe_detected(LOCAL, self.wav, language="tr")
+        self.assertNotIn("no_language_probabilities", multipart_fields(calls[0]))
+        self.assertEqual(text, "hello")
+        self.assertEqual(code, "")
+
+    def test_a_detected_language_without_a_code_stays_unknown(self):
+        with fake_urlopen({"text": "hello", "detected_language": "somali"}):
+            _text, code = api.transcribe_detected(LOCAL, self.wav, language="auto")
+        self.assertEqual(code, "")
+
+    def test_a_hosted_auto_run_transcribes_without_detection(self):
+        with fake_urlopen({"text": "hi"}) as calls:
+            text, code = api.transcribe_detected(OPENAI, self.wav, language="auto")
+        self.assertNotIn("no_language_probabilities", multipart_fields(calls[0]))
+        self.assertEqual(text, "hi")
+        self.assertEqual(code, "")
+
 
 class Stopping(unittest.TestCase):
     """The Stop button, from the far end: a request already blocked on a reply.

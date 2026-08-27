@@ -741,6 +741,13 @@ class Replies(DikteTest):
         self.assertEqual(code, 0)
         self.assertEqual(out.strip(), "Book it for Thursday.")
 
+    def test_the_json_answer_carries_the_detected_language(self):
+        code, out, _ = self.run_verb(
+            ["--json", "record"],
+            {"ok": True, "text": "Selam", "speech_language": "tr"})
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out)["speech_language"], "tr")
+
     def test_a_dictation_that_failed(self):
         code, out, err = self.run_verb(["stop", "--wait"],
                                        {"ok": False, "error": "No speech detected"})
