@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
     QAbstractItemView, QAbstractSpinBox, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
     QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit,
-    QPushButton, QScrollArea, QSpinBox, QTabWidget, QVBoxLayout, QWidget, QSizePolicy,
+    QPushButton, QScrollArea, QSpinBox, QTabWidget, QVBoxLayout, QWidget,
 )
 
 from . import __version__
@@ -229,6 +229,8 @@ class LocalModelBox(QGroupBox):
         self._wanted = ""              # the model to select once a list arrives
 
         form = QFormLayout(self)
+        form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
         self.program_label = WrappedLabel()
         self.install_button = QPushButton(t("Download"))
@@ -239,7 +241,6 @@ class LocalModelBox(QGroupBox):
         if self._repos is not None:
             self.repo = QComboBox()
             self.repo.setEditable(True)
-            self.repo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
             self.repo.setToolTip(t("A Hugging Face repository of GGUF files. The "
                                    "list is fetched; any other one can be typed in."))
             self.repo.currentTextChanged.connect(self._repo_changed)
@@ -679,6 +680,8 @@ class SettingsWindow(QDialog):
     def _general_tab(self):
         page = QWidget()
         form = QFormLayout(page)
+        form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
 
         self.ui_language = QComboBox()
         for label, code in UI_LANGUAGES:
@@ -704,7 +707,6 @@ class SettingsWindow(QDialog):
         # them: a stored one this desktop does not offer is kept as it is
         # rather than quietly replaced by the first item on the list.
         self.paste_shortcut.setEditable(True)
-        self.paste_shortcut.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.paste_shortcut.addItems(paste.desktop().shortcuts)
         self.paste_shortcut.setToolTip(t(
             "macOS asks for Accessibility permission the first time this is sent."
@@ -792,6 +794,8 @@ class SettingsWindow(QDialog):
 
         stt = QGroupBox(t("Speech to text"))
         stt_form = QFormLayout(stt)
+        stt_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.transcribe_provider = QComboBox()
         for label, value in TRANSCRIBE_PROVIDERS:
             self.transcribe_provider.addItem(t(label), value)
@@ -803,7 +807,6 @@ class SettingsWindow(QDialog):
         self.stt_form = stt_form
         self.transcribe_model = QComboBox()
         self.transcribe_model.setEditable(True)
-        self.transcribe_model.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.refresh_transcribe_models = QPushButton(t("Fetch model list"))
         self.refresh_transcribe_models.clicked.connect(self._load_transcribe_models)
         self.transcribe_model_row = self._row(self.transcribe_model,
@@ -854,6 +857,8 @@ class SettingsWindow(QDialog):
 
         orr = QGroupBox(t("Transcript cleanup"))
         orr_form = self.cleanup_form = QFormLayout(orr)
+        orr_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.cleanup_enabled = QCheckBox(t("Clean the transcript with a model"))
         orr_form.addRow("", self.cleanup_enabled)
 
@@ -872,7 +877,6 @@ class SettingsWindow(QDialog):
 
         self.cleanup_model = QComboBox()
         self.cleanup_model.setEditable(True)
-        self.cleanup_model.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.cleanup_model.addItems(CLEANUP_MODELS)
         self.refresh_models = QPushButton(t("Fetch model list"))
         self.refresh_models.clicked.connect(self._load_models)
@@ -884,14 +888,12 @@ class SettingsWindow(QDialog):
         # field, and only the row of whoever is chosen is on screen.
         self.cleanup_claude_model = QComboBox()
         self.cleanup_claude_model.setEditable(True)
-        self.cleanup_claude_model.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.cleanup_claude_model.addItems(CLEANUP_CLAUDE_MODELS)
         self.cleanup_claude_model.setToolTip(_typed_model_note("Claude Code"))
         orr_form.addRow(t("Model"), self.cleanup_claude_model)
 
         self.cleanup_codex_model = QComboBox()
         self.cleanup_codex_model.setEditable(True)
-        self.cleanup_codex_model.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.cleanup_codex_model.addItems([t("Codex's own default")] + CODEX_MODELS)
         self.cleanup_codex_model.setToolTip(_typed_model_note("Codex"))
         orr_form.addRow(t("Model"), self.cleanup_codex_model)
@@ -1046,9 +1048,10 @@ class SettingsWindow(QDialog):
         # be worse than none.
         self.claude_box = QGroupBox(t("Claude Code"))
         claude_form = QFormLayout(self.claude_box)
+        claude_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.assistant_model = QComboBox()
         self.assistant_model.setEditable(True)
-        self.assistant_model.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.assistant_model.addItems(ASSISTANT_MODELS)
         self.assistant_model.setToolTip(t(
             "A name like “sonnet” always means the newest model of that line. "
@@ -1064,9 +1067,10 @@ class SettingsWindow(QDialog):
 
         self.codex_box = QGroupBox(t("Codex"))
         codex_form = QFormLayout(self.codex_box)
+        codex_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.assistant_codex_model = QComboBox()
         self.assistant_codex_model.setEditable(True)
-        self.assistant_codex_model.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.assistant_codex_model.addItem(t("Codex's own default"), "")
         for name in CODEX_MODELS:
             self.assistant_codex_model.addItem(name, name)
@@ -1080,9 +1084,10 @@ class SettingsWindow(QDialog):
 
         self.openrouter_box = QGroupBox("OpenRouter")
         or_form = QFormLayout(self.openrouter_box)
+        or_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.assistant_openrouter_model = QComboBox()
         self.assistant_openrouter_model.setEditable(True)
-        self.assistant_openrouter_model.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.assistant_openrouter_model.addItems(ASSISTANT_OR_MODELS)
         or_form.addRow(t("Model"), self.assistant_openrouter_model)
         or_note = QLabel(t(
@@ -1228,9 +1233,10 @@ class SettingsWindow(QDialog):
 
         models = QGroupBox(t("Minutes"))
         models_form = QFormLayout(models)
+        models_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self.meeting_model = QComboBox()
         self.meeting_model.setEditable(True)
-        self.meeting_model.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.meeting_model.addItems(MEETING_MODELS)
         models_form.addRow(t("Model"), self.meeting_model)
         self.meeting_reasoning = QComboBox()
@@ -1411,6 +1417,8 @@ class SettingsWindow(QDialog):
         # and two combination boxes starting at different places read as two
         # unrelated settings rather than the pair they are.
         form = QFormLayout()
+        form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self._shortcut_row(
             form, "toggle", t("Start and stop"),
             t("No global shortcut installed."), placeholder="Ctrl+Space",
@@ -1561,7 +1569,6 @@ class SettingsWindow(QDialog):
         """The field a global shortcut is typed or picked in."""
         box = QComboBox()
         box.setEditable(True)
-        box.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         box.addItems(MAC_SHORTCUTS if hotkey.backend() == hotkey.MACOS
                      else SHORTCUTS)
         box.setCurrentText("")

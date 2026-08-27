@@ -12,7 +12,7 @@ import unittest
 from typing import ClassVar
 from unittest import mock
 
-from PyQt6.QtCore import QPoint, QPointF, Qt
+from PyQt6.QtCore import QPoint, QPointF, QRect, Qt
 from PyQt6.QtGui import QWheelEvent
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
@@ -270,6 +270,46 @@ class Settings(DikteTest):
                          if not other.isHidden()]
                 self.assertEqual(shown, [provider])
                 self.assertFalse(box.isHidden())
+
+    def test_editable_boxes_live_in_forms_that_grow_the_field_column(self):
+        window = self.window(cfg.Config())
+
+        def contains(layout, target):
+            for index in range(layout.count()):
+                item = layout.itemAt(index)
+                widget = item.widget()
+                if widget is target or (widget is not None and
+                                        widget.isAncestorOf(target)):
+                    return True
+                child = item.layout()
+                if child is not None and contains(child, target):
+                    return True
+            return False
+
+        forms = window.findChildren(settings_ui.QFormLayout)
+        boxes = [
+            window.paste_shortcut,
+            window.transcribe_model,
+            window.cleanup_model,
+            window.cleanup_claude_model,
+            window.cleanup_codex_model,
+            window.assistant_model,
+            window.assistant_codex_model,
+            window.assistant_openrouter_model,
+            window.meeting_model,
+            window.local_llm.repo,
+            *(box for box, _status, _missing in
+              window._shortcut_rows.values()),
+        ]
+        for box in boxes:
+            form = next((candidate for candidate in forms
+                         if contains(candidate, box)), None)
+            with self.subTest(box=box.objectName() or box.currentText()):
+                self.assertIsNotNone(form)
+                self.assertEqual(
+                    form.fieldGrowthPolicy(),
+                    settings_ui.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow,
+                )
 
     def test_codex_answering_refills_both_of_its_boxes(self):
         """The list Codex gave replaces the built-in one, in both places, and
@@ -940,6 +980,17 @@ class Overlay(DikteTest):
                 widget = self.overlay(corner=corner)
                 widget.show_recording()
                 widget._reposition()
+
+    def test_a_live_indicator_follows_the_cursor_to_another_screen(self):
+        widget = self.overlay(corner="top-left")
+        widget.show_recording()
+        other_screen = mock.Mock()
+        other_screen.availableGeometry.return_value = QRect(1000, 200, 800, 600)
+        with mock.patch.object(QApplication, "screenAt",
+                               return_value=other_screen):
+            widget._tick()
+        self.assertEqual(widget.pos(), QPoint(1000 + overlay_module.MARGIN,
+                                              200 + overlay_module.MARGIN))
 
     def test_a_warning_and_an_error_both_show(self):
         widget = self.overlay()
