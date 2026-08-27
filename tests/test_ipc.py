@@ -14,6 +14,7 @@ import unittest
 from unittest import mock
 
 from dikte import ipc
+from tests.support import DikteTest
 
 
 class FakeSocket:
@@ -183,6 +184,75 @@ class Send(unittest.TestCase):
         sock = FakeSocket(reply=b'{"ok": true}\n')
         self.send(sock, "toggle")
         self.assertTrue(sock.disconnected)
+
+
+class AlreadyServing(unittest.TestCase):
+    """The single-instance check, which listen() cannot be: a Windows pipe
+    takes a second server on the same name rather than refusing it."""
+
+    def probe(self, socket):
+        with mock.patch.object(ipc, "QLocalSocket", return_value=socket):
+            return ipc.already_serving()
+
+    def test_nothing_running_means_go_ahead(self):
+        self.assertFalse(self.probe(FakeSocket(connected=False)))
+
+    def test_an_answer_means_yield(self):
+        self.assertTrue(self.probe(FakeSocket(reply=b'{"ok": true}\n')))
+
+    def test_the_probe_has_no_side_effect(self):
+        """A probe that opened a window would open it during the relaunch a
+        slow instance provokes, on top of the verb being forwarded."""
+        sock = FakeSocket(reply=b'{"ok": true}\n')
+        self.probe(sock)
+        self.assertEqual(sock.written.decode("utf-8").strip(), "status")
+
+    def test_an_instance_too_old_to_answer_still_counts_as_running(self):
+        self.assertTrue(self.probe(FakeSocket(reply=b"")))
+
+
+class InstanceLock(DikteTest):
+    def setUp(self):
+        super().setUp()
+        # The lock derives its home from paths, which DikteTest's cfg patches
+        # do not cover; without this the test would write into the real one.
+        from dikte import paths
+        self.patch_attr(paths, "DATA_DIR", self.path("data"))
+
+    def test_one_holder_at_a_time(self):
+        first = ipc.instance_lock()
+        self.assertIsNotNone(first)
+        self.assertTrue(first.tryLock(0))
+        second = ipc.instance_lock()
+        self.assertFalse(second.tryLock(0))
+        first.unlock()
+        self.assertTrue(second.tryLock(0))
+        second.unlock()
+
+    def test_the_lock_lives_in_the_data_directory(self):
+        from dikte import paths
+        lock = ipc.instance_lock()
+        self.assertTrue(lock.tryLock(0))
+        self.assertTrue((paths.DATA_DIR / "dikte.lock").exists())
+        lock.unlock()
+
+
+class Respawn(unittest.TestCase):
+    def test_windows_starts_a_detached_process_and_returns(self):
+        with mock.patch.object(sys, "platform", "win32"), \
+                mock.patch.object(ipc, "launcher", return_value=["py", "x"]), \
+                mock.patch.object(ipc.subprocess, "Popen") as popen:
+            ipc.respawn(["--gui"])
+        self.assertEqual(popen.call_args.args[0], ["py", "x", "--gui"])
+        self.assertEqual(popen.call_args.kwargs["creationflags"],
+                         0x00000008 | 0x00000200)
+
+    def test_everywhere_else_the_process_is_replaced(self):
+        with mock.patch.object(sys, "platform", "linux"), \
+                mock.patch.object(ipc, "launcher", return_value=["py", "x"]), \
+                mock.patch.object(ipc.os, "execv") as execv:
+            ipc.respawn(["toggle", "--gui"])
+        execv.assert_called_once_with("py", ["py", "x", "toggle", "--gui"])
 
 
 if __name__ == "__main__":

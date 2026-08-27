@@ -18,6 +18,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 
 # A Wayland client cannot place a window in a screen corner, so the indicator
 # is drawn through XWayland.
@@ -49,6 +50,7 @@ from . import hub  # noqa: E402
 from . import i18n  # noqa: E402
 from . import integrate  # noqa: E402
 from . import ipc  # noqa: E402
+from . import mac_window  # noqa: E402
 from . import meeting  # noqa: E402
 from . import trayicon  # noqa: E402
 from . import update  # noqa: E402
@@ -116,6 +118,10 @@ class Dikte:
     def __init__(self, app):
         self.app = app
         self.conf = cfg.Config()
+        # run_app hands the one-instance lock over after construction; a Dikte
+        # built without one (the tests) restarts without touching a lock.
+        self.instance_lock = None
+        self._registry_shortcuts = True   # settled by _apply_settings below
         self.state = IDLE
         self.ask_state = IDLE
         # Which of the two the microphone is currently serving, or None.
@@ -145,6 +151,17 @@ class Dikte:
         # Which recording is the current one, so a timer set for the run that
         # started it cannot stop the one that came after.
         self._run_id = 0
+        # Dictations handed to the pipeline and not yet out of it. More than
+        # one is normal: the microphone is free while a transcript is being
+        # cleaned up, so the next dictation can already be spoken, and it then
+        # queues up behind the one still going.
+        self._transcripts_pending = 0
+        # The application that was in front when the recording started, which
+        # is where the transcript is meant to go, and the timer watching for
+        # the moment it has to be put back there. macOS only; see
+        # _give_the_front_back.
+        self.front_before = None
+        self._front_watch = None
 
         self.overlay = Overlay(self.conf["overlay_corner"])
         # The agent's indicator sits on top of the dictation one when both are
@@ -160,13 +177,20 @@ class Dikte:
         # Before anything of ours is started: a server from a Dikte that was
         # killed outright is still holding a model in memory.
         ggml.sweep()
+        # The first dictation with no microphone picked would otherwise pay for
+        # the ffmpeg device listing on the key press itself, seconds of nothing
+        # happening at the least explicable moment. Warmed the way the models
+        # are, off the main thread; the listing caches itself.
+        if sys.platform == "win32" and not self.conf["mic_target"]:
+            threading.Thread(target=audio.list_sources, daemon=True).start()
 
         self.recorder.level.connect(self._on_level)
         self.recorder.stopped.connect(self._on_recorded)
+        self.recorder.died.connect(self._on_recorder_died)
         self.recorder.failed.connect(self._on_recorder_error)
-        self.pipeline.stage.connect(self.overlay.show_busy)
+        self.pipeline.stage.connect(self._on_stage)
         self.pipeline.finished.connect(self._on_finished)
-        self.pipeline.failed.connect(self._on_error)
+        self.pipeline.failed.connect(self._on_pipeline_failed)
         self.ask_pipeline.stage.connect(self.ask_overlay.show_busy)
         self.ask_pipeline.finished.connect(self._on_ask_finished)
         self.ask_pipeline.failed.connect(self._on_ask_error)
@@ -184,7 +208,7 @@ class Dikte:
 
         self.elapsed = QElapsedTimer()
         self.meeting_elapsed = QElapsedTimer()
-        self.last_toggle = QElapsedTimer()
+        self.last_toggle = {}   # action name -> QElapsedTimer, see _repeated
         self.last_evdev = {}
         self.ticker = QTimer()
         self.ticker.setInterval(100)
@@ -336,13 +360,18 @@ class Dikte:
             BUSY: ("Working…", "view-refresh", "Dikte: working"),
         }
         label, icon, tip = labels[self.state]
+        if self.state == BUSY:
+            # Still working, but the microphone is free again: the menu offers
+            # the next dictation rather than a wait.
+            label = "Start recording"
         agent = assistant.display_name(self.conf)
 
         self.toggle_action.setText(t(label))
-        # Free while the other one is thinking, blocked only while it is holding
-        # the microphone.
+        # Blocked only while something is holding the microphone: a transcript
+        # still being cleaned up queues the next dictation behind it, and the
+        # agent thinking never blocked it at all.
         self.toggle_action.setEnabled(
-            self.state == RECORDING or (self.state == IDLE and not self.recording)
+            self.state == RECORDING or not self.recording
         )
         asked = i18n.name(agent, "dative")
         self.ask_action.setText(
@@ -429,7 +458,10 @@ class Dikte:
         # Where nothing was installed there is no shortcut to catch up, and
         # retiring the listener would leave the keys with nowhere to arrive.
         timer = self.last_evdev.get(name)
-        if (hotkey.installs_shortcuts() and self.evdev.running
+        # The snapshot from _apply_settings: which desktop this is cannot
+        # change under a running process, and asking hotkey again here costs a
+        # PATH scan on every key press.
+        if (self._registry_shortcuts and self.evdev.running
                 and timer is not None and timer.elapsed() < ECHO_MS):
             self._retire_listener()
             return
@@ -498,10 +530,6 @@ class Dikte:
 
     def _dictation_request(self, cmd, request, reply):
         before = self.state
-        # Only a request that said something about pasting changes it, so that
-        # the stop half of a `start --paste` does not undo the start half.
-        if "paste" in request:
-            self.paste_override[DICTATION] = request["paste"]
         if cmd == "toggle":
             self.toggle()
         elif cmd == "stop":
@@ -512,13 +540,20 @@ class Dikte:
             if seconds > 0 and self.state == RECORDING:
                 run = self._run_id
                 QTimer.singleShot(int(seconds * 1000), lambda: self._auto_stop(run))
+        # Armed only when the request actually moved this run along: a request
+        # that no-opped (the microphone held by the other one, or nothing to
+        # stop) must not leave a preference behind for some later, unrelated
+        # run to pick up. A stop that lands keeps changing the run it ends,
+        # so the stop half of a `start --paste` still does not undo the start.
+        if "paste" in request and self.state != before:
+            self.paste_override[DICTATION] = request["paste"]
         self._answer(DICTATION, before, self.state, request, reply)
 
     def _ask_request(self, request, reply):
         before = self.ask_state
-        if "paste" in request:
-            self.paste_override[ASK] = request["paste"]
         self.toggle_ask()
+        if "paste" in request and self.ask_state != before:
+            self.paste_override[ASK] = request["paste"]
         self._answer(ASK, before, self.ask_state, request, reply)
 
     def _meeting_request(self, cmd, request, reply):
@@ -583,40 +618,70 @@ class Dikte:
     def _toggle(self):
         # Two /dev/input nodes can carry the same keyboard, and a menu click can
         # land on top of a key press; swallow the immediate repeat.
-        if self._repeated():
+        if self._repeated("toggle"):
             return
         if self.state == RECORDING:
             self.stop()
-        elif self.state == IDLE:
+        else:
+            # BUSY does not block: the microphone is free while the last
+            # dictation is being cleaned up, and the next one starts now and
+            # waits its turn in the pipeline.
             self.start()
-        # a request during its own BUSY is ignored; nothing queues up
 
     def _toggle_ask(self):
-        if self._repeated():
+        if self._repeated("ask"):
             return
         if self.ask_state == RECORDING:
             self.stop_ask()
         elif self.ask_state == IDLE:
             self.start_ask()
 
-    def _repeated(self):
-        if self.last_toggle.isValid() and self.last_toggle.elapsed() < 400:
+    def _repeated(self, name):
+        # Per action, the way last_evdev already is: the window is meant to
+        # swallow a duplicate delivery of the same press, not a pause landing
+        # right after the toggle that started the recording.
+        timer = self.last_toggle.get(name)
+        if timer is None:
+            timer = self.last_toggle[name] = QElapsedTimer()
+        if timer.isValid() and timer.elapsed() < 400:
             return True
-        self.last_toggle.restart()
+        timer.restart()
         return False
 
+    def _the_front(self):
+        """The application a recording is about to start from, or None.
+
+        Asked before the indicator goes up rather than alongside the
+        microphone: putting a window on screen can take the front as well, and
+        once it has, the only answer left to the question is Dikte.
+        """
+        return mac_window.frontmost_pid() if sys.platform == "darwin" else None
+
     def start(self):
-        if self.state != IDLE or self.recording:
+        # Only a held microphone blocks: a previous dictation still being
+        # transcribed or cleaned up is the pipeline's business, not the
+        # recorder's.
+        if self.state == RECORDING or self.recording:
             return
+        self.front_before = self._the_front()
         self.overlay.show_recording()
         self._begin_recording(DICTATION)
+        # A recorder that could not start has already said so, synchronously,
+        # and the error handler put everything back; setting RECORDING on top
+        # of that would strand the state machine with no signal ever coming.
+        # The same guard start_meeting has always had.
+        if not self.recorder.active:
+            return
         self._set_state(RECORDING)
 
     def start_ask(self):
         if self.ask_state != IDLE or self.recording:
             return
+        self.front_before = self._the_front()
         self.ask_overlay.show_recording(asking=True)
         self._begin_recording(ASK)
+        if not self.recorder.active:
+            return
         self._set_ask_state(RECORDING)
 
     def _begin_recording(self, owner):
@@ -627,6 +692,80 @@ class Dikte:
         self.elapsed.restart()
         self.ticker.start()
         self.recorder.start(self.conf["mic_target"], self.conf["max_seconds"])
+        self._give_the_front_back(self.front_before)
+
+    def _give_the_front_back(self, was_in_front):
+        """Hand the front back to whoever had it when the recording started.
+
+        On macOS a recording goes through ffmpeg's avfoundation input, and
+        opening a capture session there brings the process that did it to the
+        front. ffmpeg is a child of Dikte with no bundle of its own, so the
+        system credits the move to Dikte: the window the user was typing in
+        loses the front, its caret stops, its title bar greys out, and the
+        Cmd+V at the end of the dictation has nowhere to land. Measured with a
+        TextEdit document in front:
+
+            press the shortcut          front = TextEdit
+            recorder.start returns      front = TextEdit
+            89 ms later                 front = Dikte
+
+        Nothing about the capture session can be asked not to do this. It is
+        not a window of ours and no flag reaches it. Starting ffmpeg in its own
+        session, and clearing __CFBundleIdentifier from its environment, were
+        both tried and both measured to make no difference. So it is undone
+        instead. The move lands a moment after the process starts rather than
+        during the call, hence the short watch rather than one attempt: it
+        gives up as soon as it has put the front back, and in any case after a
+        second and a half, which is longer than the microphone has ever taken
+        to open.
+
+        Silent off macOS, and silent when the recording started from Dikte
+        itself: there is nothing to give back.
+        """
+        # One watch at a time. A second recording started before the first
+        # watch had finished would otherwise leave two of them running, and the
+        # older one would put the front back where the older recording
+        # started, which by then is the wrong window.
+        if self._front_watch is not None:
+            self._front_watch.stop()
+            self._front_watch = None
+        if not was_in_front or was_in_front == os.getpid():
+            return
+        deadline = time.monotonic() + 1.5
+        watch = QTimer(self.app)
+        # Ten milliseconds because the front is already gone by the time this
+        # notices, and every tick it waits is a tick of the user's window drawn
+        # inactive: at forty the title bar visibly blinks, at ten it does not.
+        # Two messages to AppKit per tick, for at most a second and a half.
+        watch.setInterval(10)
+        # activateWithOptions: answers whether macOS accepted the request, not
+        # whether the other application is already back in front.  Keep the
+        # watch alive until that asynchronous handoff is observable; on Intel
+        # Macs it can take hundreds of milliseconds after the call returned.
+        restore_requested = False
+
+        def look():
+            nonlocal restore_requested
+            if time.monotonic() > deadline:
+                self._stop_watching_the_front()
+                return
+            if mac_window.is_frontmost():
+                if not restore_requested:
+                    restore_requested = mac_window.activate(was_in_front)
+            elif restore_requested:
+                # The request has landed.  Stop only now, rather than as soon
+                # as AppKit accepted it, so a delayed or failed handoff stays
+                # under observation until the deadline guard above.
+                self._stop_watching_the_front()
+
+        watch.timeout.connect(look)
+        self._front_watch = watch
+        watch.start()
+
+    def _stop_watching_the_front(self):
+        if self._front_watch is not None:
+            self._front_watch.stop()
+            self._front_watch = None
 
     def stop(self):
         if self.state != RECORDING:
@@ -634,7 +773,9 @@ class Dikte:
         self.ticker.stop()
         self._clear_pause()
         self._set_state(BUSY)
-        self.overlay.show_busy(t("Transcribing…"))
+        self.overlay.show_busy(t("Waiting for the one before it…")
+                               if self._transcripts_pending
+                               else t("Transcribing…"))
         self.recorder.stop()
 
     def stop_ask(self):
@@ -654,7 +795,7 @@ class Dikte:
         the phone call in the middle of a dictation never reaches the model and
         the sentence around it is still one sentence.
         """
-        if not self.recording or self._repeated():
+        if not self.recording or self._repeated("pause"):
             return
         self.paused = not self.paused
         if self.paused:
@@ -686,6 +827,8 @@ class Dikte:
         self.ticker.stop()
         self._clear_pause()
         self.recorder.cancel()
+        # The preference dies with the run it was given for.
+        self.paste_override.pop(ASK if asking else DICTATION, None)
         self.recorder_owner = None
         # What goes over the socket is read by a program as often as by a
         # person, so it stays in one language; only what a run itself said
@@ -697,7 +840,9 @@ class Dikte:
             self._settle(ASK, dropped)
         else:
             self.overlay.dismiss()
-            self._set_state(IDLE)
+            # An earlier dictation may still be in the pipeline; only the
+            # recording was thrown away.
+            self._set_state(BUSY if self._transcripts_pending else IDLE)
             self._settle(DICTATION, dropped)
 
     def cancel_ask(self):
@@ -742,6 +887,12 @@ class Dikte:
             return
         base = meeting.new_base()
         _, wav_path = cfg.meeting_paths(base)
+        # A meeting opens the same capture as a dictation does, and takes the
+        # front the same way: whoever is being recorded is in a call, and
+        # having their window go inactive mid-sentence is worse here than
+        # anywhere else. Kept as a local rather than on self: a dictation may
+        # already be waiting on its own note for where to paste.
+        was_in_front = self._the_front()
         self.meeting_recorder.start(
             str(wav_path),
             self.conf["meeting_mic_target"] or self.conf["mic_target"],
@@ -750,6 +901,7 @@ class Dikte:
         )
         if not self.meeting_recorder.active:
             return  # start() has already said what went wrong
+        self._give_the_front_back(was_in_front)
         self.meeting_base = base
         self.meeting_elapsed.restart()
         self.meeting_ticker.start()
@@ -876,31 +1028,56 @@ class Dikte:
     def _on_recorded(self, wav_path, duration, rms_values):
         owner, self.recorder_owner = self.recorder_owner, None
         wants_paste = self.paste_override.pop(owner, None)
+        focus, self.front_before = self.front_before, None
         if owner == ASK:
             self.ask_pipeline.run(wav_path, duration, rms_values, ask=True,
-                                  paste=wants_paste)
+                                  paste=wants_paste, focus=focus)
         else:
-            self.pipeline.run(wav_path, duration, rms_values, paste=wants_paste)
+            self._transcripts_pending += 1
+            self.pipeline.run(wav_path, duration, rms_values,
+                              paste=wants_paste, focus=focus)
+
+    def _on_stage(self, message):
+        # The corner belongs to the recording when one is on: the previous
+        # run's progress must not wipe the waveform mid-sentence.
+        if self.state != RECORDING:
+            self.overlay.show_busy(message)
+
+    def _transcript_settled(self, payload):
+        """One run out of the pipeline; where dictation stands now.
+
+        A request that asked to wait is answered once the queue is empty: with
+        runs finishing in the order they were spoken, the one it stopped is the
+        last of them, and an earlier run's result would be the wrong answer.
+        """
+        self._transcripts_pending -= 1
+        if self.state != RECORDING:
+            self._set_state(BUSY if self._transcripts_pending else IDLE)
+        if not self._transcripts_pending:
+            self._settle(DICTATION, payload)
 
     def _on_finished(self, _raw, text, warning):
         if warning:
             # The text was still pasted, but cleanup did not run. Say so loudly:
             # a rejected key otherwise looks exactly like working dictation.
-            self.overlay.show_warning(
-                t("Pasted raw, cleanup failed: {error}", error=warning.splitlines()[0])
-            )
+            if self.state != RECORDING:
+                self.overlay.show_warning(
+                    t("Pasted raw, cleanup failed: {error}",
+                      error=warning.splitlines()[0])
+                )
             self.tray.showMessage(
                 t("Dikte: cleanup failed"), warning,
                 QSystemTrayIcon.MessageIcon.Warning, 10000,
             )
-        else:
+        elif self.state != RECORDING:
+            # While a new recording is on, the flash is skipped: the text
+            # arriving where the cursor is says everything it would have.
             action = t("Pasted") if self.conf["auto_paste"] else t("Copied")
             self.overlay.show_done(
                 t("{action}: {preview}", action=action, preview=_preview(text))
             )
-        self._set_state(IDLE)
-        self._settle(DICTATION, {"ok": True, "text": text, "raw": _raw,
-                                 "warning": warning})
+        self._transcript_settled({"ok": True, "text": text, "raw": _raw,
+                                  "warning": warning})
 
     def _on_ask_finished(self, _raw, text, warning):
         agent = assistant.display_name(self.conf)
@@ -933,12 +1110,43 @@ class Dikte:
     def _on_recorder_error(self, message):
         """The microphone itself could not run, so it belongs to whoever asked."""
         owner, self.recorder_owner = self.recorder_owner, None
+        self.paste_override.pop(owner, None)
         self.ticker.stop()
         (self._on_ask_error if owner == ASK else self._on_error)(message)
 
+    def _on_pipeline_failed(self, message):
+        """A run the pipeline gave up on; whatever queued behind it still runs."""
+        if self.state == RECORDING:
+            # The corner belongs to the new recording; the failure still has to
+            # be seen somewhere.
+            self.tray.showMessage("Dikte", message,
+                                  QSystemTrayIcon.MessageIcon.Warning, 8000)
+        else:
+            self._report(message, self.overlay)
+        self._transcript_settled({"ok": False, "error": message})
+
+    def _on_recorder_died(self):
+        """The capture quit under a live recording: keep what it caught.
+
+        Ended the way a key press would end it, so the captured half is
+        transcribed rather than thrown away, and said out loud, because the
+        user is still talking at a microphone nobody is reading.
+        """
+        owner = self.recorder_owner
+        self.tray.showMessage(
+            "Dikte",
+            t("The recording stopped on its own; transcribing what was captured."),
+            QSystemTrayIcon.MessageIcon.Warning, 8000,
+        )
+        if owner == ASK and self.ask_state == RECORDING:
+            self.stop_ask()
+        elif self.state == RECORDING:
+            self.stop()
+
     def _on_error(self, message):
+        """The recorder or the key listener failed; no run reached the pipeline."""
         self._report(message, self.overlay)
-        self._set_state(IDLE)
+        self._set_state(BUSY if self._transcripts_pending else IDLE)
         self._settle(DICTATION, {"ok": False, "error": message})
 
     def _on_ask_error(self, message):
@@ -1001,17 +1209,56 @@ class Dikte:
 
     def open_settings(self):
         if self.settings_window is None:
-            self.settings_window = SettingsWindow(self.conf, self.meetings)
-            self.settings_window.applied.connect(self._apply_settings)
-            self.settings_window.update_found.connect(self._found_update)
-            self.settings_window.finished.connect(self._settings_closed)
+            self._make_settings()
         self.settings_window.show()
         self.settings_window.raise_()
         self.settings_window.activateWindow()
 
+    def _make_settings(self):
+        """Build the window without showing it, so a caller that knows where
+        it belongs can place it first."""
+        self.settings_window = SettingsWindow(self.conf, self.meetings)
+        self.settings_window.applied.connect(self._apply_settings)
+        self.settings_window.language_changed.connect(self._reopen_settings)
+        self.settings_window.update_found.connect(self._found_update)
+        self.settings_window.finished.connect(self._settings_closed)
+
     def _settings_closed(self, *_):
         # Don't drop the object while its own signal is still being delivered.
         QTimer.singleShot(0, lambda: setattr(self, "settings_window", None))
+
+    def _reopen_settings(self):
+        """Replace the settings window, so a language change reaches it too.
+
+        A save switches the language everywhere strings are made at the moment
+        they are shown: the tray is rebuilt, the indicator and the message box
+        translate as they speak. The settings window is the one place written
+        once, at construction, so the window that took the new language is the
+        one place still showing the old one. A fresh window comes up where the
+        old one stood, on the same tab.
+        """
+        old = self.settings_window
+        if old is None:
+            return
+        tab = old.tabs.currentIndex()
+        geometry = old.geometry()
+        # Replaced rather than merely closed: left connected, _settings_closed
+        # would drop the reference to the new window a moment after it is made.
+        old.finished.disconnect(self._settings_closed)
+        old.close()
+        # No deleteLater: a daemon thread of the old window's may still be
+        # running, and a closure holding self is what keeps the object alive
+        # until the thread is done. Dropping the reference is how the ordinary
+        # close path lets a window go, and it is enough here too.
+        self.settings_window = None
+        self._make_settings()
+        # Placed and turned to the old tab before it is shown, so the new
+        # window does not come up at the default size and jump.
+        self.settings_window.setGeometry(geometry)
+        self.settings_window.tabs.setCurrentIndex(tab)
+        self.settings_window.show()
+        self.settings_window.raise_()
+        self.settings_window.activateWindow()
 
     def _apply_local(self):
         """Pass the local settings on, and hold the models ready if asked to.
@@ -1053,10 +1300,13 @@ class Dikte:
         self._apply_local()
         self._build_tray()
         self._refresh_tray()
+        # Taken once here for _external: the answer cannot change under a
+        # running process, and re-deriving it there is a PATH scan per press.
+        self._registry_shortcuts = hotkey.installs_shortcuts()
         # Where the desktop has no shortcut registry of its own, the listener is
         # not the fallback the setting offers to turn on: it is the only way the
         # keys arrive at all, so it runs whatever the setting says.
-        if self.conf["evdev_hotkey"] or not hotkey.installs_shortcuts():
+        if self.conf["evdev_hotkey"] or not self._registry_shortcuts:
             self.evdev.start({name: self.conf[spec.setting]
                               for name, spec in hotkey.SHORTCUTS.items()})
         else:
@@ -1078,22 +1328,25 @@ class Dikte:
         if self.server is not None:
             self.server.close()
         QLocalServer.removeServer(SERVER_NAME)
-        args = ipc.launcher() + ["--gui"]
-        if sys.platform == "win32":
-            # execv on Windows mangles arguments with spaces and leaves the two
-            # processes sharing a console; a detached start does neither.
-            subprocess.Popen(
-                args,
-                creationflags=(subprocess.DETACHED_PROCESS
-                               | subprocess.CREATE_NEW_PROCESS_GROUP),
-                close_fds=True,
-            )
-            QApplication.instance().quit()
-            return
-        os.execv(args[0], args)
+        # The lock too, or the replacement would take this restart for a
+        # double start and hand the attention back to a process on its way out.
+        if self.instance_lock is not None:
+            self.instance_lock.unlock()
+        ipc.respawn(["--gui"])
+        # respawn only returns on Windows, where the replacement was started
+        # detached and this process still has to leave on its own.
+        QApplication.instance().quit()
 
     def shutdown(self):
         self._quitting = True
+        # Waiters first, while the connections still work: a `--wait` left
+        # unanswered reads to the terminal as an instance too old to answer,
+        # which points the user at a version problem that does not exist.
+        # In one language, like every other error that goes over the socket:
+        # a script reads these as often as a person does.
+        for kind in (DICTATION, ASK, MEETING):
+            self._settle(kind, {"ok": False,
+                                "error": "the instance is shutting down"})
         self.evdev.stop()
         if self.recording:
             self.recorder.cancel()
@@ -1216,8 +1469,43 @@ def _stay_out_of_the_dock():
         pass
 
 
+def _hand_over(command):
+    """Give the running instance the attention this start was asking for.
+
+    A start carrying a verb forwards only that verb; a bare double start asks
+    for the Settings window as the sign of life the click was looking for.
+    Retried for a moment, because the copy that won the lock may not be
+    listening yet.
+    """
+    verb = command or "settings"
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if ipc.send(verb) is not None:
+            return
+        time.sleep(0.2)
+    print("dikte: another copy holds the lock but never answered")
+
+
 def run_app(args):
     command = args[0] if args else ""
+
+    # One Dikte per user. The lock closes the simultaneous-start window two
+    # probes would both fall through; the probe still runs behind it, because
+    # an instance from before the lock existed holds only the socket. Both
+    # sit before the QApplication, so a second copy costs a moment and not a
+    # second tray icon. The lock lives in this frame, which app.exec() below
+    # keeps alive for exactly the process's lifetime.
+    lock = ipc.instance_lock()
+    if lock is not None and not lock.tryLock(0):
+        _hand_over(command)
+        return 0
+    if ipc.already_serving():
+        print("dikte: already running; handing it the attention")
+        if command:
+            ipc.send(command)
+        else:
+            ipc.send("settings")
+        return 0
 
     app = QApplication(sys.argv)
     app.setApplicationName("Dikte")
@@ -1246,6 +1534,9 @@ def run_app(args):
         print("dikte: no system tray found, running anyway")
 
     dikte = Dikte(app)
+    # Handed over so that restart() can let go of it before the replacement
+    # tries to take it.
+    dikte.instance_lock = lock
 
     server = QLocalServer()
     # Qt puts the socket in /tmp, so keep it to this user: commands like

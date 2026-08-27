@@ -24,13 +24,17 @@ while they work.
 
 import json
 import os
+import re
 import shutil
+import signal
 import subprocess
+import tempfile
 import threading
 import time
 
 from . import api
 from . import config as cfg
+from . import paths
 from .i18n import t
 
 SESSION_FILE = cfg.DATA_DIR / "assistant.json"
@@ -114,13 +118,19 @@ def display_name(conf):
 # one along costs tokens and invites an answer to the wrong question. Switching
 # provider drops it too, since none of them can pick up another's thread.
 
-def _read_row(name, max_age_seconds):
+def _read_session():
+    """The stored conversation row, or {} however the file fails to read."""
     try:
         with open(SESSION_FILE, encoding="utf-8") as fh:
             row = json.load(fh)
     except (OSError, json.JSONDecodeError, ValueError):
         return {}
-    if not isinstance(row, dict) or row.get("provider") != name:
+    return row if isinstance(row, dict) else {}
+
+
+def _read_row(name, max_age_seconds):
+    row = _read_session()
+    if row.get("provider") != name:
         return {}
     if max_age_seconds and time.time() - row.get("ts", 0) > max_age_seconds:
         return {}
@@ -159,22 +169,13 @@ def clear_session():
 
 def stored_provider():
     """Whose conversation is on disk, whatever the setting says now."""
-    try:
-        with open(SESSION_FILE, encoding="utf-8") as fh:
-            row = json.load(fh)
-    except (OSError, json.JSONDecodeError, ValueError):
-        return ""
-    return str(row.get("provider", "")) if isinstance(row, dict) else ""
+    return str(_read_session().get("provider", ""))
 
 
 def session_age():
     """Seconds since the stored conversation was last used, or None."""
-    try:
-        with open(SESSION_FILE, encoding="utf-8") as fh:
-            row = json.load(fh)
-    except (OSError, json.JSONDecodeError, ValueError):
-        return None
-    if not isinstance(row, dict) or not (row.get("session") or row.get("messages")):
+    row = _read_session()
+    if not (row.get("session") or row.get("messages")):
         return None
     return time.time() - row.get("ts", 0)
 
@@ -338,6 +339,33 @@ def _codex_label(item):
     return t("Using {name}…", name=item_type or "a tool")
 
 
+def codex_models():
+    """The models Codex itself would offer right now, best first.
+
+    `codex debug models` prints the catalog the CLI's own model picker reads,
+    fetched from OpenAI and cached beside Codex's config, so the list is as
+    current as the installed Codex and there is no second list to keep up to
+    date here. Entries the picker hides are internal and stay hidden. A machine
+    without Codex, or one too old to have the command, answers with nothing and
+    the caller keeps its built-in list.
+    """
+    if not shutil.which("codex"):
+        return []
+    try:
+        proc = subprocess.run(["codex", "debug", "models"],
+                              capture_output=True, text=True, timeout=30)
+        catalog = json.loads(proc.stdout or "null")
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return []
+    if not isinstance(catalog, dict):
+        return []
+    rows = [row for row in catalog.get("models") or []
+            if isinstance(row, dict) and row.get("slug")
+            and row.get("visibility") != "hide"]
+    rows.sort(key=lambda row: row.get("priority") or 0)
+    return [row["slug"] for row in rows]
+
+
 # --- OpenRouter -----------------------------------------------------------
 
 def _ask_openrouter(prompt, conf, on_stage):
@@ -373,14 +401,24 @@ def _stream(cmd, conf, on_event, should_stop):
     Returns (exit code, stderr). Raises Cancelled when the stop was asked for,
     and AssistantError when the clock ran out.
     """
+    # stderr lands in a file rather than a pipe: nobody drains it while stdout
+    # is being read, and a CLI chatty enough on stderr would fill the pipe's
+    # buffer and wedge both of us. A file has no such limit, and is read once
+    # at the end, which is the only moment stderr matters.
+    stderr_file = tempfile.TemporaryFile()
+    # On POSIX the run gets its own session, so that ending it can take down
+    # every subprocess it started, not just the CLI itself.
+    grouped = {"start_new_session": True} if os.name == "posix" else {}
     try:
         proc = subprocess.Popen(
             cmd, cwd=working_dir(conf), stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE, stderr=stderr_file,
             text=True, encoding="utf-8", errors="replace", bufsize=1,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            creationflags=paths.NO_WINDOW,
+            **grouped,
         )
     except OSError as exc:
+        stderr_file.close()
         raise AssistantError(t("Could not run {binary}: {error}",
                                binary=cmd[0], error=exc)) from exc
 
@@ -409,7 +447,7 @@ def _stream(cmd, conf, on_event, should_stop):
             if isinstance(event, dict):
                 on_event(event)
     finally:
-        stderr = _finish(proc)
+        stderr = _finish(proc, stderr_file)
         watchdog.join(timeout=1)
 
     if ended["cancelled"]:
@@ -420,12 +458,31 @@ def _stream(cmd, conf, on_event, should_stop):
     return proc.returncode, stderr
 
 
+# Failures that a fresh session cannot cure: an exhausted quota, a signed-out
+# CLI, a network that is down. A resumed run that dies with one of these is
+# reported as what it is, not retried without the session, because the retry
+# would fail the same way after making the user wait through a second run.
+_API_TROUBLE = re.compile(
+    r"(?i)rate.?limit|quota|overloaded|too many requests|credit|billing|"
+    r"insufficient|unauthorized|forbidden|authentication|invalid.{0,8}key|"
+    r"log ?in|logged.?out|network|connection|ECONN|ENOTFOUND|ETIMEDOUT|"
+    r"\b(401|403|429|5\d\d)\b")
+
+
 def _conclude(found, code, stderr, session, service):
     """Turn what the stream said into an answer, or into the reason there is none."""
     if code != 0 and not found["answer"]:
-        if session and _session_missing(stderr):
+        # A resumed run that died with nothing to show is treated as the
+        # session being gone, whatever the wording: this code used to look for
+        # "session ... not found" in stderr, but a CLI update or another
+        # language rewords that and the recovery stops working. Retrying costs
+        # one clean start, and cannot loop because the retry resumes nothing.
+        # Recognised API trouble is the exception: it is not the session's
+        # fault, and the retry would only repeat it.
+        blame = last_line(stderr) or found["failure"] or ""
+        if session and not _API_TROUBLE.search(blame):
             raise _SessionGone()
-        raise AssistantError(last_line(stderr) or found["failure"] or t(
+        raise AssistantError(blame or t(
             "{service} exited with code {code}.", service=service, code=code))
     if found["failure"] and not found["answer"]:
         raise AssistantError(found["failure"])
@@ -434,14 +491,6 @@ def _conclude(found, code, stderr, session, service):
     if found["session"]:
         write_session("claude" if service == "Claude" else "codex", found["session"])
     return found["answer"], found["warning"]
-
-
-def _session_missing(stderr):
-    lowered = (stderr or "").lower()
-    if "session" in lowered or "thread" in lowered or "conversation" in lowered:
-        return any(word in lowered for word in ("not found", "no such", "unknown",
-                                                "does not exist", "no conversation"))
-    return False
 
 
 def _watch(proc, deadline, should_stop, ended):
@@ -454,29 +503,60 @@ def _watch(proc, deadline, should_stop, ended):
             break
         time.sleep(0.25)
     if ended["cancelled"] or ended["timed_out"]:
-        _kill(proc)
+        kill_tree(proc)
 
 
-def _kill(proc):
+def kill_tree(proc):
+    """End the process and everything it started.
+
+    A CLI runs tools as subprocesses of its own, and ending only the CLI would
+    leave those behind, still working on a question nobody is waiting for.
+    Shared with cleanup, which runs the same two programs. Every failure here
+    is swallowed: the process being already gone is the outcome being asked for.
+    """
+    if os.name == "nt":
+        # There is no process group to signal on Windows; taskkill walks the
+        # tree instead. The wait after it is best-effort, so a tree that will
+        # not die does not hang the caller on top of everything else.
+        subprocess.run(
+            ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+            capture_output=True,
+            creationflags=paths.NO_WINDOW,
+        )
+        try:
+            proc.wait(timeout=3)
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+        return
+    # The Popen was started with start_new_session=True, so the pid names a
+    # whole session to signal. SIGTERM first for a clean exit, SIGKILL for a
+    # tree that ignored it.
     try:
-        proc.terminate()
+        os.killpg(proc.pid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError, OSError):
+        return
+    try:
         proc.wait(timeout=3)
     except subprocess.TimeoutExpired:
-        proc.kill()
-    except OSError:
-        pass
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
 
 
-def _finish(proc):
-    try:
-        stderr = proc.stderr.read() or ""
-    except (OSError, ValueError):
-        stderr = ""
+def _finish(proc, stderr_file):
     try:
         proc.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        proc.kill()
-    for stream in (proc.stdout, proc.stderr):
+        kill_tree(proc)
+    # Read back what the CLI wrote to its stderr file, decoded leniently: a
+    # dying CLI is exactly the one likely to print something half-encoded.
+    try:
+        stderr_file.seek(0)
+        stderr = stderr_file.read().decode("utf-8", "replace")
+    except (OSError, ValueError):
+        stderr = ""
+    for stream in (proc.stdout, stderr_file):
         try:
             stream.close()
         except OSError:

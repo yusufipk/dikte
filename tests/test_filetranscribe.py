@@ -235,6 +235,28 @@ class ChunkSeconds(DikteTest):
         self.assertEqual(ft.chunk_seconds(self.file(ft.UPLOAD_LIMIT * 2), 0), 0.0)
 
 
+class Ffmpeg(DikteTest):
+    """How the converter process is started."""
+
+    def test_its_output_is_read_as_utf8_whatever_the_locale_says(self):
+        """ffmpeg writes UTF-8; read as the locale codepage its messages
+        mojibake, and a byte the codepage cannot place raises from inside
+        communicate itself."""
+        out = str(self.path("out.wav"))
+        with open(out, "wb") as fh:
+            fh.write(b"\x00")
+        proc = mock.Mock()
+        proc.communicate.return_value = ("", "")
+        proc.returncode = 0
+        proc.poll.return_value = 0
+        with mock.patch.object(ft.subprocess, "Popen", return_value=proc) as popen:
+            ft._ffmpeg(["-i", "in.mp4", out], out)
+        kwargs = popen.call_args.kwargs
+        self.assertTrue(kwargs["text"])
+        self.assertEqual(kwargs["encoding"], "utf-8")
+        self.assertEqual(kwargs["errors"], "replace")
+
+
 class Chunks(DikteTest):
     """What each provider is handed, and in how many pieces."""
 

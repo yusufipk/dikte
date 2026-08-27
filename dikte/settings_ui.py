@@ -1,7 +1,9 @@
 """Settings window."""
 
+import functools
 import os
 import shutil
+import sys
 import threading
 
 from PyQt6.QtCore import QEvent, QObject, QRect, Qt, QUrl, pyqtSignal
@@ -23,6 +25,7 @@ from . import filetranscribe
 from . import ggml
 from . import hotkey
 from . import hub
+from . import i18n
 from . import ipc
 from . import meeting
 from . import paste
@@ -79,7 +82,11 @@ ASSISTANT_PROVIDERS = [
 # Aliases resolve to the newest model of that name, so they age better than an
 # id does; a full id can be typed in when a particular one is wanted.
 ASSISTANT_MODELS = ["sonnet", "opus", "haiku", "fable"]
-CODEX_MODELS = ["gpt-5.4-codex", "gpt-5.4", "o4-mini"]
+# What the Codex boxes offer before Codex itself has answered, and everything
+# they offer when it cannot: the real list comes from `codex debug models` when
+# the window opens, so this only has to be roughly right.
+CODEX_MODELS = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+                "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"]
 # Starting points only; the box is editable and OpenRouter has hundreds.
 ASSISTANT_OR_MODELS = [
     "google/gemini-3.5-flash", "anthropic/claude-sonnet-5", "openai/gpt-5.4",
@@ -92,6 +99,12 @@ PERMISSION_MODES = [
     ("Allow everything", "bypassPermissions"),
     ("Only what needs no permission", "manual"),
 ]
+def _typed_model_note(name):
+    """Every model box takes a typed name too; the tooltip that says so."""
+    return t("The list is a starting point, not a fence: any model name "
+             "{name} accepts can be typed straight in.", name=name)
+
+
 # Codex confines the commands it runs instead of asking about them.
 CODEX_SANDBOXES = [
     ("Read anything, write in the working directory", "workspace-write"),
@@ -193,10 +206,12 @@ class LocalModelBox(QGroupBox):
     """
 
     _listed = pyqtSignal(list, str)
-    _quants = pyqtSignal(list, str)
     # qint64 rather than int, which is C++'s 32-bit one: a 2.3 GB model is more
     # than fits in it, and the count comes out the far side negative.
-    _progress = pyqtSignal("qint64", "qint64")
+    # The tag says which label the numbers belong to: the program download and
+    # a model download can run at once, and routing by a flag read when the
+    # queued event lands put one job's bytes in the other's label.
+    _progress = pyqtSignal(str, "qint64", "qint64")
     _finished = pyqtSignal(str, str)
     _installed = pyqtSignal(str, str)
 
@@ -245,7 +260,6 @@ class LocalModelBox(QGroupBox):
         form.addRow(self.status)
 
         self._listed.connect(self._on_listed)
-        self._quants.connect(self._on_listed)
         self._progress.connect(self._on_progress)
         self._finished.connect(self._on_finished)
         self._installed.connect(self._on_installed)
@@ -348,9 +362,9 @@ class LocalModelBox(QGroupBox):
         def work():
             try:
                 found = self._models(repo) if self._repos is not None else self._models()
-                self._quants.emit([("models", found)], "")
+                self._listed.emit([("models", found)], "")
             except ggml.LocalError as exc:
-                self._quants.emit([], str(exc))
+                self._listed.emit([], str(exc))
 
         threading.Thread(target=work, daemon=True).start()
 
@@ -412,7 +426,9 @@ class LocalModelBox(QGroupBox):
 
         def work():
             try:
-                ggml.install_program(self.program, on_progress=self._report)
+                ggml.install_program(
+                    self.program,
+                    on_progress=functools.partial(self._report, "program"))
                 self._installed.emit("", "")
             except ggml.LocalError as exc:
                 self._installed.emit("", str(exc))
@@ -441,8 +457,17 @@ class LocalModelBox(QGroupBox):
 
         def work():
             try:
-                landed = ggml.download(item, self._model_path(item.name),
-                                       on_progress=self._report,
+                target_path = self._model_path(item.name)
+                # A model the running server holds open cannot be replaced on
+                # Windows, and the finished download would be thrown away over
+                # it; a re-download lets go of the server first, and the next
+                # run starts it again on the fresh file.
+                if target_path.exists():
+                    (ggml.whisper if self.program is ggml.WHISPER
+                     else ggml.llm).stop()
+                landed = ggml.download(item, target_path,
+                                       on_progress=functools.partial(
+                                           self._report, "model"),
                                        should_stop=lambda: self._stop)
                 self._finished.emit(item.name if landed else "", "")
             except ggml.LocalError as exc:
@@ -450,15 +475,15 @@ class LocalModelBox(QGroupBox):
 
         threading.Thread(target=work, daemon=True).start()
 
-    def _report(self, done, total):
-        self._progress.emit(done, total)
+    def _report(self, job, done, total):
+        self._progress.emit(job, done, total)
 
-    def _on_progress(self, done, total):
+    def _on_progress(self, job, done, total):
         share = f" ({done * 100 // total}%)" if total else ""
         text = t("Downloading: {done} of {total}{share}",
                  done=ggml.human_size(done), total=ggml.human_size(total or done),
                  share=share)
-        if self._downloading:
+        if job == "model":
             self.status.setText(text)
         else:
             self.program_label.setText(text)
@@ -516,12 +541,26 @@ class LocalModelBox(QGroupBox):
 
 class SettingsWindow(QDialog):
     applied = pyqtSignal()
+    # A save changed the interface language. Every label below is translated
+    # as the window is built, so the change cannot reach this window: the
+    # owner replaces it with a fresh one instead.
+    language_changed = pyqtSignal()
     # A newer release this window's own check found, so that the tray icon
     # hears about it from here rather than waiting for its own next check.
     update_found = pyqtSignal(object)
 
+    def _sources_once(self):
+        """One device listing per window build, shared by every combo.
+
+        Three listings at open were three subprocess runs on the main thread,
+        which on a slow ffmpeg was most of the wait for the window."""
+        if not hasattr(self, "_sources"):
+            self._sources = audio.list_sources()
+        return self._sources
+
     _models_loaded = pyqtSignal(list, str)
     _transcribe_models_loaded = pyqtSignal(list, str)
+    _codex_models_loaded = pyqtSignal(list)
     # Which key was tested, whether it worked, and what to write under it.
     _test_done = pyqtSignal(str, bool, str)
     # The release that was found, or None, and what went wrong instead.
@@ -542,6 +581,8 @@ class SettingsWindow(QDialog):
         self._key_fields = {}
         self._testers = {}
         self._shown_provider = ""
+        # What _save compares against to know a rebuild is due.
+        self._built_language = i18n.language()
         # Where "Open the release page" goes: the release itself once a check
         # has named one, and the page that redirects to the newest until then.
         self._release_url = update.RELEASES_PAGE
@@ -578,6 +619,7 @@ class SettingsWindow(QDialog):
 
         self._models_loaded.connect(self._on_models_loaded)
         self._transcribe_models_loaded.connect(self._on_transcribe_models_loaded)
+        self._codex_models_loaded.connect(self._on_codex_models_loaded)
         self._test_done.connect(self._on_test_done)
         self._update_checked.connect(self._on_update_checked)
         self.transcriber.progress.connect(self._on_file_progress)
@@ -588,6 +630,7 @@ class SettingsWindow(QDialog):
             self.meetings.finished.connect(self._on_minutes_finished)
             self.meetings.failed.connect(self._on_minutes_failed)
         self._load()
+        self._load_codex_models()
         # Connected after the load, so that filling the boxes in is not taken
         # for the user ticking them.
         self.file_timestamps.toggled.connect(self._remember_file_choices)
@@ -640,14 +683,11 @@ class SettingsWindow(QDialog):
         self.ui_language = QComboBox()
         for label, code in UI_LANGUAGES:
             self.ui_language.addItem(t(label), code)
-        self.ui_language.setToolTip(
-            t("Restart Dikte for the language change to reach every window.")
-        )
         form.addRow(t("Interface language"), self.ui_language)
 
         self.mic = QComboBox()
         self.mic.addItem(t("Default microphone"), "")
-        for name, desc in audio.list_sources():
+        for name, desc in self._sources_once():
             self.mic.addItem(desc, name)
         form.addRow(t("Microphone"), self.mic)
 
@@ -846,12 +886,14 @@ class SettingsWindow(QDialog):
         self.cleanup_claude_model.setEditable(True)
         self.cleanup_claude_model.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.cleanup_claude_model.addItems(CLEANUP_CLAUDE_MODELS)
+        self.cleanup_claude_model.setToolTip(_typed_model_note("Claude Code"))
         orr_form.addRow(t("Model"), self.cleanup_claude_model)
 
         self.cleanup_codex_model = QComboBox()
         self.cleanup_codex_model.setEditable(True)
         self.cleanup_codex_model.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.cleanup_codex_model.addItems([t("Codex's own default")] + CODEX_MODELS)
+        self.cleanup_codex_model.setToolTip(_typed_model_note("Codex"))
         orr_form.addRow(t("Model"), self.cleanup_codex_model)
 
         self.cleanup_reasoning = QComboBox()
@@ -1012,7 +1054,7 @@ class SettingsWindow(QDialog):
             "A name like “sonnet” always means the newest model of that line. "
             "Opus thinks harder and answers slower, which is felt here more "
             "than anywhere else: you are standing in front of the screen."
-        ))
+        ) + " " + _typed_model_note("Claude Code"))
         claude_form.addRow(t("Model"), self.assistant_model)
         self.assistant_permission = QComboBox()
         for label, value in PERMISSION_MODES:
@@ -1028,6 +1070,7 @@ class SettingsWindow(QDialog):
         self.assistant_codex_model.addItem(t("Codex's own default"), "")
         for name in CODEX_MODELS:
             self.assistant_codex_model.addItem(name, name)
+        self.assistant_codex_model.setToolTip(_typed_model_note("Codex"))
         codex_form.addRow(t("Model"), self.assistant_codex_model)
         self.assistant_codex_sandbox = QComboBox()
         for label, value in CODEX_SANDBOXES:
@@ -1120,7 +1163,7 @@ class SettingsWindow(QDialog):
         sources_form = QFormLayout(sources)
         self.meeting_mic = QComboBox()
         self.meeting_mic.addItem(t("Same as dictation"), "")
-        for name, desc in audio.list_sources():
+        for name, desc in self._sources_once():
             self.meeting_mic.addItem(desc, name)
         sources_form.addRow(t("Microphone"), self.meeting_mic)
 
@@ -1635,9 +1678,20 @@ class SettingsWindow(QDialog):
         self.local_llm_preload.setChecked(conf["local_llm_preload"])
         self._select_data(self.local_llm_reasoning, conf["local_llm_reasoning"])
         self.local_llm.load(conf["local_llm_model"], conf["local_llm_repo"])
-        self.cleanup_prompt.setPlainText(conf["cleanup_prompt"] or cfg.default_cleanup_prompt())
+        # The defaults as they read NOW, kept for the save comparison: after a
+        # language switch the boxes still hold the old language's default, and
+        # comparing against the new one would store that text as a custom
+        # prompt shadowing every future improvement.
+        self._loaded_defaults = {
+            "cleanup": cfg.default_cleanup_prompt(),
+            "file": cfg.default_file_cleanup_prompt(),
+            "assistant": cfg.default_assistant_prompt(),
+            "meeting": cfg.default_meeting_prompt(),
+        }
+        self.cleanup_prompt.setPlainText(
+            conf["cleanup_prompt"] or self._loaded_defaults["cleanup"])
         self.file_cleanup_prompt.setPlainText(
-            conf["file_cleanup_prompt"] or cfg.default_file_cleanup_prompt()
+            conf["file_cleanup_prompt"] or self._loaded_defaults["file"]
         )
         self.transcribe_prompt.setPlainText(conf["transcribe_prompt"])
 
@@ -1655,7 +1709,7 @@ class SettingsWindow(QDialog):
         self.assistant_paste.setChecked(conf["assistant_paste"])
         self.assistant_cleanup.setChecked(conf["assistant_cleanup"])
         self.assistant_prompt.setPlainText(
-            conf["assistant_prompt"] or cfg.default_assistant_prompt()
+            conf["assistant_prompt"] or self._loaded_defaults["assistant"]
         )
 
         self._select_data(self.meeting_mic, conf["meeting_mic_target"])
@@ -1667,10 +1721,11 @@ class SettingsWindow(QDialog):
         self._select_data(self.meeting_reasoning, conf["meeting_reasoning"])
         self._select_data(self.meeting_language, conf["meeting_language"])
         self.meeting_cleanup.setChecked(conf["meeting_cleanup"])
-        self.meeting_max_minutes.setValue(max(5, int(conf["meeting_max_seconds"]) // 60))
+        self._meeting_max_loaded = int(conf["meeting_max_seconds"])
+        self.meeting_max_minutes.setValue(max(5, self._meeting_max_loaded // 60))
         self.meeting_keep_audio.setChecked(conf["meeting_keep_audio"])
         self.meeting_prompt.setPlainText(
-            conf["meeting_prompt"] or cfg.default_meeting_prompt()
+            conf["meeting_prompt"] or self._loaded_defaults["meeting"]
         )
 
         self.file_timestamps.setChecked(conf["file_timestamps"])
@@ -1733,13 +1788,18 @@ class SettingsWindow(QDialog):
         conf["local_llm_preload"] = self.local_llm_preload.isChecked()
         conf["local_llm_reasoning"] = self.local_llm_reasoning.currentData() or ""
 
-        # Store an empty prompt when it matches the default, so switching the
-        # interface language also switches the prompt language.
+        # Store an empty prompt when it matches a default: the one it was
+        # loaded with, or today's (a Reset click in a session that switched
+        # languages fills in the latter). Both count, so switching the
+        # interface language keeps switching the prompt language.
         prompt = self.cleanup_prompt.toPlainText().strip()
-        conf["cleanup_prompt"] = "" if prompt == cfg.default_cleanup_prompt() else prompt
+        conf["cleanup_prompt"] = ("" if prompt in (
+            self._loaded_defaults["cleanup"], cfg.default_cleanup_prompt())
+            else prompt)
         file_prompt = self.file_cleanup_prompt.toPlainText().strip()
-        conf["file_cleanup_prompt"] = ("" if file_prompt == cfg.default_file_cleanup_prompt()
-                                       else file_prompt)
+        conf["file_cleanup_prompt"] = ("" if file_prompt in (
+            self._loaded_defaults["file"], cfg.default_file_cleanup_prompt())
+            else file_prompt)
         conf["transcribe_prompt"] = self.transcribe_prompt.toPlainText().strip()
 
         conf["assistant_provider"] = self.assistant_provider.currentData() or "claude"
@@ -1766,8 +1826,9 @@ class SettingsWindow(QDialog):
         conf["assistant_paste"] = self.assistant_paste.isChecked()
         conf["assistant_cleanup"] = self.assistant_cleanup.isChecked()
         assistant_prompt = self.assistant_prompt.toPlainText().strip()
-        conf["assistant_prompt"] = ("" if assistant_prompt == cfg.default_assistant_prompt()
-                                    else assistant_prompt)
+        conf["assistant_prompt"] = ("" if assistant_prompt in (
+            self._loaded_defaults["assistant"], cfg.default_assistant_prompt())
+            else assistant_prompt)
 
         conf["meeting_mic_target"] = self.meeting_mic.currentData() or ""
         conf["meeting_system_target"] = self.meeting_system.currentData() or ""
@@ -1779,11 +1840,16 @@ class SettingsWindow(QDialog):
         conf["meeting_reasoning"] = self.meeting_reasoning.currentData() or ""
         conf["meeting_language"] = self.meeting_language.currentData() or ""
         conf["meeting_cleanup"] = self.meeting_cleanup.isChecked()
-        conf["meeting_max_seconds"] = self.meeting_max_minutes.value() * 60
+        # Only when the dial was actually turned: the box speaks whole minutes
+        # with a floor, and an unrelated Save must not rewrite a value the
+        # command line set in seconds.
+        if self.meeting_max_minutes.value() != max(5, self._meeting_max_loaded // 60):
+            conf["meeting_max_seconds"] = self.meeting_max_minutes.value() * 60
         conf["meeting_keep_audio"] = self.meeting_keep_audio.isChecked()
         meeting_prompt = self.meeting_prompt.toPlainText().strip()
-        conf["meeting_prompt"] = ("" if meeting_prompt == cfg.default_meeting_prompt()
-                                  else meeting_prompt)
+        conf["meeting_prompt"] = ("" if meeting_prompt in (
+            self._loaded_defaults["meeting"], cfg.default_meeting_prompt())
+            else meeting_prompt)
 
         conf["file_timestamps"] = self.file_timestamps.isChecked()
         conf["file_cleanup"] = self.file_cleanup.isChecked()
@@ -1797,7 +1863,16 @@ class SettingsWindow(QDialog):
                                   or hotkey.default_combo(which))
         conf["evdev_hotkey"] = self.evdev_enabled.isChecked()
         conf["history_limit"] = self.history_limit.value()
-        conf.save()
+        try:
+            conf.save()
+        except OSError as exc:
+            # An antivirus or a sync tool holding the file for a beat is a
+            # message, not an exit: an exception out of a Qt slot takes the
+            # whole application down.
+            QMessageBox.warning(self, "Dikte",
+                                t("Could not save the settings: {error}",
+                                  error=exc))
+            return
         # A lowered limit should bite now, not on the next dictation.
         try:
             cfg.trim_history(conf["history_limit"])
@@ -1805,7 +1880,27 @@ class SettingsWindow(QDialog):
             print(f"dikte: could not trim the history ({exc})")
         self._load_history()  # the trim may just have dropped rows from the list
         self.applied.emit()
+        # conf.save() has switched the language t() speaks, so the message box
+        # already answers in the new one; the labels around it were translated
+        # when the window was built and stay behind. Asking for the rebuild
+        # waits until the box is dismissed, so the window is not pulled out
+        # from under a dialog it is holding up.
         QMessageBox.information(self, t("Dikte Settings"), t("Saved successfully."))
+        if i18n.language() != self._built_language and not self._work_in_flight():
+            self.language_changed.emit()
+
+    def _work_in_flight(self):
+        """A daemon thread of this window's is still running.
+
+        Replacing the window now would let it be collected, taking the C++
+        side of the model boxes down with it, and the thread's next progress
+        report would land on a deleted object. The stale labels stand until a
+        later save finds the window quiet; _built_language keeps the old
+        language, so that save asks for the rebuild by itself.
+        """
+        return (self.transcriber.busy
+                or self.local_whisper._downloading
+                or self.local_llm._downloading)
 
     @staticmethod
     def _select_data(combo, value):
@@ -1886,6 +1981,33 @@ class SettingsWindow(QDialog):
             combo.addItems(models)
             combo.setCurrentText(current)
         self.models_label.setText(t("{count} models loaded.", count=len(models)))
+
+    def _load_codex_models(self):
+        """Ask Codex which models it offers, off the interface thread.
+
+        No button and no network of ours: the CLI answers from its own cache in
+        well under a second. Skipped when Codex is not installed, which is also
+        when the built-in list stays on screen and nobody is running Codex
+        anyway.
+        """
+        if not shutil.which("codex"):
+            return
+
+        def work():
+            found = assistant.codex_models()
+            if found:
+                self._codex_models_loaded.emit(found)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_codex_models_loaded(self, models):
+        for combo in (self.cleanup_codex_model, self.assistant_codex_model):
+            current = combo.currentText()
+            combo.clear()
+            combo.addItem(t("Codex's own default"), "")
+            for name in models:
+                combo.addItem(name, name)
+            combo.setCurrentText(current)
 
     def _test_openai(self):
         key, base = self._typed_key("openai")
@@ -1999,7 +2121,10 @@ class SettingsWindow(QDialog):
         """
         self.conf["file_timestamps"] = self.file_timestamps.isChecked()
         self.conf["file_cleanup"] = self.file_cleanup.isChecked()
-        self.conf.save()
+        try:
+            self.conf.save()
+        except OSError as exc:
+            print(f"dikte: could not save the settings: {exc}", file=sys.stderr)
 
     def _run_file(self):
         if not getattr(self, "file_path", "") or self.transcriber.busy:
@@ -2100,7 +2225,12 @@ class SettingsWindow(QDialog):
         QMessageBox.information(self, t("Shortcut"), message)
         if ok:
             self.conf[spec.setting] = combo
-            self.conf.save()
+            try:
+                self.conf.save()
+            except OSError as exc:
+                QMessageBox.warning(self, "Dikte",
+                                    t("Could not save the settings: {error}",
+                                      error=exc))
         self._refresh_shortcut_status(which)
 
     def _remove_shortcut(self, which):

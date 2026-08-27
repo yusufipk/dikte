@@ -8,7 +8,10 @@ config and now shadows the default.
 
 import json
 import os
+import pathlib
 import sys
+import threading
+import time
 import unittest
 from unittest import mock
 
@@ -43,6 +46,21 @@ class Loading(DikteTest):
         with mock.patch("builtins.print"):
             conf = cfg.Config()
         self.assertEqual(conf["cleanup_model"], cfg.DEFAULTS["cleanup_model"])
+
+    def test_a_config_that_is_not_json_is_set_aside_as_evidence(self):
+        """Left in place it would be overwritten by the very next save."""
+        cfg.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        cfg.CONFIG_FILE.write_text("{not json", encoding="utf-8")
+        broken = cfg.CONFIG_FILE.with_suffix(".json.broken")
+        with mock.patch("builtins.print") as told:
+            conf = cfg.Config()
+        self.assertEqual(broken.read_text(encoding="utf-8"), "{not json")
+        self.assertFalse(cfg.CONFIG_FILE.exists())
+        self.assertIn(str(broken), told.call_args[0][0])
+        conf.save()
+        self.assertEqual(broken.read_text(encoding="utf-8"), "{not json")
+        self.assertEqual(self.read_config_file()["cleanup_model"],
+                         cfg.DEFAULTS["cleanup_model"])
 
     def test_a_config_that_is_json_but_not_an_object(self):
         cfg.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -112,6 +130,41 @@ class Saving(DikteTest):
         conf["ui_language"] = "tr"
         conf.save()
         self.assertEqual(i18n.language(), "tr")
+
+    def test_the_settings_hit_the_disk_before_the_swap(self):
+        """Renaming a file still in the page cache into place makes a power
+        cut a settings wipe, which is what the atomic replace exists to stop."""
+        with mock.patch("os.fsync") as fsync:
+            cfg.Config().save()
+        fsync.assert_called_once()
+
+    def test_a_file_held_briefly_by_a_scanner_does_not_fail_the_save(self):
+        """Antivirus and sync tools on Windows hold a fresh file for a moment,
+        and the rename over it fails until they let go."""
+        attempts = []
+        real_replace = pathlib.Path.replace
+
+        def flaky(path, target):
+            attempts.append(str(target))
+            if len(attempts) < 3:
+                raise PermissionError("held by a scanner")
+            return real_replace(path, target)
+
+        with mock.patch.object(pathlib.Path, "replace", flaky), \
+                mock.patch("time.sleep"):
+            cfg.Config().save()
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual(self.read_config_file()["language"],
+                         cfg.DEFAULTS["language"])
+
+    def test_a_file_held_for_good_still_raises(self):
+        def held(path, target):
+            raise PermissionError("never let go")
+
+        with mock.patch.object(pathlib.Path, "replace", held), \
+                mock.patch("time.sleep"):
+            with self.assertRaises(PermissionError):
+                cfg.Config().save()
 
 
 class Keys(DikteTest):
@@ -350,6 +403,23 @@ class History(DikteTest):
         cfg.delete_history([])
         self.assertEqual(len(cfg.read_history()), 1)
 
+    def test_amending_matches_on_content_and_patches_in_place(self):
+        rows = [self.entry("a"), self.entry("b")]
+        for row in rows:
+            cfg.append_history(row)
+        patched = cfg.amend_history(rows[0], cleanup_error="could not paste")
+        self.assertEqual(patched["cleanup_error"], "could not paste")
+        kept = cfg.read_history()
+        self.assertEqual([row["text"] for row in kept], ["a", "b"])
+        self.assertEqual(kept[0]["cleanup_error"], "could not paste")
+
+    def test_amending_a_row_a_trim_took_away_is_a_no_op(self):
+        row = self.entry("gone")
+        cfg.append_history(row)
+        cfg.clear_history()
+        self.assertIsNone(cfg.amend_history(row, cleanup_error="x"))
+        self.assertEqual(cfg.read_history(), [])
+
     def test_clearing(self):
         cfg.append_history(self.entry("a"))
         cfg.clear_history()
@@ -357,6 +427,40 @@ class History(DikteTest):
 
     def test_clearing_a_history_that_is_not_there(self):
         cfg.clear_history()   # must not raise
+
+    def test_an_append_during_a_trim_is_not_lost(self):
+        """Trim is read, cut, rewrite; a dictation appended between the read
+        and the rewrite must wait rather than be erased by a rewrite that
+        never saw it. The rewrite is slowed down to hold the race open."""
+        for index in range(10):
+            cfg.append_history(self.entry(str(index)))
+        real_write = cfg._write_history
+        rewriting = threading.Event()
+
+        def slow_write(lines):
+            rewriting.set()
+            time.sleep(0.1)
+            real_write(lines)
+
+        with mock.patch.object(cfg, "_write_history", slow_write):
+            trimmer = threading.Thread(target=cfg.trim_history, args=(3,))
+            trimmer.start()
+            # The trim now holds the lock inside its read-cut-rewrite window.
+            self.assertTrue(rewriting.wait(5))
+            appender = threading.Thread(target=cfg.append_history,
+                                        args=(self.entry("late"),))
+            appender.start()
+            trimmer.join()
+            appender.join()
+        self.assertEqual([row["text"] for row in cfg.read_history()],
+                         ["7", "8", "9", "late"])
+
+    def test_the_rewrite_hits_the_disk_before_the_swap(self):
+        for index in range(5):
+            cfg.append_history(self.entry(str(index)))
+        with mock.patch("os.fsync") as fsync:
+            cfg.trim_history(2)
+        fsync.assert_called_once()
 
 
 class Meetings(DikteTest):
@@ -429,6 +533,27 @@ class Meetings(DikteTest):
         cfg.save_meeting(self.entry("a"))
         cfg.delete_meetings([])
         self.assertEqual(len(cfg.read_meetings()), 1)
+
+    def test_the_index_hits_the_disk_before_the_swap(self):
+        with mock.patch("os.fsync") as fsync:
+            cfg.save_meeting(self.entry("a"))
+        fsync.assert_called_once()
+
+    def test_an_index_held_briefly_by_a_scanner_is_still_written(self):
+        real_replace = pathlib.Path.replace
+        attempts = []
+
+        def flaky(path, target):
+            attempts.append(str(target))
+            if len(attempts) < 3:
+                raise PermissionError("held by a scanner")
+            return real_replace(path, target)
+
+        with mock.patch.object(pathlib.Path, "replace", flaky), \
+                mock.patch("time.sleep"):
+            cfg.save_meeting(self.entry("a"))
+        self.assertEqual(len(attempts), 3)
+        self.assertEqual([row["base"] for row in cfg.read_meetings()], ["a"])
 
 
 class Defaults(unittest.TestCase):

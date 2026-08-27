@@ -139,7 +139,8 @@ set next to it.
 
 An indicator in the screen corner shows a red dot, a live waveform and the
 elapsed time, then the stage it is on. It never takes focus. Pressing
-`Ctrl+Space` again while Dikte is still working does nothing; nothing queues up.
+`Ctrl+Space` again while the last dictation is still being cleaned up starts
+the next one; it is transcribed and pasted in turn, behind the one still going.
 A dictation and a command to the agent do wait on each other for the microphone,
 which is one device, but for nothing else: each has its own indicator, and the
 second one stacks above the first while both are up.

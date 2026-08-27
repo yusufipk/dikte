@@ -5,6 +5,8 @@ import hashlib
 import json
 import os
 import sys
+import threading
+import time
 
 from . import api
 from . import ggml
@@ -528,6 +530,30 @@ TRANSCRIBERS = {
                               "openrouter_base_url", "openrouter_transcribe_model"),
 }
 
+# One lock for the history file and the meeting index both, rather than one
+# each: the files are a few kilobytes, the writes happen a handful of times an
+# hour, and a second lock would only add a way to take them in the wrong order.
+_FILES_LOCK = threading.Lock()
+
+
+def _replace_with_retry(tmp, target):
+    """The atomic swap, tried again briefly when the target is held.
+
+    On Windows an antivirus or sync tool opens a freshly written file to look
+    at it, and a rename over the file fails for as long as it is held. The
+    hold lasts milliseconds, so three tries with a short sleep cover it; a
+    file held longer than that is a real error and is raised as one.
+    """
+    for attempt in range(3):
+        try:
+            tmp.replace(target)
+            return
+        except OSError:
+            if attempt == 2:
+                raise
+            time.sleep(0.05)
+
+
 # Corners used to be stored with Turkish names.
 _CORNER_MIGRATION = {
     "sol-alt": "bottom-left", "sağ-alt": "bottom-right",
@@ -548,7 +574,19 @@ class Config:
                 self.data.update({k: v for k, v in stored.items() if k in DEFAULTS})
         except FileNotFoundError:
             pass
-        except (json.JSONDecodeError, OSError) as exc:
+        except json.JSONDecodeError as exc:
+            # Set aside rather than left in place: the next save would write
+            # the defaults over it, and whatever broke the file deserves to
+            # still be there to look at. Best effort; a rename that fails
+            # changes nothing about falling back to the defaults.
+            broken = CONFIG_FILE.with_suffix(".json.broken")
+            try:
+                CONFIG_FILE.replace(broken)
+            except OSError:
+                pass
+            print(f"dikte: could not read settings ({exc}), using defaults; "
+                  f"the unreadable file was kept as {broken}")
+        except OSError as exc:
             print(f"dikte: could not read settings ({exc}), using defaults")
         self.data["overlay_corner"] = _CORNER_MIGRATION.get(
             self.data["overlay_corner"], self.data["overlay_corner"]
@@ -563,8 +601,13 @@ class Config:
         tmp = CONFIG_FILE.with_suffix(".json.tmp")
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(self.data, fh, ensure_ascii=False, indent=2)
+            # Pushed to the disk before the rename: swapping in a file that
+            # still lives in the page cache turns a power cut into a settings
+            # wipe, which the atomic replace exists to prevent.
+            fh.flush()
+            os.fsync(fh.fileno())
         os.chmod(tmp, 0o600)
-        tmp.replace(CONFIG_FILE)
+        _replace_with_retry(tmp, CONFIG_FILE)
         i18n.set_language(self.data["ui_language"])
 
     def __getitem__(self, key):
@@ -730,12 +773,22 @@ def default_assistant_prompt():
 
 def append_history(entry):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    with open(HISTORY_FILE, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    with _FILES_LOCK:
+        with open(HISTORY_FILE, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 def read_history(limit=None):
     """Newest last. A limit of None (or 0) reads the whole file."""
+    # Locked even though the rewrites are atomic: it costs nothing, and a read
+    # that waits out a rewrite in flight hands back the settled file rather
+    # than whichever side of the swap it happened to land on.
+    with _FILES_LOCK:
+        return _read_history(limit)
+
+
+def _read_history(limit=None):
+    """The body of read_history, for callers already holding the lock."""
     try:
         with open(HISTORY_FILE, encoding="utf-8") as fh:
             lines = fh.readlines()
@@ -758,25 +811,49 @@ def _write_history(lines):
     tmp = HISTORY_FILE.with_suffix(".jsonl.tmp")
     with open(tmp, "w", encoding="utf-8") as fh:
         fh.writelines(lines)
-    tmp.replace(HISTORY_FILE)
+        fh.flush()
+        os.fsync(fh.fileno())
+    _replace_with_retry(tmp, HISTORY_FILE)
 
 
 def trim_history(limit):
     """Drop the oldest entries once the file passes `limit` rows. 0 means keep all."""
     if not limit or limit < 0:
         return
-    try:
-        with open(HISTORY_FILE, encoding="utf-8") as fh:
-            lines = fh.readlines()
-    except OSError:
-        return
-    if len(lines) <= limit:
-        return
-    _write_history(lines[-limit:])
+    # Read and rewrite under one lock, so a dictation appended in between the
+    # two is not erased by a rewrite that never saw it.
+    with _FILES_LOCK:
+        try:
+            with open(HISTORY_FILE, encoding="utf-8") as fh:
+                lines = fh.readlines()
+        except OSError:
+            return
+        if len(lines) <= limit:
+            return
+        _write_history(lines[-limit:])
 
 
 def _row_key(row):
     return json.dumps(row, ensure_ascii=False, sort_keys=True)
+
+
+def amend_history(entry, **changes):
+    """Patch one entry in place, matched on its whole content like delete_history.
+
+    For the caller that learns something after its row is already written: the
+    row goes in before the paste is attempted, and a paste that then fails
+    still has to end up in the record. None when the row is gone, which a trim
+    in between can legitimately make true."""
+    wanted = _row_key(entry)
+    with _FILES_LOCK:
+        rows = _read_history()
+        for row in rows:
+            if _row_key(row) == wanted:
+                row.update(changes)
+                _write_history([json.dumps(r, ensure_ascii=False) + "\n"
+                                for r in rows])
+                return row
+    return None
 
 
 def delete_history(rows):
@@ -785,13 +862,15 @@ def delete_history(rows):
     doomed = {_row_key(row) for row in rows}
     if not doomed:
         return
-    kept = [json.dumps(row, ensure_ascii=False) + "\n"
-            for row in read_history() if _row_key(row) not in doomed]
-    _write_history(kept)
+    with _FILES_LOCK:
+        kept = [json.dumps(row, ensure_ascii=False) + "\n"
+                for row in _read_history() if _row_key(row) not in doomed]
+        _write_history(kept)
 
 
 def clear_history():
-    HISTORY_FILE.unlink(missing_ok=True)
+    with _FILES_LOCK:
+        HISTORY_FILE.unlink(missing_ok=True)
 
 
 # --- meetings -------------------------------------------------------------
@@ -807,6 +886,12 @@ def meeting_paths(base):
 
 def read_meetings():
     """Newest last."""
+    with _FILES_LOCK:
+        return _read_meetings()
+
+
+def _read_meetings():
+    """The body of read_meetings, for callers already holding the lock."""
     try:
         with open(MEETINGS_FILE, encoding="utf-8") as fh:
             lines = fh.readlines()
@@ -829,29 +914,33 @@ def _write_meetings(rows):
     with open(tmp, "w", encoding="utf-8") as fh:
         for row in rows:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-    tmp.replace(MEETINGS_FILE)
+        fh.flush()
+        os.fsync(fh.fileno())
+    _replace_with_retry(tmp, MEETINGS_FILE)
 
 
 def save_meeting(entry):
     """Insert the row, or replace the one with the same base."""
-    rows = read_meetings()
-    for index, row in enumerate(rows):
-        if row["base"] == entry["base"]:
-            rows[index] = entry
-            break
-    else:
-        rows.append(entry)
-    _write_meetings(rows)
+    with _FILES_LOCK:
+        rows = _read_meetings()
+        for index, row in enumerate(rows):
+            if row["base"] == entry["base"]:
+                rows[index] = entry
+                break
+        else:
+            rows.append(entry)
+        _write_meetings(rows)
 
 
 def update_meeting(base, **changes):
     """Patch one row and hand it back, or None when it is gone."""
-    rows = read_meetings()
-    for row in rows:
-        if row["base"] == base:
-            row.update(changes)
-            _write_meetings(rows)
-            return row
+    with _FILES_LOCK:
+        rows = _read_meetings()
+        for row in rows:
+            if row["base"] == base:
+                row.update(changes)
+                _write_meetings(rows)
+                return row
     return None
 
 
@@ -860,7 +949,9 @@ def delete_meetings(bases):
     doomed = set(bases)
     if not doomed:
         return
-    _write_meetings([row for row in read_meetings() if row["base"] not in doomed])
+    with _FILES_LOCK:
+        _write_meetings([row for row in _read_meetings()
+                         if row["base"] not in doomed])
     for base in doomed:
         for path in meeting_paths(base):
             try:

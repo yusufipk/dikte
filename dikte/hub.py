@@ -12,19 +12,18 @@ means one for every whisper.cpp release; both of those are somebody else's news,
 not Dikte's. Answers are cached for a few hours, and a cache that has gone stale
 is still a better answer than none when the network is down.
 
-Nothing here imports the rest of Dikte apart from the string table: this module
-knows two websites and nothing about dictation.
+Nothing here imports the rest of Dikte apart from two leaves, the string table
+and the path map: this module knows two websites and nothing about dictation.
 """
 
 import collections
 import json
-import os
-import pathlib
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 
+from . import paths
 from .i18n import t
 
 GITHUB_API = "https://api.github.com"
@@ -32,8 +31,7 @@ HF_API = "https://huggingface.co/api"
 HF_FILES = "https://huggingface.co"
 USER_AGENT = "dikte/1.0 (+https://github.com/yusufipk/dikte)"
 
-CACHE_DIR = (pathlib.Path(os.environ.get("XDG_CACHE_HOME")
-                          or os.path.expanduser("~/.cache")) / "dikte")
+CACHE_DIR = paths.cache_dir()
 # Long enough that opening the settings window twice in an evening asks nobody
 # anything, short enough that a model published this morning is offered today.
 CACHE_TTL = 6 * 3600

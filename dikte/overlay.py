@@ -7,6 +7,8 @@ from PyQt6.QtCore import Qt, QTimer, QRectF, QPointF
 from PyQt6.QtGui import QColor, QCursor, QFont, QPainter, QPainterPath, QPen, QFontMetrics
 from PyQt6.QtWidgets import QWidget, QApplication
 
+from . import mac_window
+
 BARS = 22
 HEIGHT = 56
 MIN_WIDTH = 210
@@ -202,6 +204,11 @@ class Overlay(QWidget):
         self._reposition()
         if not self.isVisible():
             self.show()
+        if sys.platform == "darwin":
+            # After show(), because the window it works on does not exist until
+            # then, and every time, because a window Qt rebuilt has the setting
+            # again at its default.
+            mac_window.keep_on_screen(self)
         if self._concealed:
             self.raise_()
             self._concealed = False
