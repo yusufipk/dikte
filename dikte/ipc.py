@@ -139,7 +139,8 @@ def respawn(arguments):
     bundle = macos_bundle()
     if bundle is not None:
         subprocess.Popen(
-            ["/usr/bin/open", "-n", "-a", bundle],
+            ["/usr/bin/open", "-n", "-a", bundle,
+             "--args", *arguments],
             close_fds=True,
         )
         return

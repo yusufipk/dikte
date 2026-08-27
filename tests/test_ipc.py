@@ -262,7 +262,8 @@ class Respawn(unittest.TestCase):
                 mock.patch.object(ipc.os, "execv") as execv:
             ipc.respawn(["--gui"])
         popen.assert_called_once_with(
-            ["/usr/bin/open", "-n", "-a", "/Applications/Dikte.app"],
+            ["/usr/bin/open", "-n", "-a", "/Applications/Dikte.app",
+             "--args", "--gui"],
             close_fds=True,
         )
         execv.assert_not_called()
