@@ -72,7 +72,7 @@ CHANGED = {
     "local_model": "ggml-small.bin",
     "local_gpu": False,
     "local_preload": False,
-    "local_threads": 6,
+    "local_threads": 1,
     "local_llm_model": "gemma-3-4b-it-Q4_K_M.gguf",
     "local_llm_repo": "ggml-org/gemma-4-E2B-it-GGUF",
     "local_llm_gpu": False,
@@ -1257,3 +1257,15 @@ class LocalModels(DikteTest):
                     # isHidden rather than isVisible: the window itself is never
                     # shown in a test, so nothing in it is ever visible.
                     self.assertEqual(other.isHidden(), name != chosen)
+
+    def test_local_threads_range_is_bounded_by_cpu_count(self):
+        with mock.patch("os.cpu_count", return_value=8):
+            window = self.window(cfg.Config())
+            self.assertEqual(window.local_threads.minimum(), 0)
+            self.assertEqual(window.local_threads.maximum(), 8)
+
+    def test_local_threads_range_has_safe_minimum_when_cpu_count_is_none(self):
+        with mock.patch("os.cpu_count", return_value=None):
+            window = self.window(cfg.Config())
+            self.assertEqual(window.local_threads.minimum(), 0)
+            self.assertEqual(window.local_threads.maximum(), 1)
