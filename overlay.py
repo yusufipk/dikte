@@ -66,10 +66,21 @@ class Overlay(QWidget):
         # One that can be clicked away has to receive the click, which means it
         # also swallows one aimed at whatever is underneath it. The rest stay
         # transparent to the mouse, as an indicator should be.
+        #
+        # WA_TransparentForMouseEvents alone is not enough for that: it only
+        # tells Qt not to deliver the click to this widget. The native window
+        # still owns the pixels as far as X11/Wayland is concerned, so a click
+        # there reaches nothing at all - and since a concealed indicator stays
+        # mapped (see _conceal), that made an invisible 460x56 dead zone in the
+        # corner that swallowed clicks meant for the app underneath. The window
+        # flag is what makes the compositor pass the click through.
         if dismissable:
             self.setCursor(Qt.CursorShape.PointingHandCursor)
         else:
             self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        # Both start out letting the mouse through; the dismissable one takes
+        # it only while it has something to dismiss (_sync_click_through).
+        self.setWindowFlag(Qt.WindowType.WindowTransparentForInput, True)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.resize(MIN_WIDTH, HEIGHT)
 
@@ -172,6 +183,7 @@ class Overlay(QWidget):
         if self._concealed:
             self.raise_()
             self._concealed = False
+        self._sync_click_through()
         if not self._anim.isActive():
             self._anim.start()
 
@@ -189,7 +201,25 @@ class Overlay(QWidget):
         self._anim.stop()
         self.state = "hidden"
         self._concealed = True
+        self._sync_click_through()
         self.repaint()
+
+    def _sync_click_through(self):
+        """A dismissable indicator takes the mouse only while there is
+        something to dismiss. The rest of the time - concealed, recording, or
+        showing an outcome - it must let clicks fall through to whatever is
+        underneath, exactly like the plain one. The flag is flipped on the
+        native window rather than the widget: QWidget.setWindowFlag would tear
+        the window down and build a new one, which is the very repaint flinch
+        _conceal keeps the window mapped to avoid."""
+        if not self.dismissable:
+            return
+        through = not self._can_dismiss
+        handle = self.windowHandle()
+        if handle is None:
+            self.setWindowFlag(Qt.WindowType.WindowTransparentForInput, through)
+        elif bool(handle.flags() & Qt.WindowType.WindowTransparentForInput) != through:
+            handle.setFlag(Qt.WindowType.WindowTransparentForInput, through)
 
     def _resize_to_content(self):
         if self.state in LIVE:

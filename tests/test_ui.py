@@ -385,6 +385,38 @@ class Overlay(DikteTest):
         self.assertTrue(widget.showing)
         self.assertFalse(widget.muted)
 
+    @staticmethod
+    def takes_the_mouse(widget):
+        # What the windowing system was told, not what the widget remembers:
+        # the flag is flipped on the native window once there is one.
+        from PyQt6.QtCore import Qt
+        handle = widget.windowHandle()
+        flags = handle.flags() if handle is not None else widget.windowFlags()
+        return not (flags & Qt.WindowType.WindowTransparentForInput)
+
+    def test_it_lets_a_click_through_to_what_is_underneath(self):
+        """A concealed indicator stays mapped in its corner. Without telling
+        the compositor to pass the mouse through, that is an invisible box
+        that eats every click aimed at the application below it."""
+        widget = self.overlay()
+        widget.show_done("Pasted")
+        self.assertFalse(self.takes_the_mouse(widget))
+        widget._conceal()
+        self.assertFalse(self.takes_the_mouse(widget))
+
+    def test_a_dismissable_one_takes_the_mouse_only_while_it_can_be_dismissed(self):
+        widget = self.overlay(dismissable=True)
+        widget.show_recording()
+        self.assertFalse(self.takes_the_mouse(widget))
+        widget.show_busy("Asking Claude…")
+        self.assertTrue(self.takes_the_mouse(widget))
+        widget.show_done("Pasted")
+        self.assertFalse(self.takes_the_mouse(widget))
+        widget.show_busy("Reading a web page…")
+        self.assertTrue(self.takes_the_mouse(widget))
+        widget.dismiss()
+        self.assertFalse(self.takes_the_mouse(widget))
+
 
 if __name__ == "__main__":
     unittest.main()
