@@ -783,7 +783,9 @@ STAND_IN = textwrap.dedent("""
 """)
 
 
-class Servers(Local):
+class ServerCase(Local):
+    """The stand-in server and the fixture around it, with no tests of its own."""
+
     def setUp(self):
         super().setUp()
         self.path("data").mkdir(parents=True, exist_ok=True)
@@ -806,6 +808,8 @@ class Servers(Local):
         self.addCleanup(made.stop)
         return made
 
+
+class Servers(ServerCase):
     def test_a_started_server_hands_back_its_address(self):
         server = self.server()
         url = server.serve()
@@ -1035,6 +1039,122 @@ class Servers(Local):
         # a loaded model with nobody left to ask it anything.
         self.assertIsNotNone(started[0].poll())
         self.assertFalse(server.sweep())      # and the pid file went with it
+
+
+class IdleUnload(ServerCase):
+    """Giving the memory back when nothing has asked anything for a while."""
+
+    IDLE = 0.3
+
+    def setUp(self):
+        super().setUp()
+        # The real check runs every five seconds against a window of minutes.
+        # Both are scaled down here; what is being tested is the decision, and
+        # nothing in it reads the clock in units of its own.
+        self.patch_attr(ggml, "IDLE_CHECK_SECONDS", 0.05)
+
+    def idle_server(self, seconds=None, **settings):
+        server = self.server(**settings)
+        server.set_idle(self.IDLE if seconds is None else seconds)
+        return server
+
+    def wait_for(self, predicate, timeout=5.0):
+        """True as soon as `predicate` holds, False once the wait runs out."""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            time.sleep(0.02)
+        return False
+
+    def test_a_model_nobody_is_using_is_unloaded(self):
+        server = self.idle_server()
+        server.serve()
+        self.assertTrue(self.wait_for(lambda: not server.running))
+
+    def test_the_default_is_to_keep_it(self):
+        """A server nobody set a window on stays until something stops it."""
+        server = self.server()
+        server.serve()
+        self.assertFalse(self.wait_for(lambda: not server.running, timeout=0.6))
+
+    def test_a_window_of_zero_keeps_it_too(self):
+        server = self.idle_server(0)
+        server.serve()
+        self.assertFalse(self.wait_for(lambda: not server.running, timeout=0.6))
+
+    def test_a_request_in_flight_holds_the_model(self):
+        """A file is one address lookup and then minutes of work: the clock
+        alone would call that idle and unload it mid-transcription."""
+        server = self.idle_server()
+        server.serve()
+        with server.busy():
+            self.assertFalse(
+                self.wait_for(lambda: not server.running, timeout=self.IDLE * 3))
+        self.assertTrue(self.wait_for(lambda: not server.running))
+
+    def test_asking_for_the_address_puts_the_window_back(self):
+        server = self.idle_server()
+        first = server.serve()
+        for _ in range(4):
+            time.sleep(self.IDLE / 2)
+            self.assertEqual(server.serve(), first)   # never restarted
+        self.assertTrue(server.running)
+
+    def test_the_next_request_loads_it_again(self):
+        server = self.idle_server()
+        first = server.serve()
+        self.assertTrue(self.wait_for(lambda: not server.running))
+        second = server.serve()
+        self.assertTrue(server.running)
+        self.assertNotEqual(second, first)      # a new process, a new port
+
+    def test_the_watcher_of_a_stopped_server_does_not_touch_the_next_one(self):
+        server = self.idle_server()
+        server.serve()
+        server.stop()
+        server.set_idle(0)
+        server.serve()
+        self.assertFalse(self.wait_for(lambda: not server.running, timeout=0.6))
+
+    def test_unloading_by_hand_does_not_wait_for_the_window(self):
+        server = self.idle_server(0)
+        server.serve()
+        self.assertTrue(server.unload())
+        self.assertFalse(server.running)
+
+    def test_a_hold_taken_before_the_start_survives_it(self):
+        """The local cleanup takes the hold and only then asks for the address,
+        so the start it triggers must not be what drops the hold."""
+        server = self.idle_server()
+        with server.busy():
+            server.serve()
+            self.assertFalse(
+                self.wait_for(lambda: not server.running, timeout=self.IDLE * 3))
+        self.assertTrue(self.wait_for(lambda: not server.running))
+
+    def test_unloading_is_refused_while_the_model_is_still_loading(self):
+        """It runs on the interface's thread, and a start holds its lock for as
+        long as the load takes: waiting there would freeze the whole window."""
+        server = self.idle_server(0, extra=["--wait", "0.6"])
+        thread = threading.Thread(target=server.serve)
+        thread.start()
+        try:
+            began = time.monotonic()
+            self.assertFalse(server.unload())
+            self.assertLess(time.monotonic() - began, 0.2)
+        finally:
+            thread.join(timeout=10)
+
+    def test_unloading_is_refused_while_a_request_is_in_flight(self):
+        server = self.idle_server(0)
+        server.serve()
+        with server.busy():
+            self.assertFalse(server.unload())
+            self.assertTrue(server.running)
+
+    def test_unloading_nothing_is_not_a_refusal(self):
+        self.assertTrue(self.server().unload())
 
 
 class Arguments(Local):

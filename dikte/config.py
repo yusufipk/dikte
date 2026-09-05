@@ -442,6 +442,15 @@ DEFAULTS = {
     # Off rather than empty: a model trained to think will, and 300 tokens of
     # reasoning about a comma is 300 tokens of waiting.
     "local_llm_reasoning": "none",
+
+    # --- what happens to both of them when nothing is using them -------------
+    # One pair for the two servers rather than a pair each: what is being
+    # decided is whether a machine keeps gigabytes tied up between dictations,
+    # and nobody wants that answered one model at a time. On by default because
+    # a reload costs seconds and the memory costs the rest of the desktop.
+    "local_idle_unload": True,
+    "local_idle_minutes": 10,
+
     "cleanup_prompt": "",           # empty -> language-specific default
     "auto_paste": True,
     "paste_shortcut": paste.desktop().shortcuts[0],   # cmd+v on a Mac
@@ -710,6 +719,14 @@ class Config:
             binary=self["local_llm_binary"],
             context=int(self["local_llm_context"]),
         )
+        ggml.whisper.set_idle(self.idle_seconds())
+        ggml.llm.set_idle(self.idle_seconds())
+
+    def idle_seconds(self):
+        """How long a loaded model may sit unused. 0 means it is kept."""
+        if not self["local_idle_unload"]:
+            return 0
+        return max(1, int(self["local_idle_minutes"])) * 60
 
     def uses_local_llm(self):
         """Whether anything is set to run the local cleanup model."""

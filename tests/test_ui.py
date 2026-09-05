@@ -83,6 +83,8 @@ CHANGED = {
     "local_llm_gpu": False,
     "local_llm_preload": True,
     "local_llm_reasoning": "low",
+    "local_idle_unload": False,
+    "local_idle_minutes": 45,
     "cleanup_prompt": "Only fix the punctuation.",
     "file_cleanup_prompt": "Keep the stamps where they are.",
     "transcribe_prompt": "Paraşüt, OpenFrame",
@@ -1733,6 +1735,26 @@ class LocalModels(DikteTest):
         self.assertFalse(window.cleanup_form.isRowVisible(window.cleanup_model_row))
         # Its own thinking box, because the two default to opposite things.
         self.assertFalse(window.cleanup_form.isRowVisible(window.cleanup_reasoning))
+
+    def test_the_idle_unload_is_offered_to_whoever_runs_a_model_here(self):
+        for transcriber, cleaner in (("local", "openrouter"),
+                                     ("openai", "local"),
+                                     ("local", "local")):
+            with self.subTest(transcriber=transcriber, cleaner=cleaner):
+                window = self.window(self.config(transcribe_provider=transcriber,
+                                                 cleanup_provider=cleaner))
+                self.assertTrue(window.local_box.isVisibleTo(window))
+
+    def test_a_machine_that_runs_neither_is_not_asked_about_memory(self):
+        window = self.window(self.config(transcribe_provider="openai",
+                                         cleanup_provider="openrouter"))
+        self.assertFalse(window.local_box.isVisibleTo(window))
+
+    def test_the_minutes_follow_the_checkbox(self):
+        window = self.window(self.config(local_idle_unload=False))
+        self.assertFalse(window.local_idle_minutes.isEnabled())
+        window.local_idle_unload.setChecked(True)
+        self.assertTrue(window.local_idle_minutes.isEnabled())
 
     def test_each_cleaner_brings_its_own_model_row_and_no_other(self):
         window = self.window(cfg.Config())

@@ -782,6 +782,26 @@ TR = {
     "On this machine": "Bu makinede",
     "Use the graphics card": "Ekran kartını kullan",
     "Load the model when Dikte starts": "Modeli Dikte açılırken yükle",
+    "Models on this machine": "Bu makinedeki modeller",
+    "Unload a model that is sitting unused": "Kullanılmayan modeli bellekten çıkar",
+    "A loaded model holds its memory whether anything is using it or "
+    "not: over a gigabyte for whisper, several for an LLM. Unloading "
+    "gives that back to the rest of the desktop, and the next "
+    "dictation loads it again at the cost of the seconds that takes.":
+        "Yüklü bir model, kullanılsa da kullanılmasa da belleği tutar: whisper "
+        "için bir gigabaytın üzerinde, bir LLM için birkaç gigabayt. Bellekten "
+        "çıkarmak bunu masaüstünün geri kalanına iade eder, sonraki dikte de "
+        "modeli birkaç saniye bekleyerek yeniden yükler.",
+    " minute": " dakika",
+    " minutes": " dakika",
+    "After": "Şu kadar sonra",
+    "Unload the model": "Modeli bellekten çıkar",
+    "Unload the models": "Modelleri bellekten çıkar",
+    "No model loaded": "Yüklü model yok",
+    "A model is loading or answering right now. Try again in a "
+    "moment.":
+        "Bir model şu anda yükleniyor ya da cevap veriyor. Az sonra tekrar "
+        "deneyin.",
     "Local whisper": "Yerel whisper",
     "Local model": "Yerel model",
     "Not installed.": "Kurulu değil.",
