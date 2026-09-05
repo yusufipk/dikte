@@ -52,6 +52,7 @@ CHANGED = {
     "restore_clipboard": True,
     "overlay_corner": "top-right",
     "overlay_screen": "DP-1",
+    "overlay_follows_pointer": True,
     "max_seconds": 120,
     "skip_silent": False,
     "silence_db": -42.0,
@@ -1068,6 +1069,121 @@ class Overlay(DikteTest):
             widget._reposition()
         screen_at.assert_not_called()
         self.assertEqual(widget.pos(), QPoint(1948, 995))
+
+    def _screen(self, name, area):
+        screen = mock.Mock()
+        screen.name.return_value = name
+        screen.availableGeometry.return_value = area
+        return screen
+
+    def _kwin(self, *answer):
+        kwin = mock.Mock()
+        kwin.isValid.return_value = True
+        kwin.call.return_value.arguments.return_value = list(answer)
+        return kwin
+
+    def test_the_compositor_says_which_screen_the_pointer_is_on(self):
+        """Wayland tells a client where the pointer is only while it is over one
+        of that client's own windows, so QCursor.pos() comes back at the origin
+        and every indicator lands on whichever screen holds it. KWin knows."""
+        screens = [self._screen("DP-1", settings_ui.QRect(0, 0, 1920, 1080)),
+                   self._screen("DP-2", settings_ui.QRect(1920, 0, 1920, 1080))]
+        widget = self.overlay()
+        with mock.patch.object(overlay_module, "_kwin", self._kwin("DP-2")), \
+                mock.patch.object(QApplication, "screens", return_value=screens), \
+                mock.patch.object(QApplication, "screenAt") as screen_at:
+            widget._reposition()
+        screen_at.assert_not_called()
+        self.assertEqual(widget.pos(), QPoint(1948, 995))
+
+    def test_the_pointer_decides_when_the_compositor_will_not_say(self):
+        """Every desktop but Plasma, and Plasma while KWin is being replaced."""
+        screens = [self._screen("DP-1", settings_ui.QRect(0, 0, 1920, 1080))]
+        widget = self.overlay()
+        with mock.patch.object(overlay_module, "_kwin", self._kwin()), \
+                mock.patch.object(QApplication, "screens", return_value=screens), \
+                mock.patch.object(QApplication, "screenAt",
+                                  return_value=screens[0]) as screen_at:
+            widget._reposition()
+        screen_at.assert_called()
+        self.assertEqual(widget.pos(), QPoint(28, 995))
+
+    def _two_screens(self):
+        return [self._screen("DP-1", settings_ui.QRect(0, 0, 1920, 1080)),
+                self._screen("DP-2", settings_ui.QRect(1920, 0, 1920, 1080))]
+
+    def _ticks_on(self, widget, screens, kwin):
+        """Run the ribbon long enough for one look at where the pointer is."""
+        with mock.patch.object(overlay_module, "_kwin", kwin), \
+                mock.patch.object(QApplication, "screens", return_value=screens), \
+                mock.patch.object(QApplication, "screenAt", return_value=screens[0]):
+            for _ in range(overlay_module.FOLLOW_EVERY):
+                widget._tick()
+
+    def test_it_can_be_told_to_keep_up_with_the_pointer(self):
+        """The screen it started on is not always the screen you end up on."""
+        screens = self._two_screens()
+        kwin = self._kwin("DP-2")
+        widget = self.overlay(follow_pointer=True)
+        with mock.patch.object(overlay_module, "_kwin", kwin), \
+                mock.patch.object(QApplication, "screens", return_value=screens):
+            widget.show_recording()
+        self.assertEqual(widget.pos(), QPoint(1948, 995))
+        kwin.call.return_value.arguments.return_value = ["DP-1"]
+        self._ticks_on(widget, screens, kwin)
+        self.assertEqual(widget.pos(), QPoint(28, 995))
+
+    def test_it_stays_where_it_appeared_unless_it_was_told_otherwise(self):
+        """Left off, because an indicator that jumps desks mid-sentence is one
+        more thing moving while you are trying to talk."""
+        screens = self._two_screens()
+        kwin = self._kwin("DP-2")
+        widget = self.overlay()
+        with mock.patch.object(overlay_module, "_kwin", kwin), \
+                mock.patch.object(QApplication, "screens", return_value=screens):
+            widget.show_recording()
+        kwin.call.return_value.arguments.return_value = ["DP-1"]
+        self._ticks_on(widget, screens, kwin)
+        self.assertEqual(widget.pos(), QPoint(1948, 995))
+
+    def test_a_named_screen_is_never_left_for_the_pointer(self):
+        """Naming one is the whole answer; following it would undo the naming."""
+        screens = self._two_screens()
+        kwin = self._kwin("DP-2")
+        widget = self.overlay(screen_name="DP-1", follow_pointer=True)
+        with mock.patch.object(QApplication, "screens", return_value=screens):
+            widget.show_recording()
+        self._ticks_on(widget, screens, kwin)
+        kwin.call.assert_not_called()
+        self.assertEqual(widget.pos(), QPoint(28, 995))
+
+    def test_the_one_on_top_goes_where_the_one_underneath_is(self):
+        """Asking for itself would put the pair on two monitors, with this one
+        raised over a ribbon that is not underneath it."""
+        screens = self._two_screens()
+        kwin = self._kwin("DP-2")
+        first = self.overlay()
+        with mock.patch.object(overlay_module, "_kwin", kwin), \
+                mock.patch.object(QApplication, "screens", return_value=screens):
+            first.show_recording()
+            kwin.call.return_value.arguments.return_value = ["DP-1"]
+            second = self.overlay(below=first)
+            second.show_busy("Asking Claude…")
+        self.assertEqual(first.pos(), QPoint(1948, 995))
+        self.assertEqual(second.pos(), QPoint(1948, 929))
+
+    def test_the_compositor_is_asked_only_now_and_then(self):
+        """Every tick would be thirty conversations a second about a hand
+        moving a mouse."""
+        screens = self._two_screens()
+        kwin = self._kwin("DP-2")
+        widget = self.overlay(follow_pointer=True)
+        with mock.patch.object(overlay_module, "_kwin", kwin), \
+                mock.patch.object(QApplication, "screens", return_value=screens):
+            widget.show_recording()
+        kwin.call.reset_mock()
+        self._ticks_on(widget, screens, kwin)
+        self.assertEqual(kwin.call.call_count, 1)
 
     def test_a_warning_and_an_error_both_show(self):
         widget = self.overlay()

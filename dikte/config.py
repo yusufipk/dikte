@@ -470,6 +470,9 @@ DEFAULTS = {
     "evdev_hotkey": False,
     "overlay_corner": "bottom-left",
     "overlay_screen": "",
+    # Off, so that an indicator stays where it appeared unless it is asked to
+    # keep up with the pointer. Nothing to say when a screen is named above.
+    "overlay_follows_pointer": False,
     "keep_audio": False,
     "history_limit": 200,
     # A look at the releases page once a day, and nothing more than a look:
