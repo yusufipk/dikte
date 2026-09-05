@@ -253,9 +253,11 @@ class LocalModelBox(QGroupBox):
 
     changed = pyqtSignal()
 
-    def __init__(self, program, title, models, model_path, repos=None, parent=None):
+    def __init__(self, program, title, models, model_path, binary=None,
+                 repos=None, parent=None):
         super().__init__(title, parent)
         self.program = program
+        self._binary = binary          # () -> a path set by hand, or ""
         self._models = models          # () -> [hub.Item], or (repo) -> [hub.Item]
         self._model_path = model_path  # (name) -> Path
         self._repos = repos            # None, or () -> [repo id]
@@ -417,12 +419,22 @@ class LocalModelBox(QGroupBox):
                 self._fill_repos(self.repository())
             self._fetch_models(self.repository())
 
+    def _program_path(self):
+        return ggml.program_path(self.program,
+                                 self._binary() if self._binary else "")
+
     def _show_program(self):
-        path = ggml.program_path(self.program)
+        path = self._program_path()
         if not path:
             self.program_label.setText(t("Not installed."))
             self.install_button.setText(t("Download"))
             self.install_button.setVisible(True)
+            return
+        if self._binary and self._binary():
+            # Neither a system copy nor one Dikte fetched, and "Downloaded"
+            # over a build someone made themselves is not true.
+            self.program_label.setText(t("Using custom build: {path}", path=path))
+            self.install_button.setVisible(False)
             return
         # A copy that is here is not a copy that is right. whisper.cpp releases
         # every few weeks, and a graphics card installed after Dikte was
@@ -835,7 +847,7 @@ class LocalModelBox(QGroupBox):
                   repo=self.repository(), cap=ggml.human_size(ggml.GGUF_MAX_BYTES)))
         elif not name:
             self.status.setText(t("Nothing downloaded yet."))
-        elif here and not ggml.program_path(self.program):
+        elif here and not self._program_path():
             # The model alone runs nothing, and "Ready" over a missing program
             # reads as though it does.
             self.status.setText(t("{name} is here, but the program above is "
@@ -1191,7 +1203,8 @@ class SettingsWindow(QDialog):
 
         self.local_whisper = LocalModelBox(
             ggml.WHISPER, t("On this machine"),
-            ggml.whisper_models, ggml.whisper_model_path)
+            ggml.whisper_models, ggml.whisper_model_path,
+            binary=lambda: self.conf["local_binary"])
         stt_form.addRow(self.local_whisper)
 
         self.local_gpu = QCheckBox(t("Use the graphics card"))
@@ -1300,7 +1313,9 @@ class SettingsWindow(QDialog):
 
         self.local_llm = LocalModelBox(
             ggml.LLAMA, t("On this machine"),
-            ggml.llm_quants, ggml.llm_model_path, repos=ggml.llm_repos)
+            ggml.llm_quants, ggml.llm_model_path,
+            binary=lambda: self.conf["local_llm_binary"],
+            repos=ggml.llm_repos)
         orr_form.addRow(self.local_llm)
 
         self.local_llm_gpu = QCheckBox(t("Use the graphics card"))

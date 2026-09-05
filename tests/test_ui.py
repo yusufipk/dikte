@@ -1461,6 +1461,29 @@ class LocalModels(DikteTest):
         self.assertNotIn("Ready", box.status.text())
         self.assertIn("program", box.status.text())
 
+    def test_a_program_set_in_the_settings_is_not_called_downloaded(self):
+        mine = self.path("my-whisper-server")
+        mine.write_text("#!/bin/sh\n")
+        mine.chmod(0o755)
+        self.patch_attr(ggml.shutil, "which", lambda name: None)
+        box = self.window(self.config(local_binary=str(mine))).local_whisper
+        self.assertIn(str(mine), box.program_label.text())
+        self.assertFalse(box.install_button.isVisibleTo(box))
+
+    def test_a_model_over_a_program_set_by_hand_is_ready(self):
+        # The program is there, it is just named by the settings rather than
+        # downloaded, and the status line looked past it.
+        mine = self.path("my-whisper-server")
+        mine.write_text("#!/bin/sh\n")
+        mine.chmod(0o755)
+        self.patch_attr(ggml.shutil, "which", lambda name: None)
+        path = ggml.whisper_model_path("ggml-small.bin")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"not really a model")
+        box = self.window(self.config(local_binary=str(mine))).local_whisper
+        box.load("ggml-small.bin")
+        self.assertIn("Ready", box.status.text())
+
     def test_changing_the_publisher_changes_the_model(self):
         # The model chosen under the old publisher is not published by the new
         # one. Carried over, it was added back as "not downloaded" and selected
