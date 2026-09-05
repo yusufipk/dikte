@@ -124,6 +124,10 @@ def _local(text, conf, system_prompt, timeout, aborter=None):
                 base_url=api.serving(ggml.llm),
                 timeout=max(timeout, api.LOCAL_TIMEOUT),
                 provider="local-llm", service=service, aborter=aborter,
+                # The ceiling is only a ceiling while it sits under what the
+                # server was started with; above that the context is what stops
+                # the reply.
+                context=ggml.llm.settings()["context"],
             )
     except api.ApiError as exc:
         # A server that died mid-request would otherwise report only that the

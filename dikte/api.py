@@ -523,22 +523,65 @@ def _thinking(payload, provider, reasoning):
         payload["reasoning"] = {"effort": reasoning, "exclude": True}
 
 
-def local_ceiling(text):
+# Room for the thinking on this machine, one budget per rung of the settings
+# ladder. llama.cpp counts the thinking towards max_tokens along with the answer
+# it precedes, so a ceiling sized for the answer alone leaves a model that
+# thinks nothing to answer with. The rungs double, starting where a small model
+# lands when it barely thinks at all: cleanup is punctuation, and locally every
+# one of these tokens is also a second of somebody standing in front of the
+# screen, so the low rungs are the ones meant to be used.
+THINKING_ROOM = {
+    "minimal": 256, "low": 512, "medium": 1024,
+    "high": 2048, "xhigh": 4096, "max": 8192,
+}
+# An empty setting leaves it to the model, and the templates that can think
+# think by default. Room for a middling amount of it, since there is no way to
+# ask which kind of model this is.
+DEFAULT_THINKING_ROOM = THINKING_ROOM["medium"]
+
+
+def local_ceiling(text, reasoning="", context=0, prompt=""):
     """How much of a reply is worth waiting for from a model on this machine.
 
     Cleanup gives back what it was given, near enough, so a reply several times
     the length of the transcript is a model that has lost the thread rather than
     one doing the job. A small one will happily repeat the transcript until the
     context is full, and every one of those tokens is a second of somebody
-    waiting. A hosted model is left alone: there the same runaway is rare, and a
-    ceiling would cut the minutes short instead.
+    waiting, with only the hour-long local timeout underneath. A hosted model is
+    left alone: there the same runaway is rare, and a ceiling would cut the
+    minutes short instead.
+
+    The answer's share is the transcript's length in characters spent as a
+    budget in tokens, so what it really allows is two to four times the
+    transcript depending on how well the language tokenises. Turkish sits at the
+    tight end of that and still has room to spare for a reply that is meant to
+    come back the same length it went in.
+
+    Thinking is added on top of that share rather than taken out of it. Sharing
+    one budget is what makes turning thinking up quietly cost the answer, and on
+    a short dictation the 512 floor is the whole budget, so the answer is what
+    goes missing first.
+
+    `context` is what the server was started with, and the whole of it is the
+    real limit whatever is asked for here: a ceiling above it is not a ceiling,
+    because the runaway it exists to stop would run to the end of the context
+    instead. So the ceiling is held below what the prompt leaves. Two characters
+    to the token is under any tokeniser's rate for natural language, Turkish
+    included, which makes the reserve an over-estimate rather than a promise of
+    room that is not there.
     """
-    return max(512, len(text))
+    answer = max(512, len(text))
+    if reasoning != "none":
+        answer += THINKING_ROOM.get(reasoning, DEFAULT_THINKING_ROOM)
+    context = int(context or 0)
+    if not context:
+        return answer
+    return max(256, min(answer, context - (len(prompt) + len(text)) // 2))
 
 
 def cleanup(text, api_key, model, system_prompt, reasoning="",
             base_url=OPENROUTER_URL, timeout=180, provider="openrouter",
-            service="OpenRouter", aborter=None):
+            service="OpenRouter", aborter=None, context=0):
     if not api_key and provider != "local-llm":
         raise ApiError(t("{service} API key is empty. Add it in Settings.",
                          service=service))
@@ -551,7 +594,8 @@ def cleanup(text, api_key, model, system_prompt, reasoning="",
         ],
     }
     if provider == "local-llm":
-        payload["max_tokens"] = local_ceiling(text)
+        payload["max_tokens"] = local_ceiling(text, reasoning, context,
+                                              system_prompt)
     _thinking(payload, provider, reasoning)
     try:
         data = _request(
@@ -575,6 +619,13 @@ def cleanup(text, api_key, model, system_prompt, reasoning="",
             raise ApiError(t("The cleanup model spent its whole reply on "
                              "thinking. Set Thinking to \u201cOff\u201d."))
         raise ApiError(t("The cleanup model returned an empty reply."))
+    if choices[0].get("finish_reason") == "length":
+        # Cut off at somebody's ceiling: ours locally, the provider's otherwise.
+        # What came back is a sentence that stops mid-word, and cleanup is meant
+        # to hand back the whole dictation, so the half is refused rather than
+        # returned. The callers keep the transcript they started with, which is
+        # the better of the two.
+        raise ApiError(t("The cleanup model was cut off before it finished."))
     return content
 
 
@@ -610,6 +661,11 @@ def chat(messages, api_key, model, system_prompt, reasoning="",
     content = ((choices[0].get("message") or {}).get("content") or "").strip()
     if not content:
         raise ApiError(t("The model returned an empty reply."))
+    if choices[0].get("finish_reason") == "length":
+        # An answer that stops mid-sentence reads like a whole one once it has
+        # been pasted, so it is refused here for the same reason cleanup refuses
+        # a half transcript.
+        raise ApiError(t("The model was cut off before it finished."))
     return content
 
 

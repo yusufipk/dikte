@@ -14,7 +14,7 @@ import unittest
 from typing import ClassVar
 from unittest import mock
 
-from PyQt6.QtCore import QPoint, QPointF, Qt
+from PyQt6.QtCore import QPoint, QPointF, QRect, Qt
 from PyQt6.QtGui import QWheelEvent
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
@@ -245,6 +245,39 @@ class Settings(DikteTest):
         self.assertGreater(label.minimumHeight(), line)
         label.resize(2000, line)
         self.assertLessEqual(label.minimumHeight(), line)
+
+    def test_a_label_written_before_the_layout_places_it_claims_nothing(self):
+        # The publisher note is written while the settings window is still
+        # being built, when the label is a handful of pixels wide. Wrapped
+        # against that width the sentence became a hundred lines, and the
+        # minimum taken from it did not stay a minimum: QLabel folds it into
+        # its own cached size hints and clears that cache only when the text
+        # changes. The group box stood thousands of pixels tall, with the
+        # model box and everything under it off the bottom of the window,
+        # until another publisher was picked.
+        label = settings_ui.WrappedLabel()
+        self.addCleanup(label.deleteLater)
+        line = label.fontMetrics().height()
+        label.resize(8, line)
+        label.setText("Google Gemma 4, the small one. The default: nothing "
+                      "else this size follows an instruction as closely, and "
+                      "cleanup is all instruction.")
+        self.assertEqual(label.minimumHeight(), 0)
+        # Placed and shown, which is the first width worth measuring against.
+        # The room the wrapping needs is claimed then, and it is the lines the
+        # sentence takes at this width rather than at the last one. Counted
+        # off the font rather than written down here, because how many lines
+        # 400 pixels hold is a different answer on every machine.
+        label.resize(400, line)
+        label.show()
+        wrap = Qt.TextFlag.TextWordWrap | Qt.TextFlag.TextWrapAnywhere
+        needed = label.fontMetrics().boundingRect(
+            QRect(0, 0, 400, 0), wrap, label.text()).height()
+        self.assertGreater(needed, line)      # or the sentence never wrapped
+        self.assertEqual(label.minimumHeight(), needed)
+        # And the label's own hints are the wrapping at this width too, not
+        # the hundred lines the eight pixel one asked for.
+        self.assertLessEqual(label.sizeHint().height(), 3 * needed)
 
     def test_saving_without_touching_anything_changes_nothing(self):
         """Every widget has to load what is stored, or Save writes its default
