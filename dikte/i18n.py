@@ -189,8 +189,10 @@ TR = {
     "Restore the previous clipboard after pasting":
         "Yapıştırdıktan sonra eski pano içeriğini geri koy",
     "Indicator screen": "Gösterge ekranı",
-    "Follow the mouse pointer": "Fare imlecini takip et",
+    "Follow the active screen": "Etkin ekranı takip et",
     "{name} (not connected)": "{name} (bağlı değil)",
+    "Move it when the active screen changes":
+        "Etkin ekran değiştiğinde göstergeyi de taşı",
     "Indicator corner": "Gösterge köşesi",
     "bottom-left": "sol-alt",
     "bottom-right": "sağ-alt",

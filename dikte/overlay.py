@@ -1,6 +1,7 @@
 """The small recording indicator that appears in a screen corner without taking focus."""
 
 import math
+import os
 import sys
 
 from PyQt6.QtCore import Qt, QTimer, QRectF, QPointF
@@ -15,6 +16,7 @@ MIN_WIDTH = 210
 MAX_WIDTH = 460
 MARGIN = 28
 GAP = 10        # between two indicators sharing a corner
+FOLLOW_EVERY = 8   # ticks between two looks for the pointer: about four a second
 
 BG = QColor(22, 24, 29, 238)
 BORDER = QColor(255, 255, 255, 28)
@@ -37,16 +39,68 @@ STATE_COLORS = {"recording": REC, "asking": ASK, "meeting": REC, "busy": BUSY,
 LIVE = ("recording", "asking", "meeting")
 
 
+# KWin's interface, kept once one has been built. See _compositor_screen.
+_kwin = None
+
+
+def _compositor_screen():
+    """The screen KWin says the session is on, or None where nothing says.
+
+    Wayland tells a client where the pointer is only while it is over one of
+    that client's own windows, and the indicator is never under the pointer, so
+    QCursor.pos() answers with a stale point or, when the pointer has never
+    been over a window of ours, with the origin. Either way the indicator lands
+    in the corner of whichever screen holds 0,0 instead of the one being worked
+    on, and on a two-monitor desk that is the wrong screen most of the time.
+    KWin does know, and it names outputs the way Qt names screens, by
+    connector, natively and through XWayland alike. No other Wayland desktop
+    answers this, so the rest are left with the pointer, which is right on X11
+    and wrong on Wayland exactly as before.
+
+    What it answers with is the active output, which is the one under the
+    pointer only where Plasma is set to let the active screen follow the mouse.
+    Under the default, click to focus, it is the focused window's screen, so
+    the indicator lands where the typing is going rather than where the mouse
+    was left. Which is why nothing here, and nothing in the settings window,
+    promises the pointer.
+    """
+    global _kwin
+    if _kwin is None or not _kwin.isValid():
+        # Which also leaves macOS and Windows out, where nothing sets it and
+        # the pointer can be asked where it is like anywhere else.
+        desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").lower()
+        if "kde" not in desktop and "plasma" not in desktop:
+            return None
+        try:
+            from PyQt6.QtDBus import QDBusConnection, QDBusInterface
+            _kwin = QDBusInterface("org.kde.KWin", "/KWin", "org.kde.KWin",
+                                   QDBusConnection.sessionBus())
+        except Exception:
+            return None
+        if not _kwin.isValid():
+            return None
+        # A compositor busy enough not to answer in a fifth of a second is one
+        # the indicator should stop waiting for, not one it should freeze with.
+        _kwin.setTimeout(200)
+    answer = _kwin.call("activeOutputName").arguments()
+    name = answer[0] if answer else ""
+    return next((item for item in QApplication.screens() if item.name() == name),
+                None)
+
+
 class Overlay(QWidget):
     """One indicator. Give it `below` and it stacks on top of that one instead
     of covering it, which is what lets a dictation and a command to the agent be
     under way at the same time and still both be visible."""
 
     def __init__(self, corner="bottom-left", below=None, dismissable=False,
-                 screen_name=""):
+                 screen_name="", follow_pointer=False):
         super().__init__(None)
         self.corner = corner
         self.screen_name = screen_name
+        # Whether it goes on following the pointer once it is up, rather than
+        # settling on the screen it appeared on.
+        self.follow_pointer = follow_pointer
         self.below = below
         # A job that can run for ten minutes should not have to be watched for
         # ten minutes. Clicking such an indicator puts the progress away; the
@@ -65,6 +119,8 @@ class Overlay(QWidget):
         self.seconds = 0.0
         self._phase = 0.0
         self._concealed = True
+        self._shown_on = ""   # the screen it was last put on, by name
+        self._looks = 0       # ticks since the pointer was last looked for
 
         flags = (
             Qt.WindowType.FramelessWindowHint
@@ -252,16 +308,52 @@ class Overlay(QWidget):
                         min(MAX_WIDTH, metrics.horizontalAdvance(self.message) + extra))
         self.resize(width, HEIGHT)
 
-    def _reposition(self):
-        # The screen the settings name, or, when none is named or it is not
-        # plugged in right now, where the user actually is. Names are connector
-        # names on X11 and model names on macOS, where two identical monitors
-        # can share one; the first then wins.
-        screen = next(
+    def _screen(self):
+        """The screen this indicator belongs on right now.
+
+        The one the settings name, or, when none is named or it is not plugged
+        in right now, where the user actually is. Names are connector names on
+        X11 and model names on macOS, where two identical monitors can share
+        one; the first then wins.
+
+        One stacking on another belongs on that one's screen and nowhere else.
+        Asked for itself it would answer where the user is now, which is not
+        where the ribbon it stacks on was put a minute ago, and the pair would
+        end up a monitor apart with this one raised over nothing.
+        """
+        if self.below is not None and self.below.showing:
+            under = next((item for item in QApplication.screens()
+                          if item.name() == self.below._shown_on), None)
+            if under is not None:
+                return under
+        named = next(
             (item for item in QApplication.screens() if item.name() == self.screen_name),
             None,
         )
-        screen = screen or QApplication.screenAt(QCursor.pos()) or QApplication.primaryScreen()
+        return (named or _compositor_screen()
+                or QApplication.screenAt(QCursor.pos())
+                or QApplication.primaryScreen())
+
+    def _wandered_off(self):
+        """Whether the pointer has left the screen the indicator is on.
+
+        Only asked while it is following, and only every few ticks: the answer
+        costs a word with the compositor, and a hand moving a mouse across a
+        desk is slow next to a 33 ms ribbon. Every tick for one that stacks on
+        another, where the answer is free and waiting a third of a second for
+        it would leave the pair split over two monitors for that long.
+        """
+        if not self.follow_pointer or self.screen_name:
+            return False
+        if self.below is None or not self.below.showing:
+            self._looks = (self._looks + 1) % FOLLOW_EVERY
+            if self._looks:
+                return False
+        return self._screen().name() != self._shown_on
+
+    def _reposition(self):
+        screen = self._screen()
+        self._shown_on = screen.name()
         area = screen.availableGeometry()
         left = "left" in self.corner
         top = "top" in self.corner
@@ -277,8 +369,10 @@ class Overlay(QWidget):
     def _tick(self):
         self._phase += 0.12
         # The one underneath can come and go while this one is up; drop back to
-        # the corner when it does rather than leaving a gap where it was.
-        if self.below is not None and self.below.showing != self._stacked:
+        # the corner when it does rather than leaving a gap where it was. And
+        # the screen under the pointer can change while it is up too.
+        moved = self.below is not None and self.below.showing != self._stacked
+        if moved or self._wandered_off():
             self._reposition()
         if self.state in LIVE and not self.paused:
             # keep the ribbon moving even through a pause in speech

@@ -867,7 +867,11 @@ class SettingsWindow(QDialog):
         form = QFormLayout(page)
 
         self.indicator_screen = QComboBox()
-        self.indicator_screen.addItem(t("Follow the mouse pointer"), "")
+        # The active screen rather than the pointer, for the reason in
+        # overlay._compositor_screen: it is what a compositor will answer for,
+        # and on Plasma the two are one screen only where the active screen is
+        # set to follow the mouse.
+        self.indicator_screen.addItem(t("Follow the active screen"), "")
         for screen in QGuiApplication.screens():
             # The native resolution, so that a scaled 4K screen reads
             # 3840 × 2160 and not the 1920 × 1080 Qt sees through the scale.
@@ -881,11 +885,25 @@ class SettingsWindow(QDialog):
             )
         form.addRow(t("Indicator screen"), self.indicator_screen)
 
+        # Only the screen it appeared on is decided when it appears; this is
+        # what makes it keep up with a session that moves to another one
+        # mid-recording. The active screen and not the pointer, because that is
+        # what a compositor will answer for: on Plasma the two are the same
+        # screen only where the active screen is set to follow the mouse, and
+        # otherwise it is the focused window that decides. Nothing to offer
+        # when a screen is named above, since that name is the whole answer.
+        self.follow_pointer = QCheckBox(t("Move it when the active screen changes"))
+        self.indicator_screen.currentIndexChanged.connect(self._sync_follow_pointer)
+        form.addRow("", self.follow_pointer)
+
         self.corner = QComboBox()
         for value in CORNERS:
             self.corner.addItem(t(value), value)
         form.addRow(t("Indicator corner"), self.corner)
         return page
+
+    def _sync_follow_pointer(self):
+        self.follow_pointer.setEnabled(not self.indicator_screen.currentData())
 
     def _api_tab(self):
         page = QWidget()
@@ -1805,6 +1823,8 @@ class SettingsWindow(QDialog):
         if screen_name and self.indicator_screen.findData(screen_name) < 0:
             self.indicator_screen.addItem(t("{name} (not connected)", name=screen_name), screen_name)
         self._select_data(self.indicator_screen, screen_name)
+        self.follow_pointer.setChecked(conf["overlay_follows_pointer"])
+        self._sync_follow_pointer()
         self._select_data(self.corner, conf["overlay_corner"])
         self.max_seconds.setValue(conf["max_seconds"])
         self.skip_silent.setChecked(conf["skip_silent"])
@@ -1925,6 +1945,9 @@ class SettingsWindow(QDialog):
         conf["paste_shortcut"] = self.paste_shortcut.currentText().strip()
         conf["restore_clipboard"] = self.restore_clipboard.isChecked()
         conf["overlay_screen"] = self.indicator_screen.currentData() or ""
+        # Read even while it is greyed out, so that naming a screen and taking
+        # the name back again does not clear a preference nobody touched.
+        conf["overlay_follows_pointer"] = self.follow_pointer.isChecked()
         conf["overlay_corner"] = self.corner.currentData() or "bottom-left"
         conf["max_seconds"] = self.max_seconds.value()
         conf["skip_silent"] = self.skip_silent.isChecked()
