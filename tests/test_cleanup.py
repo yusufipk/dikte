@@ -411,6 +411,52 @@ class Here(DikteTest):
             cleanup.run("uh, done", self.conf, "the rules")
         self.assertEqual(sent_json(calls[0])["max_tokens"], 512)
 
+    def test_thinking_is_given_room_of_its_own_rather_than_the_answer_s(self):
+        # llama.cpp counts the thinking towards the same ceiling, so a rung that
+        # took its budget out of the answer would leave a short dictation with
+        # nothing to reply with. On a context roomy enough that the clamp the
+        # top rung would otherwise meet is not what is being measured.
+        self.patch_attr(ggml, "llm", FakeServer(context=32768))
+        for rung, room in api.THINKING_ROOM.items():
+            with self.subTest(rung=rung):
+                self.conf["local_llm_reasoning"] = rung
+                with fake_urlopen(chat_reply("Done.")) as calls:
+                    cleanup.run("uh, done", self.conf, "the rules")
+                self.assertEqual(sent_json(calls[0])["max_tokens"], 512 + room)
+
+    def test_each_rung_of_the_ladder_thinks_longer_than_the_one_below(self):
+        rungs = [api.THINKING_ROOM[name] for name in
+                 ("minimal", "low", "medium", "high", "xhigh", "max")]
+        self.assertEqual(rungs, sorted(rungs))
+        self.assertEqual(len(set(rungs)), len(rungs))
+
+    def test_the_models_own_default_is_given_room_to_think_in_too(self):
+        # Nothing is sent, so a template that thinks will think, and the ceiling
+        # has to survive that as well.
+        self.conf["local_llm_reasoning"] = ""
+        with fake_urlopen(chat_reply("Done.")) as calls:
+            cleanup.run("uh, done", self.conf, "the rules")
+        self.assertEqual(sent_json(calls[0])["max_tokens"],
+                         512 + api.DEFAULT_THINKING_ROOM)
+
+    def test_the_ceiling_stays_under_the_context_the_server_was_started_with(self):
+        # Above the context there is no ceiling at all: the runaway would run to
+        # the end of the context instead of stopping where this says.
+        self.patch_attr(ggml, "llm", FakeServer(context=2048))
+        self.conf["local_llm_reasoning"] = "max"
+        with fake_urlopen(chat_reply("Done.")) as calls:
+            cleanup.run("uh, done", self.conf, "the rules")
+        self.assertLess(sent_json(calls[0])["max_tokens"], 2048)
+
+    def test_the_prompt_keeps_its_share_of_a_small_context(self):
+        self.patch_attr(ggml, "llm", FakeServer(context=2048))
+        self.conf["local_llm_reasoning"] = "max"
+        with fake_urlopen(chat_reply("Done.")) as calls:
+            cleanup.run("x" * 2000, self.conf, "the rules")
+        # 2048 less half the characters of prompt and transcript together.
+        self.assertEqual(sent_json(calls[0])["max_tokens"],
+                         2048 - (len("the rules") + 2000) // 2)
+
     def test_a_reply_that_was_all_thinking_names_the_setting_that_fixes_it(self):
         reply = {"choices": [{"message": {"content": "", "reasoning": "hmm"}}]}
         with fake_urlopen(reply), self.assertRaises(api.ApiError) as caught:

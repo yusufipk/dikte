@@ -463,6 +463,29 @@ class Cleanup(DikteTest):
         with fake_urlopen(chat_reply("   ")), self.assertRaises(api.ApiError):
             api.cleanup("hello", "k", "m", "p")
 
+    def test_a_reply_cut_off_at_a_ceiling_is_refused_rather_than_pasted(self):
+        # Half a sentence looks like a cleaned-up transcript and is not one. The
+        # caller keeps what it was given, which is the whole dictation.
+        reply = {"choices": [{"message": {"content": "Hello, and then the"},
+                              "finish_reason": "length"}]}
+        with fake_urlopen(reply), self.assertRaises(api.ApiError) as caught:
+            api.cleanup("hello", "k", "m", "p")
+        self.assertIn("cut off", str(caught.exception))
+
+    def test_a_reply_that_stopped_on_its_own_is_kept(self):
+        reply = {"choices": [{"message": {"content": "Hello."},
+                              "finish_reason": "stop"}]}
+        with fake_urlopen(reply):
+            self.assertEqual(api.cleanup("hello", "k", "m", "p"), "Hello.")
+
+    def test_all_thinking_is_named_before_the_ceiling_it_was_cut_at(self):
+        """Both are true at once, and only one of them says what to change."""
+        reply = {"choices": [{"message": {"content": "", "reasoning": "hmm"},
+                              "finish_reason": "length"}]}
+        with fake_urlopen(reply), self.assertRaises(api.ApiError) as caught:
+            api.cleanup("hello", "k", "m", "p")
+        self.assertIn("Thinking", str(caught.exception))
+
     def test_a_rate_limit_is_explained(self):
         with fake_urlopen(http_error(429)), \
                 self.assertRaises(api.ApiError) as caught:
@@ -471,6 +494,14 @@ class Cleanup(DikteTest):
 
 
 class Chat(DikteTest):
+    def test_an_answer_cut_off_at_a_ceiling_is_refused_rather_than_pasted(self):
+        # Half an answer reads like a whole one once it is on the screen.
+        reply = {"choices": [{"message": {"content": "Booked it for the"},
+                              "finish_reason": "length"}]}
+        with fake_urlopen(reply), self.assertRaises(api.ApiError) as caught:
+            api.chat([{"role": "user", "content": "book it"}], "k", "m", "p")
+        self.assertIn("cut off", str(caught.exception))
+
     def test_the_history_is_sent_after_the_system_prompt(self):
         history = [{"role": "user", "content": "book it"},
                    {"role": "assistant", "content": "done"}]
@@ -616,11 +647,13 @@ if __name__ == "__main__":
 class FakeServer:
     """A ggml.Server as far as api.py is concerned."""
 
-    def __init__(self, url="http://127.0.0.1:9999/v1", fails="", log=""):
+    def __init__(self, url="http://127.0.0.1:9999/v1", fails="", log="",
+                 context=8192):
         self.url = url
         self.fails = fails
         self.log = log
         self.starts = 0
+        self.context = context
 
     def serve(self):
         self.starts += 1
@@ -630,6 +663,9 @@ class FakeServer:
 
     def error(self):
         return self.log
+
+    def settings(self):
+        return {"context": self.context}
 
 
 LOCAL = api.Target("local", "Local whisper", "", "", "ggml-base.bin")
