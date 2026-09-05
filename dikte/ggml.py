@@ -33,6 +33,7 @@ import json
 import os
 import pathlib
 import platform
+import re
 import shutil
 import signal
 import socket
@@ -732,6 +733,146 @@ def _tail(path, lines=3):
     return " | ".join(found[-lines:])
 
 
+# --- what the server is running on ----------------------------------------
+
+# Both programs say where the model went, and neither is asked: it is printed
+# while they start and captured in the log Dikte already keeps. Reading it back
+# is the only way to tell a graphics card that was asked for from one that was
+# found, which is a difference the settings checkbox cannot make on its own.
+Accel = collections.namedtuple("Accel", "backend device layers available")
+
+NO_ACCEL = Accel("", "", "", ())
+
+# ggml loads each backend from a shared object and says which; whisper then says
+# whether it found a card, and llama says how many layers went onto it.
+_BACKEND_LOADED = re.compile(r"^load_backend: loaded (\w+) backend", re.M)
+_WHISPER_NO_GPU = "whisper_backend_init_gpu: no GPU found"
+# What whisper committed to, which is not what it enumerated: it lists every
+# device it can see, then tries them, and a card that fails to initialise sends
+# it back to the processor. "using" is printed only once one has worked, and the
+# model buffer is named after wherever the weights actually ended up.
+_WHISPER_USING = re.compile(
+    r"^whisper_backend_init_gpu: using (\S+) backend", re.M)
+_WHISPER_BUFFER = re.compile(r"^whisper_model_load:\s+(\S+) total size", re.M)
+# The device listing, read for the card's name rather than for the verdict.
+_WHISPER_DEVICE = re.compile(
+    r"^whisper_backend_init_gpu: device (\d+): (.+?) \(type: (\d+)\)", re.M)
+_LLAMA_OFFLOAD = re.compile(
+    r"^load_tensors: offloaded (\d+)/(\d+) layers to GPU", re.M)
+
+# whisper names the device by its ggml handle, "Vulkan0" or "CUDA0", which says
+# which slot rather than which card. Each backend prints the real name as it
+# enumerates, one line further up.
+_HANDLE = re.compile(r"^([A-Za-z]+?)(\d*)$")
+_BARE = re.compile(r"^(?:Vulkan|CUDA|ROCm|SYCL|Metal|GPU|CPU)\d*$", re.I)
+_METAL_DEVICE = re.compile(r"^ggml_metal.*picking default device: (.+)$", re.M)
+# The driver in brackets after the card's own name: "(radv)", "(nvidia)". The
+# name carries brackets of its own, but in capitals, so the case is what tells
+# a driver tag from part of the name.
+_DRIVER_TAG = re.compile(r"\s*\([a-z0-9_.\- ]+\)$")
+
+
+def _enumerated(text, backend, index):
+    """The name the backend printed for one of its own devices, by slot.
+
+    Asked by backend rather than by whichever listing came first: a machine
+    with both a CUDA build and a Vulkan loader prints two listings, and the
+    card named in the wrong one is somebody else's card.
+    """
+    listings = {
+        "vulkan": rf"^ggml_vulkan: {index} = (.+?) \| ",
+        "cuda": rf"^\s*Device {index}: (.+?), compute capability",
+        "rocm": rf"^\s*Device {index}: (.+?), compute capability",
+    }
+    pattern = listings.get(backend.lower())
+    found = re.search(pattern, text, re.M) if pattern else None
+    if found is None and backend.lower() == "metal":
+        found = _METAL_DEVICE.search(text)
+    if found is None:
+        return ""
+    return _DRIVER_TAG.sub("", found.group(1).strip())
+
+
+def _card_name(text, handle):
+    """The card behind a ggml handle like "Vulkan0", named the way it sells.
+
+    The backend's own enumeration is asked first because it is the only listing
+    indexed the way the handle is. whisper numbers every device it can see in
+    one sequence, so the Vulkan card can be its device 1 while being Vulkan0,
+    and reading that row by the handle's digit names whatever else was in slot
+    zero. The handle itself is never an answer: it says which slot, and a line
+    reading "Vulkan, Vulkan0" tells nobody which card is doing the work.
+    """
+    parts = _HANDLE.match(handle or "")
+    backend, index = (parts.group(1), parts.group(2) or "0") if parts else ("", "0")
+    found = _enumerated(text, backend, index)
+    if found:
+        return found
+    # Nothing enumerated: whisper's own listing is all there is, and a single
+    # named device in it can only be the one that ran.
+    named = [name.strip() for _slot, name, kind in _WHISPER_DEVICE.findall(text)
+             if kind != "0" and name.strip() and not _BARE.match(name.strip())]
+    return named[0] if len(named) == 1 else ""
+
+# The startup chatter is the first few hundred lines; the rest of the file is a
+# line per request and grows for as long as the server lives.
+_LOG_HEAD = 64 << 10
+
+
+def _read_accel(program, log_path):
+    """What the server that wrote `log_path` is running on.
+
+    An empty backend is a real answer rather than a failure: a whisper built by
+    hand on a Mac has Metal compiled in and prints no load_backend line at all,
+    and calling that "the processor" would be a confident lie about the one
+    thing this is here to be honest about.
+    """
+    try:
+        with open(log_path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read(_LOG_HEAD)
+    except OSError:
+        return NO_ACCEL
+    # dict.fromkeys rather than a set: the order they were loaded in is the
+    # order they are worth showing in, and CPU is always one of them.
+    available = tuple(dict.fromkeys(_BACKEND_LOADED.findall(text)))
+    cards = [name for name in available if name.upper() != "CPU"]
+    if program is WHISPER:
+        # The handle whisper settled on. "using" is printed once a backend has
+        # initialised, so a card that was listed and then failed never reaches
+        # here; the model buffer is the same answer from the other end, named
+        # after wherever the weights were actually put.
+        using = _WHISPER_USING.search(text)
+        buffered = _WHISPER_BUFFER.search(text)
+        handle = (using or buffered).group(1) if (using or buffered) else ""
+        if _WHISPER_NO_GPU in text or handle.upper().startswith("CPU"):
+            return Accel("CPU", handle or "", "", available)
+        if handle:
+            parts = _HANDLE.match(handle)
+            backend = parts.group(1) if parts else ""
+            # The backend as the build spells it, so "Vulkan" rather than the
+            # capitalisation the handle happened to use.
+            backend = next((name for name in cards
+                            if name.lower() == backend.lower()), backend)
+            return Accel(backend or "GPU", _card_name(text, handle), "",
+                         available)
+        if available and not cards:
+            # Nothing but a processor backend in this build: there was nowhere
+            # else the model could have gone.
+            return Accel("CPU", "", "", available)
+        return Accel("", "", "", available)
+    found = _LLAMA_OFFLOAD.search(text)
+    if found:
+        layers = f"{found.group(1)}/{found.group(2)}"
+        if int(found.group(1)) > 0:
+            backend = cards[0] if cards else "GPU"
+            return Accel(backend, _card_name(text, f"{backend}0"), layers,
+                         available)
+        return Accel("CPU", "", layers, available)
+    if available and not cards:
+        return Accel("CPU", "", "", available)
+    return Accel("", "", "", available)
+
+
 def _win_image_name(pid):
     """The full, lower-cased path of the process's executable, or ''.
 
@@ -785,6 +926,19 @@ class Server:
         self._port = 0
         self._log = ""
         self._key = None
+        # What the running child settled on, read out of its log once it was
+        # ready. Kept beside the process because it belongs to that process and
+        # to no other: a restart on new settings may land somewhere else.
+        self._accel = NO_ACCEL
+        # The settings the running child was started on, which is not what
+        # _settings holds: a change made while a start is in flight lands there
+        # first, and reporting the new model beside the old process would name
+        # a model this server is not running.
+        self._live = {}
+        # The copy that is running, resolved rather than configured: the
+        # setting is usually empty, meaning whichever one program_path finds,
+        # and which one it found decides what advice is worth giving.
+        self._binary = ""
         # The pid this instance last wrote to its pid file, so _forget never
         # removes a file some other Dikte wrote after us.
         self._pid = 0
@@ -820,6 +974,34 @@ class Server:
         with self._lock:
             return f"http://{HOST}:{self._port}/v1" if self._port else ""
 
+    def state(self):
+        """A snapshot of what this server is doing, for something to show.
+
+        Taken under the short lock rather than the start one, so the interface
+        is answered at once even while a model is being read in. Plain types
+        throughout, because this travels over the socket to the command line.
+        """
+        with self._lock:
+            up = self._proc is not None and self._proc.poll() is None
+            accel = self._accel if up else NO_ACCEL
+            # What it is running, when it is running; what it would run
+            # otherwise. The two differ for as long as a change waits for the
+            # restart that will pick it up.
+            settings = self._live if up else self._settings
+            return {
+                "running": up,
+                "pid": self._proc.pid if up else 0,
+                "port": self._port if up else 0,
+                "model": settings.get("model", ""),
+                "gpu_wanted": bool(settings.get("gpu")),
+                "backend": accel.backend,
+                "device": accel.device,
+                "layers": accel.layers,
+                "available": list(accel.available),
+                "binary": self._binary if up else "",
+                "downloaded": bool(up and is_downloaded(self._binary)),
+            }
+
     def error(self):
         """The last thing the server printed, for a failure after it started."""
         with self._lock:
@@ -841,9 +1023,12 @@ class Server:
             self._stop_now()
             with self._lock:
                 settings, key = dict(self._settings), self._settings_key()
-            proc, port, log = self._launch(settings)
+            proc, port, log, accel = self._launch(settings)
             with self._lock:
                 self._proc, self._port, self._log, self._key = proc, port, log, key
+                self._accel, self._live = accel, settings
+                self._binary = program_path(self.program,
+                                            settings.get("binary", ""))
             return self.base_url()
 
     def _current_url(self):
@@ -893,7 +1078,9 @@ class Server:
                 self._forget()
                 raise
             if reason == "ready":
-                return proc, port, str(log)
+                # Read now rather than on demand: the startup lines are at the
+                # head of a file a long-lived server keeps appending to.
+                return proc, port, str(log), _read_accel(self.program, log)
             last = _tail(log)
             self._forget()
             # Losing the port between the probe and the bind is the one
@@ -969,6 +1156,8 @@ class Server:
         with self._lock:
             proc, self._proc = self._proc, None
             self._port, self._log, self._key = 0, "", None
+            self._accel, self._live = NO_ACCEL, {}
+            self._binary = ""
         self._kill(proc, gently=True)
         if proc is not None:
             self._forget()
@@ -1150,6 +1339,81 @@ SERVERS = (whisper, llm)
 def sweep():
     """Clean up after a Dikte that was killed outright. True when one was found."""
     return any([server.sweep() for server in SERVERS])
+
+
+def state():
+    """What each local server is doing, keyed by program name."""
+    return {server.program.name: server.state() for server in SERVERS}
+
+
+def is_downloaded(path):
+    """Whether `path` is a copy Dikte fetched rather than one the system has."""
+    return bool(path) and _under(path, BIN_DIR)
+
+
+def server_log(program):
+    """Where this program's server writes, which outlives the process."""
+    return DATA_DIR / f"{program.name}-server.log"
+
+
+def last_accel(program):
+    """What the last server for `program` ran on, from the log it left behind.
+
+    For a command line asking with nothing running: the log outlives the process
+    and is the only account of the last start there is.
+    """
+    return _read_accel(program, server_log(program))
+
+
+def accel_kind(state):
+    """"off" | "gpu" | "cpu" | "unknown", for a state() or an Accel.
+
+    A tag rather than a sentence, because the two places that show this write
+    their own: the command line answers in English and the settings window in
+    whatever language it was opened in.
+    """
+    if isinstance(state, Accel):
+        state = {"running": True, "backend": state.backend}
+    if not state.get("running"):
+        return "off"
+    backend = state.get("backend") or ""
+    if not backend:
+        return "unknown"
+    return "cpu" if backend.upper() == "CPU" else "gpu"
+
+
+def accel_detail(state):
+    """The backend, the card and the layers, joined, or "" when none were said.
+
+    Names as the server printed them: "CUDA", "Vulkan", the card's own model
+    name. Translating those would be inventing hardware nobody sells.
+    """
+    if isinstance(state, Accel):
+        state = state._asdict()
+    parts = [state.get("backend") or "", state.get("device") or ""]
+    if state.get("layers"):
+        parts.append(f"{state['layers']} layers")
+    # A whisper on the processor prints "CPU" as its device too, and saying it
+    # twice reads like two different things.
+    seen, out = set(), []
+    for part in parts:
+        if part and part.lower() not in seen:
+            seen.add(part.lower())
+            out.append(part)
+    return ", ".join(out)
+
+
+def cpu_only_build(state):
+    """Whether the binary that is running carries no GPU backend at all.
+
+    The difference between "no card was found" and "this build could never have
+    used one", which is the difference between a machine to shrug at and a
+    download to replace.
+    """
+    if isinstance(state, Accel):
+        state = state._asdict()
+    available = [name.upper() for name in (state.get("available") or [])]
+    return available == ["CPU"]
 
 
 def stop_all():

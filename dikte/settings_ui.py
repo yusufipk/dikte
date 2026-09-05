@@ -736,6 +736,66 @@ class SettingsWindow(QDialog):
         # because of that, so open it on the tab that fixes it.
         if not conf.transcribe_ready():
             self.tabs.setCurrentIndex(self.api_tab_index)
+        # A model takes up to ggml.STARTUP_TIMEOUT to load, so a line written
+        # once as the window opens would be wrong for most of the wait. Runs
+        # only while the window is on screen: there is nobody to read it
+        # otherwise, and it costs a lock and a poll() each time.
+        self._local_state_timer = QTimer(self)
+        self._local_state_timer.setInterval(2000)
+        self._local_state_timer.timeout.connect(self._show_local_state)
+        self._show_local_state()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._show_local_state()
+        self._local_state_timer.start()
+
+    def hideEvent(self, event):
+        self._local_state_timer.stop()
+        super().hideEvent(event)
+
+    def _show_local_state(self):
+        """What each model on this machine is loaded on, as it is now."""
+        local = ggml.state()
+        self.local_state.setText(
+            self._local_state_text(ggml.WHISPER, local.get("whisper", {})))
+        self.local_llm_state.setText(
+            self._local_state_text(ggml.LLAMA, local.get("llama", {})))
+
+    @staticmethod
+    def _local_state_text(program, entry):
+        """One line: whether the model is loaded, and what it ended up on.
+
+        Four answers rather than two, because "could not tell" is a real one: a
+        whisper built by hand on a Mac prints nothing about its backend, and
+        answering "the processor" there would be a confident lie about the one
+        thing this line exists to be honest about.
+        """
+        kind = ggml.accel_kind(entry)
+        if kind == "off":
+            return t("Not loaded.")
+        # The backend and the card keep the names the server printed for them.
+        detail = ggml.accel_detail(entry)
+        if kind == "unknown":
+            return t("Loaded; it did not say what it is running on.")
+        if kind == "gpu":
+            return t("Loaded on the graphics card ({detail}).", detail=detail)
+        if not entry.get("gpu_wanted"):
+            return t("Loaded on the processor ({detail}).", detail=detail)
+        if not ggml.cpu_only_build(entry):
+            return t("Loaded on the processor: the graphics card is switched "
+                     "on, but none was found.")
+        # The one case with a fix worth naming: whisper.cpp publishes no build
+        # that can reach a card on most systems, and Dikte runs a system copy
+        # ahead of its own, so installing one is the whole remedy.
+        if entry.get("downloaded"):
+            return t("Loaded on the processor: the build Dikte downloaded "
+                     "carries no graphics backend. A {binary} from your own "
+                     "system is used ahead of it, so installing one is what "
+                     "reaches the card.", binary=program.binary)
+        return t("Loaded on the processor: this {binary} carries no graphics "
+                 "backend, so the box above cannot change that.",
+                 binary=program.binary)
 
     def _scrolled(self, page):
         """A tab that scrolls instead of growing the window to fit."""
@@ -978,6 +1038,12 @@ class SettingsWindow(QDialog):
         options_form.addRow("", self.local_preload)
         options_form.addRow(t("Threads"), self.local_threads)
         stt_form.addRow(self.local_options)
+        # What the model is actually doing, as against what the boxes above
+        # ask for. The checkbox can only ask: whether a card was found is
+        # decided by the build and by the machine, and is read back off the
+        # server's own log once it has loaded.
+        self.local_state = WrappedLabel("")
+        stt_form.addRow(self.local_state)
 
         self.transcribe_provider.currentIndexChanged.connect(self._provider_changed)
         outer.addWidget(stt)
@@ -1079,6 +1145,8 @@ class SettingsWindow(QDialog):
         llm_form.addRow("", self.local_llm_preload)
         llm_form.addRow(t("Thinking"), self.local_llm_reasoning)
         orr_form.addRow(self.local_llm_options)
+        self.local_llm_state = WrappedLabel("")
+        orr_form.addRow(self.local_llm_state)
 
         outer.addWidget(orr)
         outer.addStretch(1)
@@ -2118,6 +2186,7 @@ class SettingsWindow(QDialog):
         self.stt_form.setRowVisible(self.transcribe_status, not local)
         self.stt_form.setRowVisible(self.local_whisper, local)
         self.stt_form.setRowVisible(self.local_options, local)
+        self.stt_form.setRowVisible(self.local_state, local)
         if local:
             return
         self.transcribe_model.clear()
@@ -2626,6 +2695,7 @@ class SettingsWindow(QDialog):
                                         provider != "local")
         self.cleanup_form.setRowVisible(self.local_llm, provider == "local")
         self.cleanup_form.setRowVisible(self.local_llm_options, provider == "local")
+        self.cleanup_form.setRowVisible(self.local_llm_state, provider == "local")
         binary = cleanup.executable(provider)
         found = shutil.which(binary) if binary else ""
         if provider == "local":

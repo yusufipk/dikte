@@ -24,6 +24,7 @@ from unittest import mock
 
 from dikte import assistant
 from dikte import config as cfg
+from dikte import ggml
 from dikte import i18n
 from dikte import update
 
@@ -91,6 +92,22 @@ class DikteTest(unittest.TestCase):
         # down when it last ran.
         self.patch_attr(assistant, "SESSION_FILE", data_dir / "assistant.json")
         self.patch_attr(update, "STATE_FILE", data_dir / "update.json")
+        # ggml resolves its own three from paths.DATA_DIR at import, the same
+        # way cfg does. Left alone, a test asking what is installed or what the
+        # last server ran on would be reading whatever this machine happens to
+        # have downloaded, and passing or failing on somebody's home directory.
+        # program_path prefers a whisper-server or llama-server on the PATH
+        # over the copy Dikte downloaded, so on a machine with whisper.cpp
+        # installed these tests would be answering from that copy instead of
+        # from the install they set up. Every other tool still resolves; the
+        # tests that are about the system build patch this again themselves.
+        _which = shutil.which
+        self.patch_attr(shutil, "which", lambda tool, *args, **rest: (
+            None if tool in ("whisper-server", "llama-server")
+            else _which(tool, *args, **rest)))
+        self.patch_attr(ggml, "DATA_DIR", data_dir)
+        self.patch_attr(ggml, "BIN_DIR", data_dir / "bin")
+        self.patch_attr(ggml, "MODELS_DIR", data_dir / "models")
 
         i18n.set_language("en")
         self.addCleanup(i18n.set_language, "en")

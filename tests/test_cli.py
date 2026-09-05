@@ -780,6 +780,120 @@ class Replies(DikteTest):
         self.assertFalse(launched.called)
 
 
+class LocalModels(DikteTest):
+    """Whether the model on this machine is loaded, and what it is loaded on."""
+
+    def status(self, local, **rest):
+        reply = {"ok": True, "running": True, "dictation": "idle", "ask": "idle",
+                 "meeting": "idle", "listener": True, "local": local, **rest}
+        with mock.patch.object(ipc, "send", return_value=reply), \
+                captured() as (out, _err):
+            cli.cmd_status(Options(json=False))
+        return out.getvalue()
+
+    def entry(self, **values):
+        base = {"running": True, "used": True, "pid": 7, "port": 4321,
+                "model": "ggml-small.bin", "gpu_wanted": True,
+                "backend": "CUDA", "device": "RTX 4070", "layers": "",
+                "available": ["CUDA", "CPU"]}
+        base.update(values)
+        return base
+
+    def test_a_loaded_model_says_what_it_is_loaded_on(self):
+        line = self.status({"whisper": self.entry()})
+        self.assertIn("whisper:", line)
+        self.assertIn("loaded on the graphics card (CUDA, RTX 4070)", line)
+        self.assertIn("ggml-small.bin", line)
+
+    def test_a_card_asked_for_and_not_found_is_said_out_loud(self):
+        line = self.status({"whisper": self.entry(
+            backend="CPU", device="CPU", available=["CPU"])})
+        self.assertIn("loaded on the processor", line)
+        self.assertIn("this build carries none", line)
+
+    def test_the_downloaded_build_is_told_where_a_working_one_comes_from(self):
+        line = self.status({"whisper": self.entry(
+            backend="CPU", device="CPU", available=["CPU"], downloaded=True)})
+        self.assertIn("downloaded build has no GPU backend", line)
+        self.assertIn("whisper-server on your system", line)
+
+    def test_a_card_the_build_could_have_used_says_something_else(self):
+        line = self.status({"whisper": self.entry(
+            backend="CPU", device="CPU", available=["CUDA", "CPU"])})
+        self.assertIn("none was found", line)
+        self.assertNotIn("carries none", line)
+
+    def test_a_card_nobody_asked_for_is_not_a_complaint(self):
+        line = self.status({"whisper": self.entry(
+            backend="CPU", device="CPU", gpu_wanted=False, available=["CPU"])})
+        self.assertIn("loaded on the processor", line)
+        self.assertNotIn("switched on", line)
+
+    def test_a_model_that_is_wanted_and_not_loaded_says_so(self):
+        line = self.status({"whisper": self.entry(running=False)})
+        self.assertIn("whisper:", line)
+        self.assertIn("not loaded", line)
+
+    def test_a_model_neither_used_nor_loaded_is_not_worth_a_line(self):
+        line = self.status({"llama": self.entry(running=False, used=False)})
+        self.assertNotIn("llama", line)
+
+    def test_an_instance_too_old_to_have_been_asked_says_nothing(self):
+        reply = {"ok": True, "running": True, "dictation": "idle", "ask": "idle",
+                 "meeting": "idle", "listener": True}
+        with mock.patch.object(ipc, "send", return_value=reply), \
+                captured() as (out, _err):
+            cli.cmd_status(Options(json=False))
+        self.assertNotIn("whisper", out.getvalue())
+
+    # ---- doctor, which can be asked with nothing running -----------------
+
+    def doctor(self, as_json=False, **settings):
+        self.write_config(settings)
+        with mock.patch.object(ipc, "send", return_value=None), \
+                captured() as (out, _err):
+            cli.cmd_doctor(Options(json=as_json))
+        return json.loads(out.getvalue()) if as_json else out.getvalue()
+
+    def log(self, text):
+        path = ggml.DATA_DIR / "whisper-server.log"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+
+    def test_with_nothing_running_the_last_start_is_read_off_its_log(self):
+        self.log("load_backend: loaded CPU backend from /x.so\n"
+                 "whisper_backend_init_gpu: device 0: CPU (type: 0)\n"
+                 "whisper_backend_init_gpu: no GPU found\n")
+        line = self.doctor(transcribe_provider="local", local_gpu=True)
+        self.assertIn("last run on the processor", line)
+        self.assertIn("this build carries none", line)
+
+    def test_a_run_that_named_no_backend_is_not_read_as_no_run_at_all(self):
+        # A log with nothing recognisable in it still says a server started
+        # here once, which is a different thing from never having started.
+        self.log("whisper_model_load: model size    =  147.37 MB\n")
+        line = self.doctor(transcribe_provider="local")
+        self.assertIn("said nothing about what it was running on", line)
+        self.assertNotIn("never run here", line)
+
+    def test_a_machine_that_never_ran_one_is_not_made_up_a_history_for(self):
+        line = self.doctor(transcribe_provider="local")
+        self.assertIn("never run here", line)
+
+    def test_a_setup_that_transcribes_in_the_cloud_reads_about_none_of_it(self):
+        line = self.doctor(transcribe_provider="openai", cleanup_enabled=False)
+        self.assertNotIn("whisper ", line)
+        self.assertNotIn("never run here", line)
+
+    def test_an_instance_that_cannot_be_asked_is_not_read_as_a_no(self):
+        """It used to print "not loaded", which is a different claim."""
+        self.write_config({"transcribe_provider": "local"})
+        with mock.patch.object(ipc, "send", return_value={"ok": True}), \
+                captured() as (out, _err):
+            cli.cmd_doctor(Options(json=False))
+        self.assertIn("too old to say", out.getvalue())
+
+
 class TranscribeRunsHere(DikteTest):
     """`dikte transcribe` runs in this process, not in the instance."""
 

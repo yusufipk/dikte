@@ -15,7 +15,7 @@ from typing import ClassVar
 from unittest import mock
 
 from PyQt6.QtCore import QPoint, QPointF, Qt
-from PyQt6.QtGui import QWheelEvent
+from PyQt6.QtGui import QHideEvent, QShowEvent, QWheelEvent
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
 from dikte import audio
@@ -1194,6 +1194,74 @@ class LocalModels(DikteTest):
         with mock.patch.object(QMessageBox, "information"):
             self.window(conf)._save()
         self.assertEqual(conf["local_model"], "ggml-large-v3-turbo-q5_0.bin")
+
+    def state(self, **values):
+        base = {"running": True, "pid": 3, "port": 4321, "model": "ggml-small.bin",
+                "gpu_wanted": True, "backend": "CUDA", "device": "RTX 4070",
+                "layers": "", "available": ["CUDA", "CPU"]}
+        base.update(values)
+        return base
+
+    def shown(self, **values):
+        """The line the window writes under the local model boxes."""
+        window = self.window(self.config(transcribe_provider="local"))
+        with mock.patch.object(ggml, "state",
+                               return_value={"whisper": self.state(**values),
+                                             "llama": self.state(running=False)}):
+            window._show_local_state()
+        return window.local_state.text(), window.local_llm_state.text()
+
+    def test_a_loaded_model_says_which_card_it_is_on(self):
+        whisper, llm = self.shown()
+        self.assertIn("graphics card", whisper)
+        self.assertIn("RTX 4070", whisper)
+        # The other box is about the other model, and that one is not loaded.
+        self.assertIn("Not loaded", llm)
+
+    def test_a_card_asked_for_and_missing_is_not_left_to_be_guessed_at(self):
+        whisper, _ = self.shown(backend="CPU", device="CPU", available=["CPU"])
+        self.assertIn("processor", whisper)
+        self.assertIn("no graphics backend", whisper)
+
+    def test_the_downloaded_build_is_told_what_to_install(self):
+        # whisper.cpp publishes nothing that reaches a card on this system, and
+        # a copy on the PATH is used ahead of Dikte's own, so that is the fix.
+        whisper, _ = self.shown(backend="CPU", device="CPU", available=["CPU"],
+                                downloaded=True)
+        self.assertIn("Dikte downloaded", whisper)
+        self.assertIn("whisper-server", whisper)
+
+    def test_a_system_build_is_not_told_to_install_itself(self):
+        whisper, _ = self.shown(backend="CPU", device="CPU", available=["CPU"],
+                                downloaded=False)
+        self.assertIn("no graphics backend", whisper)
+        self.assertNotIn("Dikte downloaded", whisper)
+
+    def test_a_build_that_could_have_used_one_says_the_other_thing(self):
+        whisper, _ = self.shown(backend="CPU", device="CPU",
+                                available=["CUDA", "CPU"])
+        self.assertIn("none was found", whisper)
+        self.assertNotIn("no graphics backend", whisper)
+
+    def test_a_processor_nobody_argued_about_is_stated_plainly(self):
+        whisper, _ = self.shown(backend="CPU", device="CPU", gpu_wanted=False,
+                                available=["CPU"])
+        self.assertEqual(whisper, "Loaded on the processor (CPU).")
+
+    def test_a_server_that_said_nothing_is_not_answered_for(self):
+        """A whisper built by hand on a Mac prints no backend line at all."""
+        whisper, _ = self.shown(backend="", device="", available=[])
+        self.assertIn("did not say", whisper)
+
+    def test_the_line_stops_being_written_while_the_window_is_away(self):
+        # The events rather than show() and hide(): showing the window for real
+        # would send the same event down to the download boxes, which answer it
+        # by asking Hugging Face what models there are.
+        window = self.window(self.config(transcribe_provider="local"))
+        window.showEvent(QShowEvent())
+        self.assertTrue(window._local_state_timer.isActive())
+        window.hideEvent(QHideEvent())
+        self.assertFalse(window._local_state_timer.isActive())
 
     def test_nothing_is_fetched_for_a_window_nobody_opened(self):
         # DikteTest closes the network, so a request would fail the test. The

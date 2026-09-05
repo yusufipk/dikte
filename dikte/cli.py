@@ -30,6 +30,7 @@ from . import audio
 from . import cleanup
 from . import config as cfg
 from . import filetranscribe
+from . import ggml
 from . import hotkey
 from . import hub
 from . import ipc
@@ -836,6 +837,82 @@ def cmd_update(opts):
                f"{release.url}")
 
 
+# --- the models on this machine --------------------------------------------
+
+
+def _local_where(entry):
+    """Where a local model ran, in a phrase: the card, the processor, or neither.
+
+    The backend and the card keep the names the server printed for them. A
+    graphics card is a product somebody sells under that name, and translating
+    it would be inventing hardware.
+    """
+    kind = ggml.accel_kind({**entry, "running": True})
+    where = {"gpu": "the graphics card", "cpu": "the processor"}.get(
+        kind, "something it did not name")
+    detail = ggml.accel_detail(entry)
+    return where + (f" ({detail})" if detail else "")
+
+
+def _local_note(name, entry):
+    """Why the card is not in use, for a setup that asked for it and got none.
+
+    Three answers, because the thing to do about it differs: no card here, a
+    build that could never use one, and a build Dikte downloaded that could
+    never use one, which is the only case with a fix worth naming.
+    """
+    if not entry.get("gpu_wanted"):
+        return ""
+    if ggml.accel_kind({**entry, "running": True}) != "cpu":
+        return ""
+    if not ggml.cpu_only_build(entry):
+        return "  - the graphics card is switched on and none was found"
+    if entry.get("downloaded"):
+        return (f"  - the graphics card is switched on and the downloaded build "
+                f"has no GPU backend; a {name}-server on your system would be "
+                f"used ahead of it")
+    return "  - the graphics card is switched on and this build carries none"
+
+
+def _local_line(name, entry):
+    if not entry.get("running"):
+        return "not loaded"
+    model = entry.get("model") or ""
+    return (f"loaded on {_local_where(entry)}"
+            + (f", {model}" if model else "") + _local_note(name, entry))
+
+
+def _last_local(conf):
+    """What the local servers last ran on, read off the logs they left behind.
+
+    For a command line asking while nothing is running: there is no process to
+    put the question to, and the log outlives the process that wrote it. Every
+    entry says `running` is false, because this is an account of the last start
+    rather than a reading of a live one.
+    """
+    rows = {}
+    for program, used, gpu, custom in (
+            (ggml.WHISPER, conf["transcribe_provider"] == "local",
+             bool(conf["local_gpu"]), conf["local_binary"]),
+            (ggml.LLAMA, conf.uses_local_llm(), bool(conf["local_llm_gpu"]),
+             conf["local_llm_binary"])):
+        accel = ggml.last_accel(program)
+        binary = ggml.program_path(program, custom)
+        rows[program.name] = {
+            # Which copy would run now, since the log does not say which one
+            # wrote it; the advice only differs for Dikte's own download.
+            "downloaded": ggml.is_downloaded(binary),
+            # Whether one ever started here at all, which the backend cannot
+            # say on its own: a server that ran and named no backend and one
+            # that never ran both leave it empty.
+            "ran": ggml.server_log(program).exists(),
+            "running": False, "used": used, "gpu_wanted": gpu,
+            "backend": accel.backend, "device": accel.device,
+            "layers": accel.layers, "available": list(accel.available),
+        }
+    return rows
+
+
 def cmd_status(opts):
     reply = ipc.send("status")
     if reply is None:
@@ -855,6 +932,11 @@ def cmd_status(opts):
         + (f"  {reply['meeting_message']}" if reply.get("meeting_message") else ""),
         f"listener:  {'on' if reply.get('listener') else 'off'}",
     ]
+    # Nothing for a setup that uses no model on this machine, and nothing at all
+    # from an instance too old to have been asked.
+    for name, entry in (reply.get("local") or {}).items():
+        if entry.get("used") or entry.get("running"):
+            lines.append(f"{name + ':':11}{_local_line(name, entry)}")
     return out(opts, reply, "\n".join(lines))
 
 
@@ -867,6 +949,9 @@ def cmd_doctor(opts):
     # Mac shells out for one half and Windows for neither. A row saying ydotool
     # is missing on a machine that would never have run it is not a diagnosis,
     # it is a red mark to explain away.
+    # Asked once and read twice: whether an instance is running, and what its
+    # local servers are doing, which is a question only that process can answer.
+    live = ipc.send("status") or {}
     here = paste.desktop()
     wanted = [here.clipboard, here.keyboard]
     if sys.platform.startswith("linux"):
@@ -908,8 +993,14 @@ def cmd_doctor(opts):
                     "ready": cleanup_ready},
         "agent": {"provider": assistant.provider(conf),
                   "directory": assistant.working_dir(conf)},
-        "running": ipc.send("status") is not None,
+        "running": bool(live),
+        # Live when there is an instance to ask, off the logs when there is not.
+        "local": live.get("local") or _last_local(conf),
     }
+    # An instance from before this field existed is not an instance saying
+    # nothing is loaded; it is one that cannot be asked, and the two must not
+    # print the same line.
+    stale = bool(live) and "local" not in live
     if target.provider == "local":
         transcribe_line = (f"{'✓' if transcribe_ready else '✗'} {target.service}, "
                            f"transcribing on {target.model or 'no model yet'}")
@@ -929,12 +1020,30 @@ def cmd_doctor(opts):
                         f"{cleanup.model(conf)}")
     lines = [f"{'✓' if path else '✗'} {name:14} {path or 'not on your PATH'}"
              for name, path in programs.items()]
-    lines += [
-        transcribe_line,
-        cleanup_line,
+    lines += [transcribe_line, cleanup_line]
+    # Only the models this setup actually uses: a machine transcribing in the
+    # cloud has nothing loaded here and no reason to read about it.
+    for name, entry in checks["local"].items():
+        if not entry.get("used"):
+            continue
+        if stale:
+            lines.append(f"· {name:14} the running instance is too old to say; "
+                         f"reload it with: dikte restart")
+        elif entry.get("running"):
+            lines.append(f"✓ {name:14} {_local_line(name, entry)}")
+        elif live:
+            lines.append(f"· {name:14} not loaded")
+        elif entry.get("backend"):
+            lines.append(f"· {name:14} last run on "
+                         f"{_local_where(entry)}{_local_note(name, entry)}")
+        elif entry.get("ran"):
+            lines.append(f"· {name:14} last run said nothing about what it "
+                         f"was running on")
+        else:
+            lines.append(f"· {name:14} never run here")
+    lines.append(
         f"{'✓' if checks['running'] else '·'} application "
-        + ("running" if checks["running"] else "not running"),
-    ]
+        + ("running" if checks["running"] else "not running"))
     return out(opts, {"ok": True, **checks}, "\n".join(lines))
 
 

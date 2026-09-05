@@ -604,6 +604,10 @@ class Dikte:
             "agent": assistant.display_name(self.conf),
             "provider": assistant.provider(self.conf),
             "listener": self.evdev.running,
+            # Whether each model on this machine is loaded, and what it ended up
+            # running on. Only this process knows: the servers are its children,
+            # and the command line has no way to ask them anything.
+            "local": self._local_state(),
             # Asked here rather than by the command line, because on macOS
             # there is no registry to read: a combination is held by this
             # process and by nothing else, so this is the only process that
@@ -611,6 +615,17 @@ class Dikte:
             "shortcuts": {name: hotkey.shortcut_status(spec.desktop_id)
                           for name, spec in hotkey.SHORTCUTS.items()},
         }
+
+    def _local_state(self):
+        """ggml.state(), with a mark for the servers this setup actually uses.
+
+        A server that is neither wanted nor loaded is not worth a line anywhere;
+        one that is wanted and not loaded is exactly the line worth reading.
+        """
+        local = ggml.state()
+        local["whisper"]["used"] = self.conf["transcribe_provider"] == "local"
+        local["llama"]["used"] = self.conf.uses_local_llm()
+        return local
 
     def reload_settings(self):
         """Read the config file back after something outside changed it."""

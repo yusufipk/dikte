@@ -782,6 +782,25 @@ TR = {
     "Load the model when Dikte starts": "Modeli Dikte açılırken yükle",
     "Local whisper": "Yerel whisper",
     "Local model": "Yerel model",
+    "Not loaded.": "Yüklü değil.",
+    "Loaded; it did not say what it is running on.":
+        "Yüklendi; neyin üzerinde çalıştığını söylemedi.",
+    "Loaded on the graphics card ({detail}).":
+        "Ekran kartına yüklendi ({detail}).",
+    "Loaded on the processor ({detail}).": "İşlemciye yüklendi ({detail}).",
+    "Loaded on the processor: the build Dikte downloaded carries no graphics "
+    "backend. A {binary} from your own system is used ahead of it, so "
+    "installing one is what reaches the card.":
+        "İşlemciye yüklendi: Dikte'nin indirdiği sürümde ekran kartı arka ucu "
+        "yok. Sistemdeki bir {binary} indirilene tercih edilir, yani karta "
+        "ulaşmanın yolu onu kurmak.",
+    "Loaded on the processor: this {binary} carries no graphics backend, so "
+    "the box above cannot change that.":
+        "İşlemciye yüklendi: bu {binary} ekran kartı arka ucu taşımıyor, "
+        "yukarıdaki kutu bunu değiştiremez.",
+    "Loaded on the processor: the graphics card is switched on, but none was "
+    "found.":
+        "İşlemciye yüklendi: ekran kartı açık, ama bulunamadı.",
     "Not installed.": "Kurulu değil.",
     "Installed on the system: {path}": "Sistemde kurulu: {path}",
     "Download again": "Yeniden indir",
