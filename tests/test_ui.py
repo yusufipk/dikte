@@ -1336,6 +1336,28 @@ class LocalModels(DikteTest):
         self.assertIn("10", box.program_label.text())
         self.assertIn("20", box.status.text())
 
+    def test_a_download_says_something_before_the_first_byte(self):
+        # Opening the connection takes ten or twenty seconds, and the byte
+        # counts only start after it. The line underneath still read "has not
+        # been downloaded yet" beside a button that now said Stop, so a
+        # download that had started looked like a click that had not landed.
+        box = self.window(cfg.Config()).local_llm
+        box.load("", "ggml-org/SmolLM3-3B-GGUF")
+        box.repo.blockSignals(True)
+        box.repo.setCurrentText("ggml-org/SmolLM3-3B-GGUF")
+        box.repo.blockSignals(False)
+        box._on_listed([("models", [self._item("SmolLM3-Q4_K_M.gguf")],
+                         "ggml-org/SmolLM3-3B-GGUF")], "")
+        with mock.patch.object(settings_ui.threading, "Thread"):
+            box._download()
+        self.assertIn("Starting", box.status.text())
+        # And the same again for the stop, which is read between blocks and so
+        # not read at all while the connection is still being opened.
+        with mock.patch.object(settings_ui.threading, "Thread"):
+            box._download()
+        self.assertTrue(box._stop)
+        self.assertIn("Stopping", box.status.text())
+
     def test_a_long_model_name_is_not_cut_in_half(self):
         # The list under a combo box takes the box's width and elides what does
         # not fit, in the middle: "ggml-org/Qwen....7B-Base-GGUF".

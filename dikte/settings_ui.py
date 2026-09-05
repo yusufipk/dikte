@@ -701,12 +701,21 @@ class LocalModelBox(QGroupBox):
     def _download(self):
         if self._downloading:
             self._stop = True
+            # The flag is only read between blocks, and the wait for the server
+            # to answer is not between blocks: a click during it changes
+            # nothing on screen for as long as the connection takes.
+            self.status.setText(t("Stopping…"))
             return
         item = self._current_item()
         if item is None:
             return
         self._downloading, self._stop = True, False
         self._refresh_buttons()
+        # Opening the connection can take ten or twenty seconds, and the first
+        # byte counts are what the line below would otherwise wait for. Left
+        # saying "not downloaded yet" beside a button that now reads Stop, a
+        # download that started looks like a click that did not register.
+        self.status.setText(t("Starting the download…"))
 
         def work():
             try:

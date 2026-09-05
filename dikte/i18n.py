@@ -793,6 +793,7 @@ TR = {
         "İndirildi, sürüm {version}. Vulkan sürümü yoktu, bu sürüm işlemcide çalışıyor.",
     "Fetching the model list…": "Model listesi çekiliyor…",
     "Downloading…": "İndiriliyor…",
+    "Starting the download…": "İndirme başlatılıyor…",
     "Downloading: {done} of {total}{share}": "İndiriliyor: {done} / {total}{share}",
     "Download stopped.": "İndirme durduruldu.",
     "Ready: {name}.": "Hazır: {name}.",
