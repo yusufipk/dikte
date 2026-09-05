@@ -1240,10 +1240,22 @@ class WindowsOwnership(Local):
 class Machine(Local):
     """What this machine can hold, and what that makes worth pointing at."""
 
+    def _sysconf(self, phys_pages, page_size=4096):
+        """Stand where sysconf answers whatever this test wants it to.
+
+        `create` because Windows has no os.sysconf at all, and a patch that
+        insists on the real attribute fails there before the test runs. What
+        the code under test does about that absence is two lines down from
+        what these are checking, and it is checked on its own below.
+        """
+        return mock.patch.object(
+            ggml.os, "sysconf", create=True,
+            side_effect=lambda name: (page_size if name == "SC_PAGE_SIZE"
+                                      else phys_pages))
+
     def test_the_memory_is_read_the_way_each_system_reports_it(self):
         # Linux and most Macs answer through sysconf.
-        with mock.patch.object(ggml.os, "sysconf", lambda name:
-                               4096 if name == "SC_PAGE_SIZE" else 4_194_304):
+        with self._sysconf(4_194_304):
             self.assertEqual(ggml.total_memory(), 16 * ggml.GB)
 
     def test_a_mac_without_the_page_count_is_asked_for_the_number(self):
@@ -1253,7 +1265,8 @@ class Machine(Local):
             self.assertEqual(args, ["sysctl", "-n", "hw.memsize"])
             return mock.Mock(stdout=f"{32 * ggml.GB}\n")
 
-        with mock.patch.object(ggml.os, "sysconf", side_effect=ValueError), \
+        with mock.patch.object(ggml.os, "sysconf", create=True,
+                               side_effect=ValueError), \
                 mock.patch.object(sys, "platform", "darwin"), \
                 mock.patch.object(ggml.subprocess, "run", answer):
             self.assertEqual(ggml.total_memory(), 32 * ggml.GB)
@@ -1263,8 +1276,7 @@ class Machine(Local):
         # CPython hands that back rather than raising, so the product came out
         # negative: a 64 GB workstation was told every model past 512 MB was
         # too big for it, and the machine line read "Memory: -4096 B".
-        with mock.patch.object(ggml.os, "sysconf", lambda name:
-                               4096 if name == "SC_PAGE_SIZE" else -1):
+        with self._sysconf(-1):
             self.assertEqual(ggml.total_memory(), 0)
         self.assertTrue(ggml.fits(574 << 20, memory=0))
 
@@ -1279,7 +1291,8 @@ class Machine(Local):
         self.assertEqual(len(calls), 1)
 
     def test_a_system_that_answers_nothing_is_an_unknown_machine(self):
-        with mock.patch.object(ggml.os, "sysconf", side_effect=ValueError), \
+        with mock.patch.object(ggml.os, "sysconf", create=True,
+                               side_effect=ValueError), \
                 mock.patch.object(sys, "platform", "linux"):
             self.assertEqual(ggml.total_memory(), 0)
 

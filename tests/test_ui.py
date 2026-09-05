@@ -1246,6 +1246,16 @@ class LocalModels(DikteTest):
         return [box.repo.itemText(row) for row in range(box.repo.count())]
 
     @staticmethod
+    def _roomy():
+        """Stand on a machine with room for every suggestion.
+
+        The order the publishers come in follows the memory, so a test that
+        reads it has to say which machine it is standing on. A build runner
+        with 7 GB in it puts the two Gemma 4 rows last and is right to.
+        """
+        return mock.patch.object(ggml, "total_memory", return_value=64 << 30)
+
+    @staticmethod
     def _offered(box):
         """The model names in the box, headings and duplicates left out."""
         names = []
@@ -1377,12 +1387,13 @@ class LocalModels(DikteTest):
         # reading the rows back the way a finished download does was doubling
         # it in the list every time.
         box = self.window(cfg.Config()).local_whisper
-        box._on_listed([("models", [
-            self._item("ggml-tiny.bin", 77 << 20),
-            self._item("ggml-large-v3-turbo-q5_0.bin", 574 << 20),
-        ], "")], "")
-        before = self._offered(box)
-        box._fill_models_from_current()
+        with self._roomy():
+            box._on_listed([("models", [
+                self._item("ggml-tiny.bin", 77 << 20),
+                self._item("ggml-large-v3-turbo-q5_0.bin", 574 << 20),
+            ], "")], "")
+            before = self._offered(box)
+            box._fill_models_from_current()
         self.assertEqual(self._offered(box), before)
         names = [box.model.itemData(row) for row in range(box.model.count())]
         self.assertEqual(len([n for n in names if n]), len(before) + 1)
@@ -1423,9 +1434,10 @@ class LocalModels(DikteTest):
     def test_only_the_suggested_publishers_are_offered_to_start_with(self):
         # Forty repository ids is not a choice anybody can make.
         box = self.window(cfg.Config()).local_llm
-        box._on_listed([("repos", [ggml.SUGGESTED_LLM[0],
-                                   "ggml-org/something-else-GGUF"], "")], "")
-        self.assertEqual(self._repos(box), list(ggml.SUGGESTED_LLM))
+        with self._roomy():
+            box._on_listed([("repos", [ggml.SUGGESTED_LLM[0],
+                                       "ggml-org/something-else-GGUF"], "")], "")
+            self.assertEqual(self._repos(box), list(ggml.SUGGESTED_LLM))
 
     def test_a_suggestion_missing_from_the_listing_is_still_offered(self):
         # The listing is the forty repositories touched most recently, and a
@@ -1437,10 +1449,11 @@ class LocalModels(DikteTest):
 
     def test_the_switch_brings_the_rest_and_keeps_them_apart(self):
         box = self.window(cfg.Config()).local_llm
-        box._on_listed([("repos", [ggml.SUGGESTED_LLM[0],
-                                   "ggml-org/something-else-GGUF"], "")], "")
-        box.every_repo.setChecked(True)
-        rows = self._repos(box)
+        with self._roomy():
+            box._on_listed([("repos", [ggml.SUGGESTED_LLM[0],
+                                       "ggml-org/something-else-GGUF"], "")], "")
+            box.every_repo.setChecked(True)
+            rows = self._repos(box)
         self.assertEqual(rows[:len(ggml.SUGGESTED_LLM)],
                          list(ggml.SUGGESTED_LLM))
         # A separator rather than a heading: the box is typed into as well as
