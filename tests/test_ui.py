@@ -14,7 +14,7 @@ import unittest
 from typing import ClassVar
 from unittest import mock
 
-from PyQt6.QtCore import QPoint, QPointF, Qt
+from PyQt6.QtCore import QPoint, QPointF, QRect, Qt
 from PyQt6.QtGui import QWheelEvent
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
@@ -263,12 +263,19 @@ class Settings(DikteTest):
         self.assertEqual(label.minimumHeight(), 0)
         # Placed and shown, which is the first width worth measuring against.
         # The room the wrapping needs is claimed then, and it is the lines the
-        # sentence actually takes at this width rather than at the last one.
+        # sentence takes at this width rather than at the last one. Counted
+        # off the font rather than written down here, because how many lines
+        # 400 pixels hold is a different answer on every machine.
         label.resize(400, line)
         label.show()
-        self.assertGreater(label.minimumHeight(), line)
-        self.assertLessEqual(label.minimumHeight(), 4 * line)
-        self.assertLessEqual(label.sizeHint().height(), 4 * line)
+        wrap = Qt.TextFlag.TextWordWrap | Qt.TextFlag.TextWrapAnywhere
+        needed = label.fontMetrics().boundingRect(
+            QRect(0, 0, 400, 0), wrap, label.text()).height()
+        self.assertGreater(needed, line)      # or the sentence never wrapped
+        self.assertEqual(label.minimumHeight(), needed)
+        # And the label's own hints are the wrapping at this width too, not
+        # the hundred lines the eight pixel one asked for.
+        self.assertLessEqual(label.sizeHint().height(), 3 * needed)
 
     def test_saving_without_touching_anything_changes_nothing(self):
         """Every widget has to load what is stored, or Save writes its default
