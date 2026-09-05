@@ -959,6 +959,10 @@ TR = {
     "“Off”.":
         "Temizleme modeli bütün yanıtını düşünmeye harcadı. Düşünme'yi "
         "“Kapalı” yap.",
+    "The cleanup model was cut off before it finished.":
+        "Temizleme modeli bitiremeden kesildi.",
+    "The model was cut off before it finished.":
+        "Model bitiremeden kesildi.",
 
     # --- this pass's new messages ---------------------------------------
     "Audio recorder stopped before receiving sound":
