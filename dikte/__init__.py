@@ -10,4 +10,4 @@ business loading Qt to answer one question.
 # both the .dmg's Info.plist and the AppImage's file name are built from it. A
 # build off master rather than off a tag appends the commit to it, so that a
 # bug report from someone running "latest" names a commit.
-__version__ = "1.1.0"
+__version__ = "1.2.0"
