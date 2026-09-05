@@ -289,6 +289,11 @@ class Dikte:
         self.update_action.triggered.connect(self.open_release_page)
         self.menu.addAction(self.update_action)
 
+        # Named in _refresh_tray, which is where the loaded models are known.
+        self.unload_action = QAction("", self.menu)
+        self.unload_action.triggered.connect(self.unload_models)
+        self.menu.addAction(self.unload_action)
+
         self.settings_action = QAction(t("Settings…"), self.menu)
         self.settings_action.triggered.connect(self.open_settings)
         self.menu.addAction(self.settings_action)
@@ -303,6 +308,10 @@ class Dikte:
         self.menu.addAction(self.quit_action)
 
         self.tray.setContextMenu(self.menu)
+        # A model unloads itself in the background, so what the unload row says
+        # goes stale between state changes. Refreshed as the menu opens, which
+        # is the only moment anybody reads it.
+        self.menu.aboutToShow.connect(self._refresh_tray)
         self.tray.setToolTip(t("Dikte: ready"))
         self.tray.activated.connect(self._tray_clicked)
         self._refresh_update()
@@ -397,6 +406,21 @@ class Dikte:
             t("Stop {name}", name=i18n.name(agent, "accusative"))
         )
         self.ask_cancel_action.setEnabled(self.ask_state == BUSY)
+
+        # A local model holds its memory whether or not anything is using it, so
+        # the menu says which of the two are loaded and offers to give it back.
+        # Hidden on a machine that runs neither: there is nothing to unload and
+        # nothing to report.
+        loaded = [server for server in (ggml.whisper, ggml.llm) if server.running]
+        self.unload_action.setVisible(
+            self.conf["transcribe_provider"] == "local" or self.conf.uses_local_llm()
+        )
+        self.unload_action.setText(
+            t("Unload the models") if len(loaded) > 1
+            else t("Unload the model") if loaded
+            else t("No model loaded")
+        )
+        self.unload_action.setEnabled(bool(loaded))
 
         # The agent speaks through the icon only when dictation has nothing to
         # say, since dictation is the one being waited on in front of a screen.
@@ -1208,6 +1232,18 @@ class Dikte:
         release = self.update_release
         QDesktopServices.openUrl(
             QUrl(release.url if release is not None else update.RELEASES_PAGE))
+
+    def unload_models(self):
+        """Give the memory back now rather than when the idle window closes."""
+        held = [server for server in (ggml.whisper, ggml.llm)
+                if not server.unload()]
+        self._refresh_tray()
+        if held:
+            self.tray.showMessage(
+                "Dikte",
+                t("A model is loading or answering right now. Try again in a "
+                  "moment."),
+                QSystemTrayIcon.MessageIcon.Information, 5000)
 
     # ---- settings ---------------------------------------------------------
 

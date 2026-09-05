@@ -26,6 +26,7 @@ interface already knows how to show.
 
 import atexit
 import collections
+import contextlib
 import ctypes
 import ctypes.util
 import hashlib
@@ -68,6 +69,10 @@ STARTUP_TIMEOUT = 180.0
 # to load takes longer than this to be read in first. The line between "worth
 # another port" and "would fail the same way again" is drawn on time.
 EARLY_EXIT_WINDOW = 5.0
+# How often the watcher looks at a model it has been asked to unload when idle.
+# Short next to any window worth setting, so the memory goes back within seconds
+# of the window closing rather than a minute after it.
+IDLE_CHECK_SECONDS = 5.0
 DOWNLOAD_CHUNK = 1 << 20
 
 # `health` is the path that answers only once the model is in memory. whisper
@@ -1116,6 +1121,15 @@ class Server:
         # The pid this instance last wrote to its pid file, so _forget never
         # removes a file some other Dikte wrote after us.
         self._pid = 0
+        # The idle unload. `_idle` is the window in seconds, zero meaning the
+        # model stays loaded until something else stops it; `_used` is when the
+        # address was last handed out or a request last finished; `_busy` counts
+        # the requests still in flight. The count is there because a file being
+        # transcribed is one address lookup and then minutes of work, which to a
+        # clock started at the lookup looks exactly like a model nobody wants.
+        self._idle = 0.0
+        self._used = 0.0
+        self._busy = 0
 
     # ---- settings --------------------------------------------------------
 
@@ -1132,6 +1146,23 @@ class Server:
     def settings(self):
         with self._lock:
             return dict(self._settings)
+
+    def set_idle(self, seconds):
+        """How long a loaded model may sit unused before the memory goes back.
+
+        Deliberately not one of the settings above: those describe the server
+        that is running, and changing one has to restart it. This describes how
+        long to keep it, which the server it is applied to never needs to know.
+        Zero keeps the model until something else stops it.
+        """
+        with self._lock:
+            self._idle = max(0.0, float(seconds))
+
+    @property
+    def idle(self):
+        """The window `set_idle` was last given, in seconds."""
+        with self._lock:
+            return self._idle
 
     def _settings_key(self):
         """What a running server would have to be restarted for."""
@@ -1172,13 +1203,83 @@ class Server:
             proc, port, log = self._launch(settings)
             with self._lock:
                 self._proc, self._port, self._log, self._key = proc, port, log, key
+                # Only the clock. The count is not this launch's to reset: a
+                # caller that took a hold and then asked for the address, which
+                # is what the local cleanup does, would have it wiped here and
+                # spend the whole request unprotected.
+                self._used = time.monotonic()
+            threading.Thread(target=self._watch, args=(proc,), daemon=True).start()
             return self.base_url()
 
     def _current_url(self):
+        """The address of a server running the current settings, or "".
+
+        Asking counts as using it. Everything that asks is about to send a
+        request, and the idle watcher reads the same clock, so the stamp has to
+        be set here rather than where the answer comes back.
+        """
         with self._lock:
             up = self._proc is not None and self._proc.poll() is None
-            return (f"http://{HOST}:{self._port}/v1"
-                    if up and self._key == self._settings_key() else "")
+            if not (up and self._key == self._settings_key()):
+                return ""
+            self._used = time.monotonic()
+            return f"http://{HOST}:{self._port}/v1"
+
+    @contextlib.contextmanager
+    def busy(self):
+        """Hold the model for the length of one request.
+
+        A dictation is over a second after the address was handed out, but a
+        file is minutes of it, and an hour of meeting is longer still. Without
+        the count the watcher would unload the model out from under the request
+        that started it.
+        """
+        with self._lock:
+            self._busy += 1
+        try:
+            yield
+        finally:
+            with self._lock:
+                # Nothing else moves the count, so every hold that was taken is
+                # given back here and it stays balanced across a restart. A hold
+                # outliving the server it was taken against only keeps the next
+                # one loaded a moment longer, which is the safe way round.
+                self._busy -= 1
+                self._used = time.monotonic()
+
+    def _idle_now(self, proc):
+        """Whether `proc` is still ours and has been sitting unused long enough."""
+        with self._lock:
+            if self._proc is not proc or not self._idle or self._busy:
+                return False
+            return time.monotonic() - self._used >= self._idle
+
+    def _watch(self, proc):
+        """Give the memory back when nothing has asked anything for a while.
+
+        One thread per launch, holding the process it was started for, so that a
+        server stopped and started again is watched by the new thread alone and
+        this one leaves on the first pass that finds its own process gone.
+
+        Started whatever the window is, zero included: turning the unload on in
+        Settings has to reach a model that is already loaded, and a thread that
+        wakes every few seconds to read one number is cheaper than the machinery
+        for starting one later.
+        """
+        while True:
+            time.sleep(IDLE_CHECK_SECONDS)
+            with self._lock:
+                if self._proc is not proc:
+                    return           # stopped, or replaced by a later launch
+            if not self._idle_now(proc):
+                continue
+            with self._starting:
+                # Asked once more under the lock a start has to take. An address
+                # handed out while this thread waited its turn stamps _used, and
+                # the request behind it must not arrive at a server killed here.
+                if self._idle_now(proc):
+                    self._stop_now()
+                    return
 
     def _launch(self, settings):
         args = self._build(settings)        # raises LocalError when unusable
@@ -1284,6 +1385,31 @@ class Server:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             pass
+
+    def unload(self):
+        """Stop the server unless it is in the middle of something.
+
+        The same rule the idle watcher goes by, taken by hand from the menu, and
+        it says no for the same reason: the memory is worth having back, but not
+        at the price of the dictation waiting on it. A model still being read in
+        counts as in the middle of something too, and that is why the lock is
+        asked for rather than waited on: this runs on the interface's own
+        thread, and a start holds _starting for as long as the load takes, which
+        for a large model on a cold cache is most of a minute. True when nothing
+        is loaded any more, either way.
+        """
+        if not self._starting.acquire(blocking=False):
+            return False
+        try:
+            with self._lock:
+                if self._proc is None:
+                    return True
+                if self._busy:
+                    return False
+            self._stop_now()
+            return True
+        finally:
+            self._starting.release()
 
     def stop(self):
         # Taking _starting means a stop cannot slide past a launch in flight:

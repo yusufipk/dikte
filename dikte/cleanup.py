@@ -115,13 +115,16 @@ def _local(text, conf, system_prompt, timeout, aborter=None):
     """
     service = t("Local model")
     try:
-        return api.cleanup(
-            text, "", conf["local_llm_model"], system_prompt,
-            reasoning=conf["local_llm_reasoning"],
-            base_url=api.serving(ggml.llm),
-            timeout=max(timeout, api.LOCAL_TIMEOUT),
-            provider="local-llm", service=service, aborter=aborter,
-        )
+        # Held for the length of the request so that the idle unload does not
+        # take the model away from a block still being cleaned up.
+        with ggml.llm.busy():
+            return api.cleanup(
+                text, "", conf["local_llm_model"], system_prompt,
+                reasoning=conf["local_llm_reasoning"],
+                base_url=api.serving(ggml.llm),
+                timeout=max(timeout, api.LOCAL_TIMEOUT),
+                provider="local-llm", service=service, aborter=aborter,
+            )
     except api.ApiError as exc:
         # A server that died mid-request would otherwise report only that the
         # connection dropped, when the reason is in its own output.

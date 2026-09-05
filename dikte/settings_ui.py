@@ -1309,8 +1309,46 @@ class SettingsWindow(QDialog):
         orr_form.addRow(self.local_llm_options)
 
         outer.addWidget(orr)
+
+        # One box for both servers rather than a row inside each: what is being
+        # decided is whether this machine keeps gigabytes tied up between
+        # dictations, and that is not a question anybody wants to answer once
+        # per model.
+        self.local_box = QGroupBox(t("Models on this machine"))
+        local_form = QFormLayout(self.local_box)
+        self.local_idle_unload = QCheckBox(t("Unload a model that is sitting unused"))
+        self.local_idle_unload.setToolTip(
+            t("A loaded model holds its memory whether anything is using it or "
+              "not: over a gigabyte for whisper, several for an LLM. Unloading "
+              "gives that back to the rest of the desktop, and the next "
+              "dictation loads it again at the cost of the seconds that takes."))
+        self.local_idle_minutes = QSpinBox()
+        self.local_idle_minutes.setRange(1, 720)
+        self.local_idle_minutes.valueChanged.connect(self._idle_suffix)
+        self._idle_suffix(self.local_idle_minutes.value())
+        self.local_idle_unload.toggled.connect(self.local_idle_minutes.setEnabled)
+        local_form.addRow("", self.local_idle_unload)
+        local_form.addRow(t("After"), self.local_idle_minutes)
+        outer.addWidget(self.local_box)
+
         outer.addStretch(1)
         return page
+
+    def _idle_suffix(self, minutes):
+        """The spin box's own noun, since its lowest value is one of them.
+
+        Turkish is handed both and translates them the same: a number there is
+        followed by the singular however many it counts.
+        """
+        self.local_idle_minutes.setSuffix(
+            t(" minute") if minutes == 1 else t(" minutes"))
+
+    def _refresh_local_box(self):
+        """The idle unload is only on screen when something here runs locally."""
+        self.local_box.setVisible(
+            (self.transcribe_provider.currentData() or "local") == "local"
+            or (self.cleanup_provider.currentData() or "openrouter") == "local"
+        )
 
     def _prompt_tab(self):
         page = QWidget()
@@ -2078,6 +2116,9 @@ class SettingsWindow(QDialog):
         self.local_llm_preload.setChecked(conf["local_llm_preload"])
         self._select_data(self.local_llm_reasoning, conf["local_llm_reasoning"])
         self.local_llm.load(conf["local_llm_model"], conf["local_llm_repo"])
+        self.local_idle_unload.setChecked(conf["local_idle_unload"])
+        self.local_idle_minutes.setValue(int(conf["local_idle_minutes"]))
+        self.local_idle_minutes.setEnabled(conf["local_idle_unload"])
         # The defaults as they read NOW, kept for the save comparison: after a
         # language switch the boxes still hold the old language's default, and
         # comparing against the new one would store that text as a custom
@@ -2209,6 +2250,8 @@ class SettingsWindow(QDialog):
         conf["local_llm_gpu"] = self.local_llm_gpu.isChecked()
         conf["local_llm_preload"] = self.local_llm_preload.isChecked()
         conf["local_llm_reasoning"] = self.local_llm_reasoning.currentData() or ""
+        conf["local_idle_unload"] = self.local_idle_unload.isChecked()
+        conf["local_idle_minutes"] = self.local_idle_minutes.value()
 
         # Store an empty prompt when it matches a default: the one it was
         # loaded with, or today's (a Reset click in a session that switched
@@ -2351,6 +2394,7 @@ class SettingsWindow(QDialog):
         self.stt_form.setRowVisible(self.transcribe_status, not local)
         self.stt_form.setRowVisible(self.local_whisper, local)
         self.stt_form.setRowVisible(self.local_options, local)
+        self._refresh_local_box()
         if local:
             return
         self.transcribe_model.clear()
@@ -2859,6 +2903,7 @@ class SettingsWindow(QDialog):
                                         provider != "local")
         self.cleanup_form.setRowVisible(self.local_llm, provider == "local")
         self.cleanup_form.setRowVisible(self.local_llm_options, provider == "local")
+        self._refresh_local_box()
         binary = cleanup.executable(provider)
         found = shutil.which(binary) if binary else ""
         if provider == "local":

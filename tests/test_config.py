@@ -689,3 +689,24 @@ class ReadyToRun(DikteTest):
         self.assertEqual(ggml.whisper.settings()["threads"], 4)
         self.assertFalse(ggml.whisper.settings()["gpu"])
         self.assertEqual(ggml.llm.settings()["context"], 4096)
+
+    def test_the_idle_window_is_in_seconds(self):
+        conf = self.config(local_idle_unload=True, local_idle_minutes=15)
+        self.assertEqual(conf.idle_seconds(), 900)
+
+    def test_an_unchecked_box_keeps_the_model(self):
+        conf = self.config(local_idle_unload=False, local_idle_minutes=15)
+        self.assertEqual(conf.idle_seconds(), 0)
+
+    def test_a_window_of_no_minutes_is_still_a_window(self):
+        """The spin box will not go below one; a config edited by hand can."""
+        conf = self.config(local_idle_unload=True, local_idle_minutes=0)
+        self.assertEqual(conf.idle_seconds(), 60)
+
+    def test_both_servers_are_told_the_window(self):
+        conf = self.config(local_idle_unload=True, local_idle_minutes=3)
+        self.addCleanup(ggml.llm.set_idle, 0)
+        self.addCleanup(ggml.whisper.set_idle, 0)
+        conf.apply_local()
+        self.assertEqual(ggml.whisper.idle, 180)
+        self.assertEqual(ggml.llm.idle, 180)

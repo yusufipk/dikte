@@ -9,6 +9,7 @@ is blocked on, and a faked urlopen has no socket to cut, so those tests talk to
 a server of their own on the loopback interface.
 """
 
+import contextlib
 import http.server
 import json
 import os
@@ -621,12 +622,21 @@ class FakeServer:
         self.fails = fails
         self.log = log
         self.starts = 0
+        self.held = 0
 
     def serve(self):
         self.starts += 1
         if self.fails:
             raise ggml.LocalError(self.fails)
         return self.url
+
+    @contextlib.contextmanager
+    def busy(self):
+        self.held += 1
+        try:
+            yield
+        finally:
+            self.held -= 1
 
     def error(self):
         return self.log

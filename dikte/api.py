@@ -387,12 +387,17 @@ def _transcribe_request(target, audio_path, language, prompt, response_format,
     if granularity:
         fields.append(("timestamp_granularities[]", granularity))
     body, ctype = _multipart(fields, "file", audio_path)
+    # An hour of meeting takes the local server a while, and the idle unload has
+    # to count that as the model being used rather than as nobody wanting it.
+    held = (ggml.whisper.busy() if target.provider == "local"
+            else contextlib.nullcontext())
     try:
-        return _request(
-            f"{target.base_url.rstrip('/')}/audio/transcriptions", body,
-            _headers(target.provider, target.api_key, ctype), timeout=timeout,
-            aborter=aborter,
-        )
+        with held:
+            return _request(
+                f"{target.base_url.rstrip('/')}/audio/transcriptions", body,
+                _headers(target.provider, target.api_key, ctype), timeout=timeout,
+                aborter=aborter,
+            )
     except ApiError as exc:
         if target.provider == "local":
             raise local_failure(target.service, ggml.whisper, exc) from None
