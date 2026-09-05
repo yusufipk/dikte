@@ -181,18 +181,34 @@ class WrappedLabel(QLabel):
         super().setText(text)
         self._fit()
 
+    def showEvent(self, event):
+        # Text set while the window was still being built was measured against
+        # nothing; this is the first moment the width means anything.
+        super().showEvent(event)
+        self._fit()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         self._fit()
 
     def _fit(self):
+        # A label the layout has not placed yet is a handful of pixels wide,
+        # and wrapping a sentence against that width invents a hundred lines.
+        # The minimum set from it does not stay a minimum either: QLabel folds
+        # it into its own cached size hints and clears that cache only when the
+        # text changes, so the row stands thousands of pixels tall and carries
+        # the model box and everything under it off the bottom of the window
+        # until another publisher is picked. Nothing to measure against yet
+        # means nothing to claim yet, and the show and resize above come back
+        # for it.
+        if not self.isVisible() or self.width() <= 0:
+            return
         # Measured off the font rather than asked of the label, whose own answer
         # is floored by the minimum set here a moment ago and so only ever grows.
-        if self.width() > 0:
-            wrap = Qt.TextFlag.TextWordWrap | Qt.TextFlag.TextWrapAnywhere
-            box = QRect(0, 0, self.width(), 0)
-            self.setMinimumHeight(
-                self.fontMetrics().boundingRect(box, wrap, self.text()).height())
+        wrap = Qt.TextFlag.TextWordWrap | Qt.TextFlag.TextWrapAnywhere
+        box = QRect(0, 0, self.width(), 0)
+        self.setMinimumHeight(
+            self.fontMetrics().boundingRect(box, wrap, self.text()).height())
 
 
 class WheelGuard(QObject):

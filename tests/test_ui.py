@@ -244,6 +244,32 @@ class Settings(DikteTest):
         label.resize(2000, line)
         self.assertLessEqual(label.minimumHeight(), line)
 
+    def test_a_label_written_before_the_layout_places_it_claims_nothing(self):
+        # The publisher note is written while the settings window is still
+        # being built, when the label is a handful of pixels wide. Wrapped
+        # against that width the sentence became a hundred lines, and the
+        # minimum taken from it did not stay a minimum: QLabel folds it into
+        # its own cached size hints and clears that cache only when the text
+        # changes. The group box stood thousands of pixels tall, with the
+        # model box and everything under it off the bottom of the window,
+        # until another publisher was picked.
+        label = settings_ui.WrappedLabel()
+        self.addCleanup(label.deleteLater)
+        line = label.fontMetrics().height()
+        label.resize(8, line)
+        label.setText("Google Gemma 4, the small one. The default: nothing "
+                      "else this size follows an instruction as closely, and "
+                      "cleanup is all instruction.")
+        self.assertEqual(label.minimumHeight(), 0)
+        # Placed and shown, which is the first width worth measuring against.
+        # The room the wrapping needs is claimed then, and it is the lines the
+        # sentence actually takes at this width rather than at the last one.
+        label.resize(400, line)
+        label.show()
+        self.assertGreater(label.minimumHeight(), line)
+        self.assertLessEqual(label.minimumHeight(), 4 * line)
+        self.assertLessEqual(label.sizeHint().height(), 4 * line)
+
     def test_saving_without_touching_anything_changes_nothing(self):
         """Every widget has to load what is stored, or Save writes its default
         over it. This says so for the whole table at once."""
