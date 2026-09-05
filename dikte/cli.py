@@ -137,8 +137,8 @@ def _ask_instance(opts, cmd, wait=False, **args):
 def launch_gui(verb=""):
     """No instance running, so become the application itself."""
     ipc.respawn(([verb] if verb else []) + ["--gui"])
-    # respawn only returns on Windows, where the application was started
-    # detached and this console process's job is over.
+    # respawn only returns where the replacement starts separately; this
+    # console process's job is then over.
     sys.exit(0)
 
 

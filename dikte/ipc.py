@@ -10,6 +10,7 @@ shortcut may still send.
 
 import json
 import os
+import pathlib
 import shlex
 import subprocess
 import sys
@@ -38,6 +39,22 @@ def script_path():
     return os.path.realpath(
         os.path.join(os.path.dirname(os.path.abspath(__file__)), "__main__.py")
     )
+
+
+def macos_bundle():
+    """The .app containing this process, or None for a plain interpreter."""
+    if sys.platform != "darwin":
+        return None
+    # This branch is macOS-only even when a cross-platform test simulates it;
+    # parse it with macOS's POSIX path rules rather than the test host's rules.
+    executable = pathlib.PurePosixPath(sys.executable)
+    macos = executable.parent
+    contents = macos.parent
+    bundle = contents.parent
+    if (macos.name == "MacOS" and contents.name == "Contents"
+            and bundle.suffix == ".app"):
+        return str(bundle)
+    return None
 
 
 def launcher():
@@ -115,8 +132,18 @@ def respawn(arguments):
     execv everywhere it works the way it says: the new process takes this
     pid and nothing is left behind. On Windows execv mangles arguments with
     spaces and leaves the two processes sharing a console, so the replacement
-    is started detached instead and the caller exits on its own.
+    is started detached instead. Re-execing a UIElement process on macOS 26
+    loses its status item, so an application bundle is restarted through
+    LaunchServices. In both cases the caller exits on its own.
     """
+    bundle = macos_bundle()
+    if bundle is not None:
+        subprocess.Popen(
+            ["/usr/bin/open", "-n", "-a", bundle,
+             "--args", *arguments],
+            close_fds=True,
+        )
+        return
     args = launcher() + list(arguments)
     if sys.platform == "win32":
         # By value where the names are missing, so the Windows half of this is

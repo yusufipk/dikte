@@ -1339,8 +1339,8 @@ class Dikte:
         if self.instance_lock is not None:
             self.instance_lock.unlock()
         ipc.respawn(["--gui"])
-        # respawn only returns on Windows, where the replacement was started
-        # detached and this process still has to leave on its own.
+        # respawn returns where the replacement starts separately: detached on
+        # Windows, or through LaunchServices for a macOS application bundle.
         QApplication.instance().quit()
 
     def shutdown(self):
