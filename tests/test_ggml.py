@@ -696,6 +696,12 @@ class Catalogue(Local):
         self.assertNotIn("ggml-org/parakeet-GGUF", found)
         self.assertNotIn("ggml-org/Qwen3-8B-Base-GGUF", found)
 
+    def test_a_publisher_is_not_dropped_for_a_word_it_happens_to_contain(self):
+        # The skip marks are matched as plain substrings, and an unanchored
+        # "test-" is also inside "Latest-".
+        self.assertTrue(ggml.can_clean("ggml-org/Qwen3-Latest-GGUF"))
+        self.assertFalse(ggml.can_clean("ggml-org/test-model-router-download"))
+
     def test_a_base_model_beside_its_tuned_twin_is_dropped(self):
         # Gemma names the base model after the tuned one with the `-it` taken
         # out, so the two sit next to each other and the wrong one answers a
@@ -1251,6 +1257,26 @@ class Machine(Local):
                 mock.patch.object(sys, "platform", "darwin"), \
                 mock.patch.object(ggml.subprocess, "run", answer):
             self.assertEqual(ggml.total_memory(), 32 * ggml.GB)
+
+    def test_a_sysconf_that_shrugs_is_an_unknown_machine_and_not_a_tiny_one(self):
+        # sysconf answers -1 for a limit it holds to be indeterminate and
+        # CPython hands that back rather than raising, so the product came out
+        # negative: a 64 GB workstation was told every model past 512 MB was
+        # too big for it, and the machine line read "Memory: -4096 B".
+        with mock.patch.object(ggml.os, "sysconf", lambda name:
+                               4096 if name == "SC_PAGE_SIZE" else -1):
+            self.assertEqual(ggml.total_memory(), 0)
+        self.assertTrue(ggml.fits(574 << 20, memory=0))
+
+    def test_the_memory_is_read_once_and_kept(self):
+        # A list of thirty rows asks seventy times, and on the Mac path the
+        # answer comes from a program rather than a library call.
+        calls = []
+        with mock.patch.object(ggml, "_read_memory",
+                               lambda: calls.append(1) or 16 * ggml.GB):
+            self.assertEqual(ggml.total_memory(), 16 * ggml.GB)
+            self.assertEqual(ggml.total_memory(), 16 * ggml.GB)
+        self.assertEqual(len(calls), 1)
 
     def test_a_system_that_answers_nothing_is_an_unknown_machine(self):
         with mock.patch.object(ggml.os, "sysconf", side_effect=ValueError), \

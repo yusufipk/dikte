@@ -130,8 +130,11 @@ GGUF_MAX_BYTES = 16 << 30
 # on: a vision or audio tower with no text half worth running, a speech model,
 # and the base models, which continue text rather than following an instruction
 # and answer a cleanup prompt by carrying on writing the transcript.
+# Matched as plain substrings, so every one of these carries its own
+# delimiters: an unanchored "test-" is also inside "Latest-" and would drop a
+# publisher that is perfectly usable.
 LLM_REPO_SKIP = ("-Base-GGUF", "-VL-", "-Vision-", "-Omni-", "-Video-",
-                 "-TTS-", "parakeet", "test-")
+                 "-TTS-", "parakeet", "/test-")
 
 GB = 1 << 30
 
@@ -219,6 +222,8 @@ MEMORY_OVERHEAD = GB
 # anything. Enough for the smallest whisper models and for a sub-billion
 # cleanup model, which is what such a machine can run.
 MEMORY_FLOOR = GB // 2
+# What total_memory() read the one time it asked. None until it has.
+_MEMORY = None
 
 
 class LocalError(Exception):
@@ -713,6 +718,28 @@ def total_memory():
     Zero is a real answer and not a failure: every caller treats an unknown
     machine as one big enough for whatever it is looking at, because a wrong
     "too big" is worse advice than none.
+
+    Read once and kept. The memory in a machine does not change while Dikte
+    runs, and a list of thirty rows asks this question seventy times: on the
+    Mac path below, where the answer comes from a program rather than a
+    library call, that was seventy processes started on the interface thread
+    every time a list was drawn.
+    """
+    global _MEMORY
+    if _MEMORY is None:
+        _MEMORY = max(_read_memory(), 0)
+    return _MEMORY
+
+
+def _read_memory():
+    """What the system says, which on a bad day is a negative number.
+
+    sysconf answers -1 for a limit it holds to be indeterminate, and CPython
+    hands that straight back rather than raising, so the product below can
+    come out negative. The caller floors it at zero, which is the answer for
+    a machine nothing could be read from: a 64 GB workstation whose sysconf
+    shrugged was otherwise being told every model past 512 MB was too big
+    for it.
     """
     try:
         return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES")
