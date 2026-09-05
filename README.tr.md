@@ -158,7 +158,9 @@ olmasını ister.
   whisper.cpp, temizleme llama.cpp üzerinde; ikisini de önceden kurman gerekmez:
   ayarlar penceresi programı ve modeli indirir, sha256'sını doğrular,
   checksum'suz yayınlanmış bir indirmeyi reddeder, sen dikte ettikçe sunucuyu
-  ayakta tutar. Derleme destekliyorsa ekran kartına CUDA, ROCm ya da Vulkan
+  ayakta tutar. Model listesi dosya boyutuna değil modele göre gruplanır ve bu
+  makinenin belleğine ve ekran kartına uyan satır işaretlenir. Derleme
+  destekliyorsa ekran kartına CUDA, ROCm ya da Vulkan
   üzerinden ulaşılır. Anahtar yok, hesap yok, makineden çıkan bir şey yok.
   x86_64 Linux'ta aynı düğme, whisper-server'ın Dikte'nin kendi yayınladığı
   Vulkan derlemesini indirir; upstream'in Linux arşivi yalnızca işlemci için.

@@ -161,7 +161,9 @@ running.
 - **It all runs on this machine by default.** Speech to text on whisper.cpp and
   cleanup on llama.cpp, neither installed beforehand: the settings window fetches
   the program and the model, verifies the sha256 and refuses a download published
-  without one, then keeps a server alive while you dictate. The graphics card is
+  without one, then keeps a server alive while you dictate. The model list is
+  grouped by model rather than by file size, and the row this machine's memory
+  and graphics can take is marked. The graphics card is
   reached through CUDA, ROCm or Vulkan where the build allows. No key, no
   account, nothing leaving the machine. On x86_64 Linux the same button fetches
   a Vulkan build of whisper-server that Dikte publishes itself, because
