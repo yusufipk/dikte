@@ -1236,6 +1236,25 @@ class LocalModels(DikteTest):
     def _item(name, size=1 << 20):
         return hub.Item(name, f"https://example.invalid/{name}", size, "")
 
+    @staticmethod
+    def _rows(box):
+        """Every row's text, headings included."""
+        return [box.model.itemText(row) for row in range(box.model.count())]
+
+    @staticmethod
+    def _repos(box):
+        return [box.repo.itemText(row) for row in range(box.repo.count())]
+
+    @staticmethod
+    def _offered(box):
+        """The model names in the box, headings and duplicates left out."""
+        names = []
+        for row in range(box.model.count()):
+            name = box.model.itemData(row)
+            if name and name not in names:
+                names.append(name)
+        return names
+
     def test_a_row_with_nothing_to_fetch_does_not_offer_a_download(self):
         # The model the settings name is not in the list any more, so its row
         # was rebuilt from the name alone and carries no file to fetch. The
@@ -1272,7 +1291,7 @@ class LocalModels(DikteTest):
         box._on_listed([("models", [self._item("SmolLM3-Q4_K_M.gguf")],
                          "ggml-org/SmolLM3-3B-GGUF")], "")
         self.assertEqual(box.selected(), "SmolLM3-Q4_K_M.gguf")
-        self.assertEqual(box.model.count(), 1)
+        self.assertEqual(self._offered(box), ["SmolLM3-Q4_K_M.gguf"])
 
     def test_a_list_for_a_publisher_that_is_no_longer_chosen_is_dropped(self):
         # Every change starts its own request, and they do not come back in the
@@ -1300,6 +1319,170 @@ class LocalModels(DikteTest):
             time.sleep(0.05)
             _app.processEvents()
         self.assertEqual(fetch.call_count, 1)
+    def test_the_models_are_grouped_by_the_model_rather_than_by_size(self):
+        # Sorted by size alone, the turbo files land between the two medium
+        # ones, half a screen from the model they are a copy of.
+        box = self.window(cfg.Config()).local_whisper
+        with mock.patch.object(ggml, "total_memory", return_value=8 << 30), \
+                mock.patch.object(ggml, "accelerator", return_value=""):
+            box._on_listed([("models", [
+                self._item("ggml-medium-q5_0.bin", 539 << 20),
+                self._item("ggml-large-v3-turbo-q5_0.bin", 574 << 20),
+                self._item("ggml-medium-q8_0.bin", 823 << 20),
+                self._item("ggml-large-v3-turbo.bin", 1624 << 20),
+            ], "")], "")
+        rows = self._rows(box)
+        # The two medium files under one heading, the two turbo ones under
+        # theirs, and the model rather than the file deciding the order.
+        self.assertEqual(rows[rows.index("medium"):],
+                         ["medium",
+                          "ggml-medium-q5_0.bin  (539.0 MB, 5-bit)",
+                          "ggml-medium-q8_0.bin  (823.0 MB, 8-bit)",
+                          "large-v3-turbo",
+                          "ggml-large-v3-turbo-q5_0.bin  "
+                          "(574.0 MB, 5-bit, recommended)",
+                          "ggml-large-v3-turbo.bin  (1.6 GB, 16-bit)"])
+        # A heading is not a model, and nothing can be saved from one.
+        self.assertIsNone(box.model.itemData(rows.index("medium")))
+
+    def test_the_row_for_this_machine_is_on_top_and_says_so(self):
+        box = self.window(cfg.Config()).local_whisper
+        with mock.patch.object(ggml, "total_memory", return_value=8 << 30), \
+                mock.patch.object(ggml, "accelerator", return_value=""):
+            box._on_listed([("models", [
+                self._item("ggml-tiny.bin", 77 << 20),
+                self._item("ggml-large-v3-turbo-q5_0.bin", 574 << 20),
+            ], "")], "")
+        self.assertEqual(box.selected(), "ggml-large-v3-turbo-q5_0.bin")
+        self.assertEqual(box.model.itemData(1), "ggml-large-v3-turbo-q5_0.bin")
+        self.assertIn(t("recommended"), box.model.itemText(1))
+
+    def test_a_model_the_memory_cannot_hold_says_so_on_its_row(self):
+        box = self.window(cfg.Config()).local_llm
+        box.repo.blockSignals(True)
+        box.repo.setCurrentText("ggml-org/x-GGUF")
+        box.repo.blockSignals(False)
+        with mock.patch.object(ggml, "total_memory", return_value=8 << 30):
+            box._on_listed([("models", [
+                self._item("small-Q4_0.gguf", 1 << 30),
+                self._item("huge-Q8_0.gguf", 12 << 30),
+            ], "ggml-org/x-GGUF")], "")
+        rows = {box.model.itemData(row): box.model.itemText(row)
+                for row in range(box.model.count())}
+        self.assertNotIn(t("too big for this machine"), rows["small-Q4_0.gguf"])
+        self.assertIn(t("too big for this machine"), rows["huge-Q8_0.gguf"])
+
+    def test_a_recommended_row_is_not_listed_twice_after_a_download(self):
+        # It has a row of its own on top as well as one in its group, and
+        # reading the rows back the way a finished download does was doubling
+        # it in the list every time.
+        box = self.window(cfg.Config()).local_whisper
+        box._on_listed([("models", [
+            self._item("ggml-tiny.bin", 77 << 20),
+            self._item("ggml-large-v3-turbo-q5_0.bin", 574 << 20),
+        ], "")], "")
+        before = self._offered(box)
+        box._fill_models_from_current()
+        self.assertEqual(self._offered(box), before)
+        names = [box.model.itemData(row) for row in range(box.model.count())]
+        self.assertEqual(len([n for n in names if n]), len(before) + 1)
+
+    def test_a_processor_build_is_not_recommended_the_accurate_model(self):
+        # The Vulkan loader is on the machine but what was installed is the
+        # processor build, so there is no card in play whatever the loader
+        # says, and a 1 GB model on a processor is a wait somebody is sitting
+        # through with a sentence half typed.
+        binary = self.path("bin/whisper/v1.9.3/whisper-server")
+        binary.parent.mkdir(parents=True)
+        binary.write_text("")
+        binary.chmod(0o755)
+        self.path("bin/whisper/installed.json").write_text(json.dumps(
+            {"tag": "v1.9.3", "binary": str(binary), "backend": "processor"}))
+        self.patch_attr(ggml.shutil, "which", lambda name: None)
+        box = self.window(cfg.Config()).local_whisper
+        with mock.patch.object(ggml, "total_memory", return_value=32 << 30), \
+                mock.patch.object(ggml, "accelerator", return_value="Vulkan"):
+            self.assertEqual(box._suggested(), ggml.SUGGESTED_WHISPER)
+
+    def test_a_publisher_with_nothing_to_offer_says_why(self):
+        # Half of what ggml-org publishes is split across files or past the
+        # size cap, and an empty box read as though the click had not landed.
+        box = self.window(cfg.Config()).local_llm
+        box.repo.blockSignals(True)
+        box.repo.setCurrentText("ggml-org/gpt-oss-120b-GGUF")
+        box.repo.blockSignals(False)
+        box._on_listed([("models", [], "ggml-org/gpt-oss-120b-GGUF")], "")
+        self.assertIn("ggml-org/gpt-oss-120b-GGUF", box.status.text())
+        self.assertIn("publisher", box.status.text())
+
+    def test_an_empty_box_nobody_has_asked_yet_is_not_a_publisher_fault(self):
+        box = self.window(cfg.Config()).local_llm
+        box.load("", "ggml-org/SmolLM3-3B-GGUF")
+        self.assertNotIn("publisher", box.status.text())
+
+    def test_only_the_suggested_publishers_are_offered_to_start_with(self):
+        # Forty repository ids is not a choice anybody can make.
+        box = self.window(cfg.Config()).local_llm
+        box._on_listed([("repos", [ggml.SUGGESTED_LLM[0],
+                                   "ggml-org/something-else-GGUF"], "")], "")
+        self.assertEqual(self._repos(box), list(ggml.SUGGESTED_LLM))
+
+    def test_a_suggestion_missing_from_the_listing_is_still_offered(self):
+        # The listing is the forty repositories touched most recently, and a
+        # publisher that has not been updated in a season falls off it while
+        # still being the one to point at.
+        box = self.window(cfg.Config()).local_llm
+        box._on_listed([("repos", ["ggml-org/something-else-GGUF"], "")], "")
+        self.assertIn(ggml.SUGGESTED_LLM[0], self._repos(box))
+
+    def test_the_switch_brings_the_rest_and_keeps_them_apart(self):
+        box = self.window(cfg.Config()).local_llm
+        box._on_listed([("repos", [ggml.SUGGESTED_LLM[0],
+                                   "ggml-org/something-else-GGUF"], "")], "")
+        box.every_repo.setChecked(True)
+        rows = self._repos(box)
+        self.assertEqual(rows[:len(ggml.SUGGESTED_LLM)],
+                         list(ggml.SUGGESTED_LLM))
+        # A separator rather than a heading: the box is typed into as well as
+        # chosen from, and a heading would land in the field as a repository.
+        self.assertEqual(rows[len(ggml.SUGGESTED_LLM)], "")
+        self.assertEqual(rows[-1], "ggml-org/something-else-GGUF")
+
+    def test_a_publisher_typed_in_is_not_dropped_by_the_next_fetch(self):
+        box = self.window(cfg.Config()).local_llm
+        box.repo.blockSignals(True)
+        box.repo.setCurrentText("ggml-org/something-else-GGUF")
+        box.repo.blockSignals(False)
+        box._on_listed([("repos", [ggml.SUGGESTED_LLM[0],
+                                   "ggml-org/something-else-GGUF"], "")], "")
+        self.assertFalse(box.every_repo.isChecked())
+        self.assertIn("ggml-org/something-else-GGUF", self._repos(box))
+        self.assertEqual(box.repository(), "ggml-org/something-else-GGUF")
+
+    def test_the_chosen_publisher_is_said_in_words(self):
+        # A repository id names the publisher, the parameter count and the
+        # shape of the weights, and none of that says whether to click it.
+        box = self.window(cfg.Config()).local_llm
+        box.repo.setCurrentText(ggml.SUGGESTED_LLM[0])
+        self.assertTrue(box.repo_note.text())
+        box.repo.setCurrentText("ggml-org/nobody-wrote-a-note-GGUF")
+        self.assertEqual(box.repo_note.text(), "")
+
+    def test_the_box_says_what_this_machine_will_run_on(self):
+        box = self.window(cfg.Config()).local_whisper
+        with mock.patch.object(ggml, "accelerator", return_value="Vulkan"), \
+                mock.patch.object(ggml, "total_memory", return_value=32 << 30):
+            box._show_machine()
+        self.assertIn("Vulkan", box.machine_label.text())
+        self.assertIn("32.0 GB", box.machine_label.text())
+
+    def test_a_machine_with_no_card_is_told_it_is_on_the_processor(self):
+        box = self.window(cfg.Config()).local_whisper
+        with mock.patch.object(ggml, "accelerator", return_value=""), \
+                mock.patch.object(ggml, "total_memory", return_value=8 << 30):
+            box._show_machine()
+        self.assertIn("processor", box.machine_label.text())
+
     def test_a_processor_build_where_the_vulkan_one_belongs_says_so(self):
         # The Vulkan whisper-server is published by hand, and until it is
         # there the download lands upstream's processor build. Said nowhere,

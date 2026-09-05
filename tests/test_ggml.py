@@ -49,6 +49,11 @@ def item(name, data, url="https://example.invalid/f", sha=True):
                     hashlib.sha256(data).hexdigest() if sha else "")
 
 
+def listed(name, size):
+    """A row as a listing hands it over: a name and a size, no bytes."""
+    return hub.Item(name, f"https://example.invalid/{name}", size, "a" * 64)
+
+
 @contextlib.contextmanager
 def serving(release, archive):
     """Answer by what is being asked for rather than by what came before.
@@ -664,6 +669,47 @@ class Catalogue(Local):
             with self.assertRaises(ggml.LocalError):
                 ggml.whisper_models()
 
+    def test_the_speculative_decoding_heads_are_not_models(self):
+        # They are the small files in a repository, so a list sorted by size
+        # puts them first, where the eye lands and the click goes.
+        tree = GGUF_TREE + [
+            {"type": "file", "path": "dflash-Qwen3-8B-Q8_0.gguf",
+             "size": 1_120_000_000, "lfs": {"oid": "f" * 64}},
+            {"type": "file", "path": "eagle3-gpt-oss-20b-Q8_0.gguf",
+             "size": 920_000_000, "lfs": {"oid": "0" * 64}},
+        ]
+        with fake_urlopen(tree):
+            names = [q.name for q in ggml.llm_quants("ggml-org/x-GGUF")]
+        self.assertEqual(names,
+                         ["gemma-3-4b-it-Q4_K_M.gguf", "gemma-3-4b-it-Q8_0.gguf"])
+
+    def test_a_speech_or_vision_repository_is_not_a_cleanup_publisher(self):
+        listing = [{"id": "ggml-org/parakeet-GGUF"},
+                   {"id": "ggml-org/Qwen3-TTS-12Hz-1.7B-Base-GGUF"},
+                   {"id": "ggml-org/SmolVLM2-256M-Video-Instruct-GGUF"},
+                   {"id": "ggml-org/Qwen3-8B-Base-GGUF"},
+                   {"id": "ggml-org/SmolLM3-3B-GGUF"}]
+        with fake_urlopen(listing):
+            found = ggml.llm_repos()
+        self.assertEqual([r for r in found if r.startswith("ggml-org/Smol")],
+                         ["ggml-org/SmolLM3-3B-GGUF"])
+        self.assertNotIn("ggml-org/parakeet-GGUF", found)
+        self.assertNotIn("ggml-org/Qwen3-8B-Base-GGUF", found)
+
+    def test_a_base_model_beside_its_tuned_twin_is_dropped(self):
+        # Gemma names the base model after the tuned one with the `-it` taken
+        # out, so the two sit next to each other and the wrong one answers a
+        # cleanup prompt by carrying on writing the transcript.
+        listing = [{"id": "ggml-org/gemma-4-E2B-GGUF"},
+                   {"id": "ggml-org/gemma-4-E2B-it-GGUF"},
+                   {"id": "ggml-org/Qwen3-0.6B-GGUF"}]
+        with fake_urlopen(listing):
+            found = ggml.llm_repos()
+        self.assertNotIn("ggml-org/gemma-4-E2B-GGUF", found)
+        self.assertIn("ggml-org/gemma-4-E2B-it-GGUF", found)
+        # Nothing named it, so nothing says it is the wrong half of a pair.
+        self.assertIn("ggml-org/Qwen3-0.6B-GGUF", found)
+
     def test_what_is_on_disk_is_read_from_disk(self):
         self.assertEqual(ggml.installed_whisper_models(), [])
         path = ggml.whisper_model_path("ggml-base.bin")
@@ -1183,3 +1229,172 @@ class WindowsOwnership(Local):
         # from here", and only one of those makes the pid file safe to drop.
         self.image("")
         self.assertIsNone(self.made._is_ours(1234))
+
+
+class Machine(Local):
+    """What this machine can hold, and what that makes worth pointing at."""
+
+    def test_the_memory_is_read_the_way_each_system_reports_it(self):
+        # Linux and most Macs answer through sysconf.
+        with mock.patch.object(ggml.os, "sysconf", lambda name:
+                               4096 if name == "SC_PAGE_SIZE" else 4_194_304):
+            self.assertEqual(ggml.total_memory(), 16 * ggml.GB)
+
+    def test_a_mac_without_the_page_count_is_asked_for_the_number(self):
+        # Not every build of Python on a Mac carries SC_PHYS_PAGES, and a Mac
+        # that answered nothing would be a Mac with none of this on it.
+        def answer(args, **kwargs):
+            self.assertEqual(args, ["sysctl", "-n", "hw.memsize"])
+            return mock.Mock(stdout=f"{32 * ggml.GB}\n")
+
+        with mock.patch.object(ggml.os, "sysconf", side_effect=ValueError), \
+                mock.patch.object(sys, "platform", "darwin"), \
+                mock.patch.object(ggml.subprocess, "run", answer):
+            self.assertEqual(ggml.total_memory(), 32 * ggml.GB)
+
+    def test_a_system_that_answers_nothing_is_an_unknown_machine(self):
+        with mock.patch.object(ggml.os, "sysconf", side_effect=ValueError), \
+                mock.patch.object(sys, "platform", "linux"):
+            self.assertEqual(ggml.total_memory(), 0)
+
+    def test_a_mac_is_taken_to_have_a_graphics_interface(self):
+        with mock.patch.object(sys, "platform", "darwin"):
+            self.assertEqual(ggml.accelerator(), "Metal")
+
+    def test_elsewhere_the_vulkan_loader_is_what_says_so(self):
+        with mock.patch.object(sys, "platform", "linux"), \
+                mock.patch.object(ggml.ctypes.util, "find_library",
+                                  lambda name: "/usr/lib/libvulkan.so.1"):
+            self.assertEqual(ggml.accelerator(), "Vulkan")
+        with mock.patch.object(sys, "platform", "linux"), \
+                mock.patch.object(ggml.ctypes.util, "find_library",
+                                  lambda name: None):
+            self.assertEqual(ggml.accelerator(), "")
+
+    def test_a_model_is_measured_against_half_the_memory(self):
+        self.assertTrue(ggml.fits(2 * ggml.GB, memory=8 * ggml.GB))
+        self.assertFalse(ggml.fits(4 * ggml.GB, memory=8 * ggml.GB))
+
+    def test_a_machine_whose_memory_could_not_be_read_holds_anything(self):
+        # A wrong "too big" is worse advice than none.
+        self.assertTrue(ggml.fits(40 * ggml.GB, memory=0))
+
+    def test_the_smallest_machine_is_not_the_one_where_everything_fits(self):
+        # Half of 2 GB less the gigabyte of overhead is nothing, and a budget
+        # of nothing used to read as the unknown machine above.
+        self.assertFalse(ggml.fits(3 * ggml.GB, memory=2 * ggml.GB))
+
+    def test_a_crowded_machine_is_pointed_at_the_smaller_model(self):
+        self.assertEqual(ggml.suggested_whisper(memory=3 * ggml.GB, graphics=""),
+                         ggml.SMALL_MACHINE_WHISPER)
+
+    def test_a_card_and_the_memory_for_it_are_pointed_at_the_accurate_one(self):
+        self.assertEqual(
+            ggml.suggested_whisper(memory=32 * ggml.GB, graphics="Vulkan"),
+            ggml.ACCURATE_WHISPER)
+
+    def test_memory_without_a_card_is_pointed_at_the_fast_one(self):
+        # Several times the work per second is several times a long wait on a
+        # processor, whatever there is room for.
+        self.assertEqual(
+            ggml.suggested_whisper(memory=32 * ggml.GB, graphics=""),
+            ggml.SUGGESTED_WHISPER)
+
+    def test_a_sixteen_gigabyte_machine_counts_as_a_roomy_one(self):
+        # What a machine reports is what the firmware and the graphics left
+        # of it: 16 GB answers about 15.4, and a threshold written at the
+        # number on the box is one no machine ever reaches.
+        self.assertEqual(
+            ggml.suggested_whisper(memory=int(15.4 * ggml.GB), graphics="Metal"),
+            ggml.ACCURATE_WHISPER)
+
+    def test_the_suggestion_that_fits_is_offered_first(self):
+        first = ggml.suggested_llm(memory=6 * ggml.GB)[0]
+        self.assertTrue(ggml.fits(ggml.SUGGESTED_LLM_SIZE[first],
+                                  memory=6 * ggml.GB))
+        # Nothing is dropped: what does not fit today fits once something else
+        # is closed.
+        self.assertEqual(sorted(ggml.suggested_llm(memory=6 * ggml.GB)),
+                         sorted(ggml.SUGGESTED_LLM))
+
+    def test_the_wanted_model_wins_when_there_is_room_for_it(self):
+        items = [listed("ggml-tiny.bin", 70 << 20),
+                 listed("ggml-large-v3-turbo-q5_0.bin", 574 << 20)]
+        self.assertEqual(
+            ggml.recommended(items, "ggml-large-v3-turbo-q5_0.bin",
+                             memory=16 * ggml.GB),
+            "ggml-large-v3-turbo-q5_0.bin")
+
+    def test_a_model_too_big_for_the_machine_is_not_recommended(self):
+        items = [listed("small.gguf", 1 << 30), listed("huge.gguf", 12 * ggml.GB)]
+        self.assertEqual(ggml.recommended(items, "huge.gguf",
+                                          memory=8 * ggml.GB), "small.gguf")
+
+    def test_the_full_precision_weights_are_never_the_recommendation(self):
+        # Twice the memory and twice the wait for a difference this job
+        # cannot see.
+        items = [listed("model-Q4_0.gguf", 2 * ggml.GB),
+                 listed("model-BF16.gguf", 3 * ggml.GB)]
+        self.assertEqual(ggml.recommended(items, memory=32 * ggml.GB),
+                         "model-Q4_0.gguf")
+
+    def test_nothing_is_recommended_when_nothing_fits(self):
+        self.assertEqual(
+            ggml.recommended([listed("huge.gguf", 40 * ggml.GB)],
+                             memory=8 * ggml.GB), "")
+
+
+class Grouping(Local):
+    """One group per model, rather than one long list sorted by size."""
+
+    def test_every_spelling_of_a_quantisation_reads_as_its_number(self):
+        # One list holds q5_1, Q4_K_M, MXFP4 and BF16, and the number is the
+        # whole of what any of them says to somebody choosing a row.
+        self.assertEqual(ggml.bit_depth("ggml-small-q5_1.bin"), 5)
+        self.assertEqual(ggml.bit_depth("SmolLM3-Q4_K_M.gguf"), 4)
+        self.assertEqual(ggml.bit_depth("gpt-oss-20b-MXFP4.gguf"), 4)
+        self.assertEqual(ggml.bit_depth("gemma-4-E2B-it-Q8_0.gguf"), 8)
+        # bf16 is not f16 read badly.
+        self.assertEqual(ggml.bit_depth("gemma-4-E2B-it-BF16.gguf"), 16)
+        self.assertEqual(ggml.bit_depth("mmproj-model-f16.gguf"), 16)
+        # A whisper file with no mark is the full model, and its name is the
+        # one convention here that does not carry the answer.
+        self.assertEqual(ggml.bit_depth("ggml-large-v3-turbo.bin"), 0)
+
+    def test_a_quantisation_belongs_to_the_model_it_is_a_copy_of(self):
+        self.assertEqual(ggml.whisper_family("ggml-small.en-q5_1.bin"), "small")
+        self.assertEqual(ggml.whisper_family("ggml-large-v3-q5_0.bin"),
+                         "large-v3")
+        self.assertEqual(ggml.whisper_family("ggml-large-v3-turbo.bin"),
+                         "large-v3-turbo")
+        self.assertEqual(ggml.whisper_family("ggml-medium.en.bin"), "medium")
+
+    def test_turbo_is_a_model_and_not_a_quantisation(self):
+        # The last chunk of the name is a quantisation for most of the list
+        # and part of the model's name here.
+        self.assertEqual(ggml.whisper_family("ggml-large-v3-turbo-q8_0.bin"),
+                         "large-v3-turbo")
+
+    def test_the_turbo_files_are_not_scattered_through_the_medium_ones(self):
+        # Sorted by size alone, large-v3-turbo-q5_0 lands between the two
+        # medium quantisations, half a screen from the model it is a copy of.
+        models = [listed("ggml-medium-q5_0.bin", 539 << 20),
+                  listed("ggml-large-v3-turbo-q5_0.bin", 574 << 20),
+                  listed("ggml-medium-q8_0.bin", 823 << 20),
+                  listed("ggml-large-v3-turbo.bin", 1624 << 20)]
+        groups = dict(ggml.whisper_groups(models))
+        self.assertEqual([i.name for i in groups["large-v3-turbo"]],
+                         ["ggml-large-v3-turbo-q5_0.bin",
+                          "ggml-large-v3-turbo.bin"])
+        self.assertEqual([i.name for i in groups["medium"]],
+                         ["ggml-medium-q5_0.bin", "ggml-medium-q8_0.bin"])
+
+    def test_the_smallest_model_comes_first_and_the_english_ones_last(self):
+        models = [listed("ggml-small.en-q5_1.bin", 190 << 20),
+                  listed("ggml-small-q5_1.bin", 190 << 20),
+                  listed("ggml-tiny.bin", 77 << 20)]
+        groups = ggml.whisper_groups(models)
+        self.assertEqual([family for family, _ in groups], ["tiny", "small"])
+        self.assertEqual([i.name for _, group in groups for i in group],
+                         ["ggml-tiny.bin", "ggml-small-q5_1.bin",
+                          "ggml-small.en-q5_1.bin"])

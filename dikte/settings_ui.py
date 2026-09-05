@@ -248,6 +248,13 @@ class LocalModelBox(QGroupBox):
         self._stop = False
         self._wanted = ""              # the model to select once a list arrives
         self._chosen_in = ""           # the publisher the selected model is from
+        # Whether a list for the publisher on screen has come back. An empty
+        # box before one has is a box nobody has asked anything yet, and the
+        # two read the same without this.
+        self._answered = False
+        # What the last publisher listing held, so that the switch beside the
+        # box can be flipped without asking for it again.
+        self._found_repos = []
         # Typing or arrowing through the publisher box changes its text a
         # character at a time, and each of those would otherwise be a request.
         self._later = QTimer(self)
@@ -263,15 +270,55 @@ class LocalModelBox(QGroupBox):
         form.addRow(t("Program"), self._side_by_side(self.program_label,
                                                      self.install_button))
 
+        # What the model rows are judged against, said out loud. Without it,
+        # "too big for this machine" and the recommendation above the list are
+        # a verdict with no visible reason behind them.
+        self.machine_label = WrappedLabel()
+        self.machine_label.setToolTip(
+            t("A model may take half of this memory, less a gigabyte for the "
+              "context around the weights. Anything past that is marked too "
+              "big; it may still load, on a machine with nothing else open."))
+        form.addRow(t("This machine"), self.machine_label)
+        self._show_machine()
+
         if self._repos is not None:
             self.repo = QComboBox()
             self.repo.setEditable(True)
             self.repo.setToolTip(t("A Hugging Face repository of GGUF files. The "
                                    "list is fetched; any other one can be typed in."))
             self.repo.currentTextChanged.connect(self._repo_changed)
-            form.addRow(t("Publisher"), self.repo)
+            # Forty repository ids is not a choice anybody can make. The few
+            # that were picked for this job are what the box holds until
+            # somebody asks for the rest.
+            self.every_repo = QCheckBox(t("All"))
+            self.every_repo.setToolTip(
+                t("Everything ggml-org publishes, including the models that "
+                  "are too big to run here and the ones that are not for "
+                  "cleaning up text."))
+            self.every_repo.toggled.connect(self._every_repo_changed)
+            form.addRow(t("Publisher"),
+                        self._side_by_side(self.repo, self.every_repo))
+            # A repository id names the publisher, the parameter count and the
+            # shape of the weights, and says nothing about whether it is the
+            # one to click.
+            self.repo_note = WrappedLabel()
+            form.addRow("", self.repo_note)
 
         self.model = QComboBox()
+        self.model.setToolTip(
+            t("large-v3 makes the fewest mistakes and is the slowest of them. "
+              "large-v3-turbo is that model with a four layer decoder in place "
+              "of a thirty-two layer one: several times faster, at one to two "
+              "points of word error in English and about two and a half in "
+              "the other languages. Below those, every step down the list "
+              "trades accuracy for size, and the .en models are trained on "
+              "English alone.")
+            if program is ggml.WHISPER else
+            t("Cleanup is punctuation, capitals and filler words, so what "
+              "these are picked on is following an instruction rather than "
+              "knowing anything. Start at a q4 file; the 16-bit ones are "
+              "several times the memory for a difference this job cannot "
+              "see."))
         self.download_button = QPushButton(t("Download"))
         self.download_button.clicked.connect(self._download)
         self.delete_button = QPushButton(t("Delete"))
@@ -334,16 +381,16 @@ class LocalModelBox(QGroupBox):
         """
         self._wanted = model
         self._pending = True
+        self._answered = False
         self._show_program()
-        self._chosen_in = repo or (ggml.SUGGESTED_LLM[0] if self._repos is not None
-                                   else "")
+        self._chosen_in = ""
         if self._repos is not None:
+            suggested = ggml.suggested_llm()
+            self._chosen_in = repo or suggested[0]
             self.repo.blockSignals(True)
-            self.repo.clear()
-            self.repo.addItems(list(ggml.SUGGESTED_LLM))
-            self.repo.setCurrentText(repo or ggml.SUGGESTED_LLM[0])
+            self.repo.setCurrentText(self._chosen_in)
             self.repo.blockSignals(False)
-            self._fit_popup(self.repo)
+            self._fill_repos_box(suggested)
         self._fill_models([])
 
     def showEvent(self, event):
@@ -387,6 +434,15 @@ class LocalModelBox(QGroupBox):
                 t("Downloaded, version {version}.",
                   version=ggml.installed_version(self.program) or "?"))
 
+    def _show_machine(self):
+        where = ggml.accelerator()
+        memory = ggml.total_memory()
+        parts = [t("Graphics: {name}.", name=where) if where else
+                 t("No graphics interface found, so this runs on the processor.")]
+        if memory:
+            parts.append(t("Memory: {size}.", size=ggml.human_size(memory)))
+        self.machine_label.setText(" ".join(parts))
+
     # ---- the lists -------------------------------------------------------
 
     def _fill_repos(self, current):
@@ -395,9 +451,49 @@ class LocalModelBox(QGroupBox):
 
         threading.Thread(target=work, daemon=True).start()
 
+    def _fill_repos_box(self, found):
+        """The publishers, with the suggested ones kept apart from the rest.
+
+        Forty repositories in one run is a list nobody reads to the end of, and
+        the few worth starting from are lost in it. A separator rather than a
+        heading, because this box is typed into as well as chosen from and a
+        heading would land in the field as though it were a repository.
+        """
+        self._found_repos = found
+        current = self.repo.currentText()
+        # Every suggestion, whether or not it came back in the listing: that
+        # listing is the forty repositories touched most recently, and a
+        # publisher that has not been updated in a season falls off it while
+        # still being the one to point at.
+        first = list(ggml.suggested_llm())
+        rest = [r for r in found if r not in first]
+        if not self.every_repo.isChecked():
+            # The one being used stays on offer whatever the switch says, so
+            # that a repository somebody typed in is not dropped out from
+            # under them by the next fetch.
+            rest = [r for r in rest if r == current]
+        self.repo.blockSignals(True)
+        self.repo.clear()
+        self.repo.addItems(first)
+        if first and rest:
+            self.repo.insertSeparator(self.repo.count())
+        self.repo.addItems(rest)
+        self.repo.setCurrentText(current)
+        self.repo.blockSignals(False)
+        self._fit_popup(self.repo)
+        self._show_repo_note()
+
     def _repo_changed(self):
+        self._show_repo_note()
         if not self._downloading:
             self._later.start()
+
+    def _show_repo_note(self):
+        note = ggml.SUGGESTED_LLM_NOTE.get(self.repository(), "")
+        self.repo_note.setText(t(note) if note else "")
+
+    def _every_repo_changed(self):
+        self._fill_repos_box(self._found_repos)
 
     def _later_fetch(self):
         # A download that started inside the wait was not there to be seen when
@@ -407,6 +503,7 @@ class LocalModelBox(QGroupBox):
             self._fetch_models(self.repository())
 
     def _fetch_models(self, repo=""):
+        self._answered = False
         self.status.setText(t("Fetching the model list…"))
 
         def work():
@@ -436,45 +533,131 @@ class LocalModelBox(QGroupBox):
             self.status.setText(error)
             return
         if kind == "repos":
-            current = self.repo.currentText()
-            self.repo.blockSignals(True)
-            self.repo.clear()
-            self.repo.addItems(found)
-            self.repo.setCurrentText(current)
-            self.repo.blockSignals(False)
-            self._fit_popup(self.repo)
+            self._fill_repos_box(found)
             return
+        self._answered = True
         self._fill_models(found)
 
+    def _sections(self, items, best):
+        """[(heading, [Item])] for the rows to show, in the order to show them.
+
+        The list arrives sorted by size and nothing else, which for whisper
+        interleaves the models: `large-v3-turbo-q5_0` lands between the two
+        `medium` quantisations, half a screen away from the turbo model it is a
+        copy of. Grouping puts the choice of model above the choice of
+        quantisation, and the row this machine should take goes on top, where
+        somebody who does not want to make either choice can stop reading.
+        """
+        if not items:
+            return []
+        groups = (ggml.whisper_groups(items) if self.program is ggml.WHISPER
+                  else [("", items)])
+        # A publisher with one file on offer is not a choice, and a row of its
+        # own above the only row there is would be the same model twice.
+        top = [i for i in items if i.name == best] if len(items) > 1 else []
+        if not top:
+            return groups
+        if len(groups) == 1 and not groups[0][0]:
+            groups = [(t("Everything this publisher offers"), groups[0][1])]
+        return [(t("Recommended for this machine"), top)] + groups
+
+    def _suggested(self):
+        """The name to prefer when it is on offer, or "" for whatever fits."""
+        if self.program is not ggml.WHISPER:
+            return ""
+        # A Vulkan loader on the machine is not a card in play when what was
+        # installed is the processor build: recommending the accurate model
+        # off the loader alone would put a 1 GB model on a processor and the
+        # wait for it in front of somebody who asked for a sentence.
+        return ggml.suggested_whisper(
+            graphics="" if ggml.vulkan_missing(self.program) else None)
+
+    def _add_heading(self, text):
+        """A row that names the group under it and cannot be chosen."""
+        self.model.addItem(text)
+        row = self.model.count() - 1
+        font = self.model.font()
+        font.setBold(True)
+        self.model.setItemData(row, font, Qt.ItemDataRole.FontRole)
+        listing = self.model.model()
+        entry = listing.item(row) if hasattr(listing, "item") else None
+        if entry is not None:
+            entry.setEnabled(False)
+
+    def _add_model(self, name, item, best):
+        """One row: the file, what it weighs, and whether it is worth taking."""
+        here = ggml.have_model(self._model_path(name))
+        if here:
+            marks = [t("downloaded")]
+        elif item is None:
+            # Chosen but neither here nor on offer: the file was deleted from
+            # underneath, or the settings came from another machine.
+            marks = [t("not downloaded")]
+        else:
+            marks = [ggml.human_size(item.size)]
+        # `q5_1`, `Q4_K_M`, `MXFP4`, `BF16`: four spellings of the same thing
+        # in one list, and the number is the whole of what any of them says. A
+        # whisper file with no mark at all is the full 16-bit model, which is
+        # the one convention here that a name does not carry.
+        bits = ggml.bit_depth(name) or (16 if self.program is ggml.WHISPER
+                                        else 0)
+        if bits:
+            marks.append(t("{bits}-bit", bits=bits))
+        if ggml.ENGLISH_ONLY in name:
+            marks.append(t("English only"))
+        # The verdicts last, after everything the row is: what to do about the
+        # row rather than what it holds.
+        if item is not None and not here and not ggml.fits(item.size):
+            marks.append(t("too big for this machine"))
+        if name == best:
+            marks.append(t("recommended"))
+        self.model.addItem(f"{name}  ({', '.join(marks)})", name)
+        self.model.setItemData(self.model.count() - 1, item,
+                               Qt.ItemDataRole.UserRole + 1)
+
+    def _first_model(self):
+        """The first row that is a model rather than a heading."""
+        for row in range(self.model.count()):
+            if self.model.itemData(row):
+                return row
+        return -1
+
     def _fill_models(self, items):
-        """One row per model, saying what it weighs and whether it is here."""
+        """One row per model, grouped, saying what it weighs and where it is."""
         # The selection is only worth carrying over within the publisher it was
         # made in. Carried across one, a model this repository does not publish
         # would be added back as "not downloaded" and selected again, and
         # changing the publisher would leave the model box looking untouched.
         same = self._repos is None or self.repository() == self._chosen_in
         wanted = self._wanted or (self.selected() if same else "")
-        here = [name for name in (self._model_path(i.name).name for i in items)]
+        best = ggml.recommended(items, self._suggested()) if items else ""
         self.model.blockSignals(True)
         self.model.clear()
-        for item, name in zip(items, here):
-            mark = (t("downloaded") if ggml.have_model(self._model_path(item.name))
-                    else ggml.human_size(item.size))
-            self.model.addItem(f"{name}  ({mark})", name)
-            self.model.setItemData(self.model.count() - 1, item, Qt.ItemDataRole.UserRole + 1)
+        listed = set()
+        for heading, group in self._sections(items, best):
+            if heading:
+                self._add_heading(heading)
+            for item in group:
+                name = self._model_path(item.name).name
+                self._add_model(name, item, best)
+                listed.add(name)
         # A model that was downloaded and then dropped from the list upstream is
-        # still on this disk and still works, so it stays on offer.
-        for name in self._on_disk():
-            if self.model.findData(name) < 0:
-                self.model.addItem(f"{name}  ({t('downloaded')})", name)
-        # And one that is chosen but not here, because the file was deleted from
-        # underneath or the settings came from another machine, stays chosen:
-        # Save reads this box, and a row missing here would quietly empty the
-        # setting rather than showing that the model needs downloading again.
-        if wanted and self.model.findData(wanted) < 0:
-            self.model.addItem(f"{wanted}  ({t('not downloaded')})", wanted)
+        # still on this disk and still works, so it stays on offer. So does one
+        # that is chosen but not here: Save reads this box, and a row missing
+        # here would quietly empty the setting rather than showing that the
+        # model needs downloading again.
+        extras = [(t("Already on this machine"),
+                   [name for name in self._on_disk() if name not in listed])]
+        if wanted and wanted not in listed \
+                and not ggml.have_model(self._model_path(wanted)):
+            extras.append((t("Chosen, but not downloaded"), [wanted]))
+        for heading, names in extras:
+            if names and listed:
+                self._add_heading(heading)
+            for name in names:
+                self._add_model(name, None, best)
         index = self.model.findData(wanted)
-        self.model.setCurrentIndex(max(index, 0))
+        self.model.setCurrentIndex(index if index >= 0 else self._first_model())
         self.model.blockSignals(False)
         self._fit_popup(self.model)
         self._wanted = ""
@@ -569,10 +752,17 @@ class LocalModelBox(QGroupBox):
 
     def _fill_models_from_current(self):
         """Redraw the rows without asking anybody anything again."""
-        items = [self.model.itemData(i, Qt.ItemDataRole.UserRole + 1)
-                 for i in range(self.model.count())]
+        # By name, because the recommended model has a row of its own at the
+        # top as well as one in its group, and reading the rows back twice
+        # would double it in the list every time a download finished.
+        items, seen = [], set()
+        for row in range(self.model.count()):
+            item = self.model.itemData(row, Qt.ItemDataRole.UserRole + 1)
+            if item is not None and item.name not in seen:
+                seen.add(item.name)
+                items.append(item)
         self._wanted = self.selected()
-        self._fill_models([i for i in items if i is not None])
+        self._fill_models(items)
 
     def _delete(self):
         name = self.selected()
@@ -607,7 +797,18 @@ class LocalModelBox(QGroupBox):
                                                               and not here))
         if self._downloading:
             return
-        if not name:
+        if not name and self._repos is not None and self._answered \
+                and self._first_model() < 0:
+            # An empty box under a publisher that answered perfectly well: what
+            # it publishes is split across files, past the size cap, or a
+            # projector or draft head rather than a model of its own. Said
+            # nowhere, it read as though the click had not registered.
+            self.status.setText(
+                t("{repo} publishes nothing that can be run here. Its models "
+                  "are split across files, larger than {cap}, or pieces of a "
+                  "model rather than one. Choose another publisher.",
+                  repo=self.repository(), cap=ggml.human_size(ggml.GGUF_MAX_BYTES)))
+        elif not name:
             self.status.setText(t("Nothing downloaded yet."))
         elif here and not ggml.program_path(self.program):
             # The model alone runs nothing, and "Ready" over a missing program

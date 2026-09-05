@@ -804,6 +804,75 @@ TR = {
         "ya da başka bir yayıncı seçin.",
     "downloaded": "indirildi",
     "not downloaded": "indirilmedi",
+    "recommended": "önerilen",
+    "{bits}-bit": "{bits} bit",
+    "English only": "yalnızca İngilizce",
+    "All": "Tümü",
+    "Everything ggml-org publishes, including the models that are too big to "
+    "run here and the ones that are not for cleaning up text.":
+        "ggml-org'un yayımladığı her şey; burada çalıştırılamayacak kadar "
+        "büyük olanlar ve metin temizlemek için olmayanlar dahil.",
+    "Google Gemma 4, the small one. The default: nothing else this size "
+    "follows an instruction as closely, and cleanup is all instruction.":
+        "Google Gemma 4'ün küçüğü. Varsayılan: bu boyutta verilen yönergeyi "
+        "bu kadar iyi izleyen başka bir model yok, temizleme de baştan sona "
+        "yönerge demek.",
+    "The same model one size up. A little more accurate, about twice the "
+    "weights and twice the wait.":
+        "Aynı modelin bir boy büyüğü. Biraz daha isabetli, yaklaşık iki katı "
+        "ağırlık ve iki katı bekleyiş.",
+    "The previous Gemma. Still good, and the smallest of the Gemmas here.":
+        "Bir önceki Gemma. Hâlâ iyi ve buradaki Gemma'ların en küçüğü.",
+    "Hugging Face's own small model, for a machine the Gemmas crowd.":
+        "Hugging Face'in kendi küçük modeli; Gemma'ların sıkıştırdığı bir "
+        "makine için.",
+    "The smallest of them, for a machine nothing else fits on. It thinks "
+    "before it answers unless Thinking below is off.":
+        "En küçükleri; başka hiçbir şeyin sığmadığı bir makine için. "
+        "Aşağıdaki Düşünme kapalı değilse cevaplamadan önce düşünür.",
+    "too big for this machine": "bu makine için fazla büyük",
+    "This machine": "Bu makine",
+    "Graphics: {name}.": "Ekran kartı: {name}.",
+    "No graphics interface found, so this runs on the processor.":
+        "Ekran kartı arayüzü bulunamadı, bu yüzden işlemcide çalışıyor.",
+    "Memory: {size}.": "Bellek: {size}.",
+    "A model may take half of this memory, less a gigabyte for the context "
+    "around the weights. Anything past that is marked too big; it may still "
+    "load, on a machine with nothing else open.":
+        "Bir model bu belleğin yarısını, ağırlıkların çevresindeki bağlam için "
+        "bir gigabayt düşülerek kullanabilir. Bunu aşan modeller fazla büyük "
+        "diye işaretlenir; başka hiçbir şeyin açık olmadığı bir makinede yine "
+        "de yüklenebilirler.",
+    "Recommended for this machine": "Bu makine için önerilen",
+    "Everything this publisher offers": "Bu yayıncının sunduğu her şey",
+    "Already on this machine": "Bu makinede zaten var",
+    "Chosen, but not downloaded": "Seçili, ama indirilmedi",
+    "{repo} publishes nothing that can be run here. Its models are split "
+    "across files, larger than {cap}, or pieces of a model rather than one. "
+    "Choose another publisher.":
+        "{repo} burada çalıştırılabilecek bir şey yayımlamıyor. Modelleri "
+        "birden çok dosyaya bölünmüş, {cap} boyutundan büyük ya da modelin "
+        "kendisi değil parçaları. Başka bir yayıncı seçin.",
+    "large-v3 makes the fewest mistakes and is the slowest of them. "
+    "large-v3-turbo is that model with a four layer decoder in place of a "
+    "thirty-two layer one: several times faster, at one to two points of word "
+    "error in English and about two and a half in the other languages. Below "
+    "those, every step down the list trades accuracy for size, and the .en "
+    "models are trained on English alone.":
+        "En az hatayı large-v3 yapar, en yavaşı da odur. large-v3-turbo, aynı "
+        "modelin otuz iki katmanlı çözücüsü yerine dört katmanlı bir çözücü "
+        "konmuş hâli: birkaç kat hızlı, karşılığında İngilizcede bir iki "
+        "puan, diğer dillerde yaklaşık iki buçuk puan kelime hatası. Bunların "
+        "altında listede her basamak, doğruluğu boyuta değişir; .en modelleri "
+        "ise yalnızca İngilizce ile eğitilmiştir.",
+    "Cleanup is punctuation, capitals and filler words, so what these are "
+    "picked on is following an instruction rather than knowing anything. "
+    "Start at a q4 file; the 16-bit ones are several times the memory for a "
+    "difference this job cannot see.":
+        "Temizleme; noktalama, büyük harf ve dolgu sözcükleri demek, yani bu "
+        "modeller bir şey bilmelerine değil verilen yönergeyi izlemelerine "
+        "göre seçilir. Bir q4 dosyasından başlayın; 16 bitlik olanlar, bu işin "
+        "göremeyeceği bir fark için kat kat bellek ister.",
     "Delete model": "Modeli sil",
     "Delete {name} from this machine?": "{name} bu makineden silinsin mi?",
     "Runs on this machine, on llama.cpp.": "Bu makinede, llama.cpp üzerinde çalışır.",
