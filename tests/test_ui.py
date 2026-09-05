@@ -230,6 +230,17 @@ class Settings(DikteTest):
         QApplication.sendEvent(box, self.wheel())
         self.assertNotEqual(box.currentIndex(), before)
 
+    def test_the_wheel_is_refused_when_another_widget_has_focus(self):
+        window = self.window(cfg.Config())
+        box = window.ui_language
+        other = window.corner
+        other.setFocus()
+        before = box.currentIndex()
+        rolled = self.wheel()
+        QApplication.sendEvent(box, rolled)
+        self.assertEqual(box.currentIndex(), before)
+        self.assertFalse(rolled.isAccepted())
+
     def test_a_wrapped_label_keeps_the_room_its_lines_need(self):
         # The program path shares a row with a button, and a row is measured
         # before its width is known: the label has to claim the second line back

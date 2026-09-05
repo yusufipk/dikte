@@ -223,7 +223,9 @@ class WheelGuard(QObject):
     """
 
     def eventFilter(self, box, event):
-        if event.type() == QEvent.Type.Wheel and not box.hasFocus():
+        win = box.window()
+        focused = box.hasFocus() or (win is not None and win.focusWidget() is box)
+        if event.type() == QEvent.Type.Wheel and not focused:
             # Refused rather than swallowed. An unaccepted wheel event carries
             # on up the parents to the scroll area, so the page still moves.
             event.ignore()
