@@ -5,3 +5,6 @@ __pycache__/
 # What packaging/ works in and leaves behind.
 build/
 dist/
+
+# graft's local graph cache — regenerable, not committed (run `graft build`).
+/graft/
