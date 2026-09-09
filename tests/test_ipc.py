@@ -66,6 +66,23 @@ class Paths(unittest.TestCase):
         self.assertEqual(path.parts[-2:], ("dikte", "__main__.py"))
         self.assertTrue(os.path.exists(ipc.script_path()))
 
+    def test_a_macos_bundle_is_recognised_from_its_native_executable(self):
+        with mock.patch.object(sys, "platform", "darwin"), \
+             mock.patch.object(sys, "executable",
+                               "/Applications/Dikte.app/Contents/MacOS/Dikte"):
+            self.assertEqual(ipc.macos_bundle(), "/Applications/Dikte.app")
+
+    def test_a_plain_macos_python_is_not_an_application_bundle(self):
+        with mock.patch.object(sys, "platform", "darwin"), \
+             mock.patch.object(sys, "executable", "/opt/homebrew/bin/python3"):
+            self.assertIsNone(ipc.macos_bundle())
+
+    def test_other_platforms_do_not_claim_a_macos_bundle(self):
+        with mock.patch.object(sys, "platform", "linux"), \
+             mock.patch.object(sys, "executable",
+                               "/Applications/Dikte.app/Contents/MacOS/Dikte"):
+            self.assertIsNone(ipc.macos_bundle())
+
     def test_the_shortcut_command_runs_it_with_this_interpreter(self):
         # Read back through the same quoting it went out with: a Windows path
         # is spelled with backslashes and comes out of the join quoted.
@@ -238,8 +255,22 @@ class InstanceLock(DikteTest):
 
 
 class Respawn(unittest.TestCase):
+    def test_a_macos_bundle_restarts_through_launchservices_and_returns(self):
+        with mock.patch.object(ipc, "macos_bundle",
+                               return_value="/Applications/Dikte.app"), \
+                mock.patch.object(ipc.subprocess, "Popen") as popen, \
+                mock.patch.object(ipc.os, "execv") as execv:
+            ipc.respawn(["--gui"])
+        popen.assert_called_once_with(
+            ["/usr/bin/open", "-n", "-a", "/Applications/Dikte.app",
+             "--args", "--gui"],
+            close_fds=True,
+        )
+        execv.assert_not_called()
+
     def test_windows_starts_a_detached_process_and_returns(self):
-        with mock.patch.object(sys, "platform", "win32"), \
+        with mock.patch.object(ipc, "macos_bundle", return_value=None), \
+                mock.patch.object(sys, "platform", "win32"), \
                 mock.patch.object(ipc, "launcher", return_value=["py", "x"]), \
                 mock.patch.object(ipc.subprocess, "Popen") as popen:
             ipc.respawn(["--gui"])
@@ -248,7 +279,8 @@ class Respawn(unittest.TestCase):
                          0x00000008 | 0x00000200)
 
     def test_everywhere_else_the_process_is_replaced(self):
-        with mock.patch.object(sys, "platform", "linux"), \
+        with mock.patch.object(ipc, "macos_bundle", return_value=None), \
+                mock.patch.object(sys, "platform", "linux"), \
                 mock.patch.object(ipc, "launcher", return_value=["py", "x"]), \
                 mock.patch.object(ipc.os, "execv") as execv:
             ipc.respawn(["toggle", "--gui"])
