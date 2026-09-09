@@ -54,7 +54,7 @@ jobs:
     timeout-minutes: 45
     steps:
       - name: Check out Dikte
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -66,7 +66,7 @@ jobs:
           [[ "$WHISPER_COMMIT" =~ ^[0-9a-f]{40}$ ]]
 
       - name: Check out pinned whisper.cpp source
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: ggml-org/whisper.cpp
           ref: ${{ env.WHISPER_COMMIT }}
@@ -148,7 +148,7 @@ jobs:
         run: OUT_DIR=dist packaging/whisper-vulkan/smoke-runtime.sh vulkan
 
       - name: Upload reviewed outputs
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: whisper-bin-ubuntu-vulkan-x64
           path: dist/*
@@ -169,7 +169,7 @@ jobs:
       artifact-metadata: write
     steps:
       - name: Download the exact tested outputs
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: whisper-bin-ubuntu-vulkan-x64
           path: dist
@@ -178,12 +178,12 @@ jobs:
         run: (cd dist && sha256sum --check whisper-bin-ubuntu-vulkan-x64.tar.gz.sha256)
 
       - name: Attest build provenance
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: dist/whisper-bin-ubuntu-vulkan-x64.tar.gz
 
       - name: Attest SBOM to archive
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: dist/whisper-bin-ubuntu-vulkan-x64.tar.gz
           sbom-path: dist/whisper-bin-ubuntu-vulkan-x64.cdx.json
