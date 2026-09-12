@@ -122,6 +122,68 @@ class VoiceCommands(unittest.TestCase):
             self.assertIsInstance(desc, str)
 
 
+class ExtractTranslation(unittest.TestCase):
+    """The "translate to <language>" voice command."""
+
+    def setUp(self):
+        self.config_enabled = {"voice_commands_enabled": True, "voice_snippets": {}}
+        self.config_disabled = {"voice_commands_enabled": False, "voice_snippets": {}}
+
+    def test_disabled_finds_nothing(self):
+        text, language = voice_commands.extract_translation(
+            "book the meeting translate to Spanish", self.config_disabled)
+        self.assertEqual(language, "")
+        self.assertEqual(text, "book the meeting translate to Spanish")
+
+    def test_no_command_present(self):
+        text, language = voice_commands.extract_translation(
+            "just a normal sentence", self.config_enabled)
+        self.assertEqual(language, "")
+        self.assertEqual(text, "just a normal sentence")
+
+    def test_english_translate_to(self):
+        text, language = voice_commands.extract_translation(
+            "book the meeting for tomorrow translate to Spanish", self.config_enabled)
+        self.assertEqual(language, "Spanish")
+        self.assertEqual(text, "book the meeting for tomorrow")
+
+    def test_english_translate_into(self):
+        text, language = voice_commands.extract_translation(
+            "translate into french say hello", self.config_enabled)
+        self.assertEqual(language, "french")
+        self.assertEqual(text, "say hello")
+
+    def test_turkish_dative_ya(self):
+        text, language = voice_commands.extract_translation(
+            "toplantıyı yarına ertele ispanyolcaya çevir", self.config_enabled)
+        self.assertEqual(language, "ispanyolca")
+        self.assertEqual(text, "toplantıyı yarına ertele")
+
+    def test_turkish_with_apostrophe(self):
+        text, language = voice_commands.extract_translation(
+            "bunu ingilizce'ye çevir", self.config_enabled)
+        self.assertEqual(language, "ingilizce")
+        self.assertEqual(text, "bunu")
+
+    def test_is_case_insensitive(self):
+        text, language = voice_commands.extract_translation(
+            "TRANSLATE TO GERMAN hello there", self.config_enabled)
+        self.assertEqual(language, "GERMAN")
+        self.assertEqual(text, "hello there")
+
+    def test_only_the_first_command_counts(self):
+        text, language = voice_commands.extract_translation(
+            "translate to Spanish translate to French", self.config_enabled)
+        self.assertEqual(language, "Spanish")
+        self.assertEqual(text, "translate to French")
+
+    def test_command_alone_leaves_empty_text(self):
+        text, language = voice_commands.extract_translation(
+            "translate to Spanish", self.config_enabled)
+        self.assertEqual(language, "Spanish")
+        self.assertEqual(text, "")
+
+
 class SnippetsTextRoundTrip(unittest.TestCase):
     """The settings window stores snippets as text; config keeps a dict."""
 

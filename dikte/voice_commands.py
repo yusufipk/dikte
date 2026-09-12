@@ -61,16 +61,53 @@ BUILTIN_COMMANDS = {
     # Paragraph control
     r'\b(new paragraph|yeni paragraf)\b': (_new_paragraph, "Insert paragraph break"),
     r'\b(new line|yeni satır)\b': (_new_line, "Insert line break"),
-    
+
     # Editing
     r'\b(delete that|scratch that|sil|sil onu)\b': (_delete_last, "Delete previous sentence"),
-    
+
     # Punctuation
     r'\b(period|nokta)\b': (_insert_period, "Insert period"),
     r'\b(comma|virgül)\b': (_insert_comma, "Insert comma"),
-    
+
     r'\b(capitalize|cap|büyük harf)\b': (_capitalize_next, "Capitalize next word"),
 }
+
+# "translate to Spanish", "translate into french" ... a language name follows,
+# spoken anywhere in the dictation rather than only at the end, so this is
+# matched separately from BUILTIN_COMMANDS instead of folded into its
+# find-and-apply loop: what it captures (the language) matters as much as
+# where it matched.
+_TRANSLATE_EN = re.compile(r'\btranslate\s+(?:to|into)\s+([a-zA-ZğüşıöçĞÜŞİÖÇ]+)\b',
+                           re.IGNORECASE)
+# "İspanyolcaya çevir", "ispanyolca'ya çevir" ... the target language comes
+# before "çevir" in Turkish, with a dative suffix ("-a/-e/-ya/-ye") glued on,
+# optionally after an apostrophe.
+_TRANSLATE_TR = re.compile(
+    r"\b([a-zA-ZğüşıöçĞÜŞİÖÇ]+?)'?(?:ya|ye|a|e)\s+çevir\b", re.IGNORECASE)
+
+
+def extract_translation(text, config):
+    """Pull a spoken "translate to <language>" command out of the transcript.
+
+    Returns (text_without_the_command, target_language), where target_language
+    is "" when no such command was found (or voice commands are disabled).
+    Only the first match counts: a dictation asks for one target language, not
+    a chain of them.
+    """
+    if not config.get("voice_commands_enabled", False):
+        return text, ""
+
+    match = _TRANSLATE_EN.search(text)
+    if not match:
+        match = _TRANSLATE_TR.search(text)
+    if not match:
+        return text, ""
+
+    language = match.group(1).strip()
+    before = text[:match.start()].rstrip(' ')
+    after = text[match.end():].lstrip(' ')
+    remaining = (before + " " + after).strip(' ') if before and after else (before or after)
+    return remaining, language
 
 
 def process_commands(text, config):
@@ -127,6 +164,7 @@ def available_commands():
         trigger = pattern.replace(r'\b', '').replace('(', '').replace(')', '')
         trigger = trigger.split('|')[0]  # Take first variant
         commands.append((trigger, desc))
+    commands.append(("translate to <language>", "Translate this dictation into <language>"))
     return commands
 
 

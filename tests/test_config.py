@@ -309,6 +309,39 @@ class CleanupPrompt(DikteTest):
         self.assertIn("Ayşe", prompt)
 
 
+class TranslatePrompt(DikteTest):
+    def test_the_target_language_is_named_in_the_prompt(self):
+        conf = cfg.Config()
+        self.assertIn("Spanish", conf.translate_prompt("Spanish"))
+
+    def test_it_follows_the_interface_language_like_cleanup_does(self):
+        conf = cfg.Config()
+        self.assertEqual(conf.translate_prompt("Spanish"),
+                         cfg.TRANSLATE_PROMPT_EN.format(language="Spanish"))
+        self.write_config({"ui_language": "tr"})
+        conf = cfg.Config()
+        self.assertEqual(conf.translate_prompt("İspanyolca"),
+                         cfg.TRANSLATE_PROMPT_TR.format(language="İspanyolca"))
+
+    def test_a_detected_language_picks_the_rules_language(self):
+        conf = cfg.Config()
+        prompt = conf.translate_prompt("French", speech="tr")
+        self.assertEqual(prompt, cfg.TRANSLATE_PROMPT_TR.format(language="French"))
+
+    def test_it_is_not_the_same_prompt_as_cleanup(self):
+        conf = cfg.Config()
+        self.assertNotEqual(conf.translate_prompt("Spanish"), conf.cleanup_prompt())
+
+    def test_the_glossary_is_appended_like_cleanup(self):
+        conf = self.config(transcribe_prompt="Paraşüt, OpenFrame")
+        self.assertIn("Paraşüt, OpenFrame", conf.translate_prompt("Spanish"))
+
+    def test_no_glossary_means_no_rule_about_one(self):
+        conf = cfg.Config()
+        self.assertEqual(conf.translate_prompt("Spanish"),
+                         cfg.TRANSLATE_PROMPT_EN.format(language="Spanish"))
+
+
 class Participants(DikteTest):
     def test_nobody_named(self):
         self.assertEqual(cfg.Config().participants(), "")

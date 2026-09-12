@@ -384,6 +384,59 @@ class Chain(DikteTest):
         self.assertFalse(os.path.exists(self.wav))
 
 
+class Translation(DikteTest):
+    """A "translate to <language>" voice command changes what cleanup does,
+    not just what the transcript says."""
+
+    def setUp(self):
+        super().setUp()
+        self.conf = self.config(openai_api_key="sk-test",
+                                openrouter_api_key="sk-or-test",
+                                voice_commands_enabled=True)
+        self.wav = make_wav(self.path("clip.wav"), speech(2.0))
+        self.rms = [0.0005] * 40 + [0.2] * 20
+
+    run_chain = Chain.run_chain
+
+    def test_the_command_is_stripped_and_the_prompt_is_the_translate_one(self):
+        run = self.run_chain(transcript="book it for Thursday translate to Spanish")
+        self.assertEqual(run["cleanup"].call_args.args[0],
+                         "book it for Thursday")
+        prompt = run["cleanup"].call_args.args[3]
+        self.assertIn("Spanish", prompt)
+        self.assertEqual(prompt, cfg.TRANSLATE_PROMPT_EN.format(language="Spanish"))
+
+    def test_the_target_language_is_recorded_in_the_history(self):
+        self.run_chain(transcript="hello translate to French")
+        self.assertEqual(cfg.read_history()[0]["translated_to"], "French")
+
+    def test_no_command_means_no_target_language(self):
+        self.run_chain()
+        self.assertEqual(cfg.read_history()[0]["translated_to"], "")
+
+    def test_the_raw_transcript_in_history_has_the_command_removed(self):
+        self.run_chain(transcript="hello there translate to German")
+        self.assertEqual(cfg.read_history()[0]["raw"], "hello there")
+
+    def test_disabled_voice_commands_leave_the_words_alone(self):
+        self.conf["voice_commands_enabled"] = False
+        self.run_chain(transcript="hello translate to French")
+        self.assertEqual(cfg.read_history()[0]["translated_to"], "")
+        self.assertEqual(cfg.read_history()[0]["raw"], "hello translate to French")
+
+    def test_translation_runs_cleanup_even_if_cleanup_is_switched_off(self):
+        self.conf["cleanup_enabled"] = False
+        run = self.run_chain(transcript="hello translate to French")
+        run["cleanup"].assert_called_once()
+        self.assertNotEqual(cfg.read_history()[0]["cleanup_model"], "")
+
+    def test_the_detected_language_picks_the_rules_language(self):
+        self.conf["transcribe_prompt"] = ""
+        run = self.run_chain(transcript="merhaba ingilizceye çevir", detected="tr")
+        prompt = run["cleanup"].call_args.args[3]
+        self.assertEqual(prompt, cfg.TRANSLATE_PROMPT_TR.format(language="ingilizce"))
+
+
 class Busy(DikteTest):
     def test_a_second_run_while_one_is_going_waits_its_turn(self):
         """The microphone is free while a transcript is being cleaned up, so
