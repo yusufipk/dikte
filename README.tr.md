@@ -117,15 +117,16 @@ kurmaz, sayfayı açar. Genel sekmesi bu denetimi kapatır ya da anında çalı�
 Sesi yazıya çevirme ve temizleme, ayarlar penceresinde ayrı ayrı sağlayıcı
 seçer; ikisi de varsayılan olarak burada, kendi modellerinle çalışır. Bulutu
 seçersen sesi yazıya çevirme **OpenAI**, **Groq** ya da **OpenRouter**'da
-(varsayılan `gpt-4o-transcribe`), temizleme OpenRouter'da
+(varsayılan `gpt-4o-transcribe`); temizleme OpenRouter'da
 (`google/gemini-3.5-flash-lite`), **Google AI Studio**'da
-(`gemini-3.5-flash-lite`), **OpenCode Go**'da (`deepseek-v4-flash`) ya da
-kuruluysa Claude Code, Codex veya Antigravity'de çalışır. İlk üçü tek bir HTTP
-isteği; üç CLI ise bunun için birer oturum açar, fazladan giden birkaç saniye de
-oradan gelir. Anahtarları boş bırakırsan `OPENAI_API_KEY`, `GROQ_API_KEY`,
-`OPENROUTER_API_KEY`, `GEMINI_API_KEY` ve `OPENCODE_API_KEY` kullanılır;
-anahtarlar `~/.config/dikte/config.json` içinde, izinler 600, Mac'te ise
-`~/Library/Application Support/Dikte` altında.
+(`gemini-3.5-flash-lite`), **DeepSeek**'te (`deepseek-flash`), **OpenCode
+Go**'da (`deepseek-v4-flash`) ya da kuruluysa Claude Code, Codex veya
+Antigravity'de çalışır. Dört bulut temizleme sağlayıcısı tek bir HTTP isteği
+kullanır; üç CLI ise bunun için birer oturum açar, fazladan giden birkaç saniye
+de oradan gelir. Anahtarları boş bırakırsan `OPENAI_API_KEY`, `GROQ_API_KEY`,
+`OPENROUTER_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY` ve `OPENCODE_API_KEY`
+kullanılır; anahtarlar `~/.config/dikte/config.json` içinde, izinler 600, Mac'te
+ise `~/Library/Application Support/Dikte` altında.
 Temizlemeyi tamamen kapatabilirsin, o zaman ham transkript yapıştırılır; modelin
 yanındaki kutudan düşünme seviyesini de seçebilirsin.
 

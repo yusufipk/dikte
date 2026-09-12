@@ -62,6 +62,7 @@ CHANGED = {
     "groq_api_key": "gsk-test-key",
     "openrouter_api_key": "sk-or-test-key",
     "gemini_api_key": "AIza-test-key",
+    "deepseek_api_key": "sk-deepseek-test-key",
     "transcribe_provider": "openrouter",
     "transcribe_model": "whisper-1",
     "groq_transcribe_model": "whisper-large-v3",
@@ -72,6 +73,7 @@ CHANGED = {
     "cleanup_claude_model": "opus",
     "cleanup_codex_model": "gpt-5",
     "cleanup_gemini_model": "gemini-2.5-flash",
+    "cleanup_deepseek_model": "deepseek-v4-pro",
     "cleanup_agy_model": "gemini-3.1-pro-low",
     "cleanup_reasoning": "high",
     "local_model": "ggml-small.bin",
@@ -363,6 +365,7 @@ class Settings(DikteTest):
         boxes = {"openrouter": window.cleanup_model_row,
                  "opencode": window.cleanup_opencode_model_row,
                  "claude": window.cleanup_claude_model,
+                 "deepseek": window.cleanup_deepseek_model_row,
                  "codex": window.cleanup_codex_model}
         for provider, box in boxes.items():
             with self.subTest(provider=provider):
@@ -394,6 +397,7 @@ class Settings(DikteTest):
             window.file_model,
             window.cleanup_model,
             window.cleanup_gemini_model,
+            window.cleanup_deepseek_model,
             window.cleanup_opencode_model,
             window.cleanup_agy_model,
             window.cleanup_claude_model,
@@ -514,10 +518,11 @@ class Settings(DikteTest):
     def test_a_key_on_file_is_fetched_with_at_open(self):
         window = self.window(self.config(openrouter_api_key="sk-or-x",
                                          gemini_api_key="AIza-x",
+                                         deepseek_api_key="sk-deepseek-x",
                                          opencode_api_key="opencode-x"))
         with mock.patch.object(settings_ui.threading, "Thread") as thread:
             REAL_LOAD_HOSTED_MODELS(window)
-        self.assertEqual(thread.call_count, 3)
+        self.assertEqual(thread.call_count, 4)
 
     def test_the_update_line_names_the_version_that_is_running(self):
         window = self.window(cfg.Config())
@@ -1966,6 +1971,7 @@ class LocalModels(DikteTest):
         window = self.window(cfg.Config())
         rows = {"openrouter": window.cleanup_model_row,
                 "gemini": window.cleanup_gemini_model_row,
+                "deepseek": window.cleanup_deepseek_model_row,
                 "claude": window.cleanup_claude_model,
                 "codex": window.cleanup_codex_model,
                 "agy": window.cleanup_agy_model}

@@ -653,11 +653,10 @@ def _thinking(payload, provider, reasoning):
     """Ask for as much thinking as this provider understands, or for none.
 
     An empty level means "whatever the model does on its own", so nothing is
-    sent. The three mean opposite things by that, which is why the setting is
-    kept per provider: OpenRouter's cleanup models answer straight away, while a
-    local model that was trained to think will think, and a Gemini Flash left to
-    itself thinks too. Cleanup is punctuation rather than a job worth thinking
-    about.
+    sent. Providers mean different things by that: OpenRouter's cleanup models
+    answer straight away, while a local model trained to think, Gemini Flash,
+    and DeepSeek think by default. Cleanup is punctuation rather than a job
+    worth thinking about.
     """
     if not reasoning:
         return
@@ -672,6 +671,14 @@ def _thinking(payload, provider, reasoning):
         # to decide for itself thinks, and thinking about a comma is the second
         # this provider was chosen to save.
         payload["reasoning_effort"] = GEMINI_EFFORT.get(reasoning, reasoning)
+    elif provider == "deepseek":
+        payload["thinking"] = {
+            "type": "disabled" if reasoning == "none" else "enabled"
+        }
+        if reasoning != "none":
+            payload["reasoning_effort"] = {
+                "minimal": "low", "medium": "high", "xhigh": "high",
+            }.get(reasoning, reasoning)
     elif reasoning != "none":
         # The thinking itself is never shown, so ask for it to be left out.
         payload["reasoning"] = {"effort": reasoning, "exclude": True}

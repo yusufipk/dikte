@@ -513,7 +513,7 @@ def cmd_history_clear(opts):
 # --- settings ---------------------------------------------------------------
 
 SECRET_KEYS = ("openai_api_key", "groq_api_key", "openrouter_api_key",
-               "gemini_api_key", "opencode_api_key")
+               "gemini_api_key", "deepseek_api_key", "opencode_api_key")
 
 
 def _mask(key, value):
@@ -711,6 +711,16 @@ def cmd_test_key(opts):
             results["gemini"] = {"ok": True, "message": message}
         except api.ApiError as exc:
             results["gemini"] = {"ok": False, "message": str(exc)}
+    if opts.which in ("deepseek", "all"):
+        try:
+            count = len(api.openai_models(conf.deepseek_key(),
+                                          conf["deepseek_base_url"], "DeepSeek"))
+            results["deepseek"] = {
+                "ok": True,
+                "message": f"connection works, {count} models visible",
+            }
+        except api.ApiError as exc:
+            results["deepseek"] = {"ok": False, "message": str(exc)}
     if opts.which in ("opencode", "all"):
         try:
             count = len(api.openai_models(conf.opencode_key(),
@@ -961,6 +971,7 @@ def cmd_doctor(opts):
     cleanup_service, cleanup_key = {
         "openrouter": ("OpenRouter", conf.openrouter_key()),
         "gemini": ("Google AI Studio", conf.gemini_key()),
+        "deepseek": ("DeepSeek", conf.deepseek_key()),
         "opencode": ("OpenCode Go", conf.opencode_key()),
     }.get(cleaner, ("", ""))
     if cleanup_service:
@@ -1241,7 +1252,8 @@ def build_parser():
     models.set_defaults(func=cmd_models)
     test = leaf(subs, "test-key", "check the API keys")
     test.add_argument("which", nargs="?", default="all",
-                      choices=("all", *cfg.TRANSCRIBERS, "gemini", "opencode"))
+                      choices=("all", *cfg.TRANSCRIBERS, "gemini", "deepseek",
+                               "opencode"))
     test.set_defaults(func=cmd_test_key)
     leaf(subs, "doctor", "keys, programs, and what is missing").set_defaults(func=cmd_doctor)
 
