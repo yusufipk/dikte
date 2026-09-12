@@ -130,13 +130,28 @@ for family, versions in seen.items():
 PY
 
 python3 - "$root/$asset.cdx.json" <<'PY'
-import json, sys
+import json, pathlib, sys
 with open(sys.argv[1], encoding='utf-8') as stream:
     doc = json.load(stream)
 assert doc['bomFormat'] == 'CycloneDX'
 assert doc['specVersion'] == '1.6'
 assert doc['metadata']['component']['name'] == 'whisper-server'
 assert len(doc['components']) >= 3
+root = pathlib.Path(sys.argv[1]).parent
+libraries = [path for path in root.glob('libggml.so.*.*.*')
+             if path.is_file() and not path.is_symlink()]
+assert len(libraries) == 1, libraries
+version = libraries[0].name.removeprefix('libggml.so.')
+assert version.count('.') == 2 and all(
+    part.isdigit() and (part == '0' or not part.startswith('0'))
+    for part in version.split('.')
+), version
+ggml_components = [component for component in doc['components']
+                   if component['name'] == 'ggml']
+assert len(ggml_components) == 1, ggml_components
+ggml = ggml_components[0]
+assert ggml['version'] == version, (ggml['version'], version)
+assert ggml['purl'] == f'pkg:github/ggml-org/ggml@v{version}'
 print('SBOM components:', len(doc['components']))
 PY
 

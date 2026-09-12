@@ -10,6 +10,7 @@ root = Path(os.environ["ROOT"])
 version = os.environ["VERSION"]
 commit = os.environ["COMMIT"]
 epoch = int(os.environ["EPOCH"])
+ggml_version = os.environ["GGML_VERSION"]
 asset = "whisper-bin-ubuntu-vulkan-x64"
 sbom_path = root / f"{asset}.cdx.json"
 
@@ -35,7 +36,7 @@ ts = datetime.datetime.fromtimestamp(
     epoch, datetime.timezone.utc,
 ).isoformat().replace("+00:00", "Z")
 root_ref = f"pkg:github/ggml-org/whisper.cpp@{version}?commit={commit}"
-ggml_ref = "pkg:github/ggml-org/ggml@0.20.2"
+ggml_ref = f"pkg:github/ggml-org/ggml@v{ggml_version}"
 httplib_ref = "pkg:github/yhirose/cpp-httplib@0.20.0"
 json_ref = "pkg:github/nlohmann/json@3.11.2"
 
@@ -78,7 +79,7 @@ sbom = {
             "bom-ref": ggml_ref,
             "group": "ggml-org",
             "name": "ggml",
-            "version": "0.20.2",
+            "version": ggml_version,
             "purl": ggml_ref,
             "licenses": [{"expression": "MIT"}],
             "properties": [{

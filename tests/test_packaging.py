@@ -160,7 +160,7 @@ class WhisperVulkanPackaging(unittest.TestCase):
         self.assertIn("libggml-cpu*.so", script)
         self.assertIn("libggml-vulkan.so", script)
 
-    def test_the_dependency_release_matches_the_installer(self):
+    def test_the_dependency_candidate_can_precede_the_installer_pin(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
         script = (PACKAGING / "build-package.sh").read_text(
             encoding="utf-8")
@@ -170,11 +170,12 @@ class WhisperVulkanPackaging(unittest.TestCase):
         self.assertIn("RELEASE_TAG: whisper.cpp-v${{ inputs.whisper_version }}",
                       workflow)
         self.assertIn("WHISPER_VERSION:=1.9.3", script)
-        commit = "371b5a7561823ab2bb32142d2751e35e7534727b"
-        self.assertIn(f"WHISPER_COMMIT:={commit}", script)
+        self.assertIn("REVIEWED_WHISPER_VERSION: \"1.9.4\"", workflow)
+        commit = "927cfce34f31707e17f2bff35c349632fb9e2c3a"
+        digest = "042769c8e70c1f603b0eac8dd57bca4eaaf369f68e1e3cf6a25d1b5984aba055"
         self.assertIn(commit, workflow)
+        self.assertIn(digest, workflow)
         self.assertIn(ggml.MANAGED_WHISPER_VULKAN, workflow)
-        self.assertIn(ggml.MANAGED_WHISPER_SHA256, workflow)
 
     def test_the_bundle_carries_metadata_and_all_required_licenses(self):
         script = (PACKAGING / "build-package.sh").read_text(
@@ -194,6 +195,7 @@ class WhisperVulkanPackaging(unittest.TestCase):
                 "VERSION": "1.9.3",
                 "COMMIT": "371b5a7561823ab2bb32142d2751e35e7534727b",
                 "EPOCH": "1787219223",
+                "GGML_VERSION": "9.8.7",
             }
             with sbom.open("w", encoding="utf-8") as output:
                 subprocess.run(
@@ -209,8 +211,11 @@ class WhisperVulkanPackaging(unittest.TestCase):
 
     def test_the_sbom_lists_ggml(self):
         document, _ = self._make_test_sbom()
-        names = {component["name"] for component in document["components"]}
-        self.assertIn("ggml", names)
+        ggml_component = next(component for component in document["components"]
+                              if component["name"] == "ggml")
+        self.assertEqual(ggml_component["version"], "9.8.7")
+        self.assertEqual(ggml_component["purl"],
+                         "pkg:github/ggml-org/ggml@v9.8.7")
 
 
 if __name__ == "__main__":

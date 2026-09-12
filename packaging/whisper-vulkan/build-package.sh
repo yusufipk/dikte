@@ -54,6 +54,15 @@ cp -a "$build/bin"/libggml.so* "$root/"
 cp -a "$build/bin"/libggml-base.so* "$root/"
 cp -a "$build/bin"/libggml-cpu*.so* "$root/"
 cp -a "$build/bin"/libggml-vulkan.so* "$root/"
+ggml_libraries=()
+for library in "$root"/libggml.so.*.*.*; do
+  if [[ -f "$library" && ! -L "$library" ]]; then
+    ggml_libraries+=("$library")
+  fi
+done
+test "${#ggml_libraries[@]}" -eq 1
+GGML_VERSION="${ggml_libraries[0]##*/libggml.so.}"
+[[ "$GGML_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
 
 # Strip real ELF files only; preserve the SONAME symlink chains.
 while IFS= read -r -d '' file; do
@@ -106,6 +115,7 @@ EOF
 
 # A deterministic CycloneDX sidecar generated from the files actually shipped.
 ROOT="$root" VERSION="$WHISPER_VERSION" COMMIT="$WHISPER_COMMIT" EPOCH="$SOURCE_DATE_EPOCH" \
+GGML_VERSION="$GGML_VERSION" \
 python3 /packaging/make-sbom.py > "$root/$asset.cdx.json"
 
 (

@@ -1,9 +1,9 @@
 name: whisper.cpp Vulkan bundle
 
 # Only what the bundle is built from. Compiling the Vulkan shaders takes
-# tens of minutes, and a README typo is not worth one: what ties ggml.py to
-# this release is a handful of assertions in tests/test_packaging.py, and
-# those run on every pull request in milliseconds.
+# tens of minutes, and a README typo is not worth one. The dependency bundle
+# can be reviewed and published before the installer switches to it; both
+# contracts are covered by tests/test_packaging.py.
 on:
   pull_request:
     paths:
@@ -14,12 +14,12 @@ on:
       whisper_version:
         description: Upstream whisper.cpp version (without v)
         required: true
-        default: "1.9.3"
+        default: "1.9.4"
         type: string
       whisper_commit:
         description: Peeled commit SHA for that reviewed upstream tag
         required: true
-        default: "371b5a7561823ab2bb32142d2751e35e7534727b"
+        default: "927cfce34f31707e17f2bff35c349632fb9e2c3a"
         type: string
       expected_sha256:
         description: >-
@@ -43,10 +43,10 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
-  WHISPER_VERSION: ${{ inputs.whisper_version || '1.9.3' }}
-  WHISPER_COMMIT: ${{ inputs.whisper_commit || '371b5a7561823ab2bb32142d2751e35e7534727b' }}
-  REVIEWED_WHISPER_VERSION: "1.9.3"
-  REVIEWED_WHISPER_SHA256: c25ca76504144da488eb74441390a7b9aa7ce547e5f2f391cbd831253c9b54d8
+  WHISPER_VERSION: ${{ inputs.whisper_version || '1.9.4' }}
+  WHISPER_COMMIT: ${{ inputs.whisper_commit || '927cfce34f31707e17f2bff35c349632fb9e2c3a' }}
+  REVIEWED_WHISPER_VERSION: "1.9.4"
+  REVIEWED_WHISPER_SHA256: 042769c8e70c1f603b0eac8dd57bca4eaaf369f68e1e3cf6a25d1b5984aba055
 
 jobs:
   build:
