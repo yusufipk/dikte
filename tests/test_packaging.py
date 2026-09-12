@@ -44,6 +44,7 @@ class WhisperVulkanPackaging(unittest.TestCase):
                      "Publish dependency release"):
             self.assertIn(step, workflow)
         self.assertNotRegex(workflow, r"uses: [^\n]+@v\d+(?:\s|$)")
+        self.assertIn("SOURCE_DIR=vendor/whisper.cpp", workflow)
 
     def test_publish_is_safe_for_dikte_and_limited_to_reviewed_master(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
@@ -160,7 +161,7 @@ class WhisperVulkanPackaging(unittest.TestCase):
         self.assertIn("libggml-cpu*.so", script)
         self.assertIn("libggml-vulkan.so", script)
 
-    def test_the_dependency_release_matches_the_installer(self):
+    def test_the_dependency_candidate_can_precede_the_installer_pin(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
         script = (PACKAGING / "build-package.sh").read_text(
             encoding="utf-8")
@@ -170,11 +171,12 @@ class WhisperVulkanPackaging(unittest.TestCase):
         self.assertIn("RELEASE_TAG: whisper.cpp-v${{ inputs.whisper_version }}",
                       workflow)
         self.assertIn("WHISPER_VERSION:=1.9.3", script)
-        commit = "371b5a7561823ab2bb32142d2751e35e7534727b"
-        self.assertIn(f"WHISPER_COMMIT:={commit}", script)
+        self.assertIn("REVIEWED_WHISPER_VERSION: \"1.9.4\"", workflow)
+        commit = "927cfce34f31707e17f2bff35c349632fb9e2c3a"
+        digest = "381ec8f07071d616e243b94d275e29763d6d2b4c7204017c166caf389e1f2349"
         self.assertIn(commit, workflow)
+        self.assertIn(digest, workflow)
         self.assertIn(ggml.MANAGED_WHISPER_VULKAN, workflow)
-        self.assertIn(ggml.MANAGED_WHISPER_SHA256, workflow)
 
     def test_the_bundle_carries_metadata_and_all_required_licenses(self):
         script = (PACKAGING / "build-package.sh").read_text(
@@ -186,11 +188,26 @@ class WhisperVulkanPackaging(unittest.TestCase):
 
     def _make_test_sbom(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = pathlib.Path(temporary)
+            temporary = pathlib.Path(temporary)
+            root = temporary / "bundle"
+            source = temporary / "source"
+            root.mkdir()
+            (source / "examples/server").mkdir(parents=True)
             (root / "whisper-server").write_bytes(b"elf")
+            (root / "libggml.so.9.8.7").write_bytes(b"elf")
+            (source / "examples/server/httplib.h").write_text(
+                '#define CPPHTTPLIB_VERSION "6.5.4"\n', encoding="utf-8",
+            )
+            (source / "examples/json.hpp").write_text(
+                "#define NLOHMANN_JSON_VERSION_MAJOR 3\n"
+                "#define NLOHMANN_JSON_VERSION_MINOR 2\n"
+                "#define NLOHMANN_JSON_VERSION_PATCH 1\n",
+                encoding="utf-8",
+            )
             sbom = root / "whisper-bin-ubuntu-vulkan-x64.cdx.json"
             environment = os.environ | {
                 "ROOT": str(root),
+                "SOURCE_DIR": str(source),
                 "VERSION": "1.9.3",
                 "COMMIT": "371b5a7561823ab2bb32142d2751e35e7534727b",
                 "EPOCH": "1787219223",
@@ -207,10 +224,20 @@ class WhisperVulkanPackaging(unittest.TestCase):
         names = {component["name"] for component in document["components"]}
         self.assertNotIn(sbom_name, names)
 
-    def test_the_sbom_lists_ggml(self):
+    def test_the_sbom_derives_vendored_component_versions(self):
         document, _ = self._make_test_sbom()
-        names = {component["name"] for component in document["components"]}
-        self.assertIn("ggml", names)
+        components = {component["name"]: component
+                      for component in document["components"]}
+        expected = {
+            "ggml": "9.8.7",
+            "cpp-httplib": "6.5.4",
+            "json": "3.2.1",
+        }
+        for name, version in expected.items():
+            self.assertEqual(components[name]["version"], version)
+            self.assertEqual(
+                components[name]["purl"].rsplit("@", 1)[1], f"v{version}",
+            )
 
 
 if __name__ == "__main__":

@@ -54,7 +54,6 @@ cp -a "$build/bin"/libggml.so* "$root/"
 cp -a "$build/bin"/libggml-base.so* "$root/"
 cp -a "$build/bin"/libggml-cpu*.so* "$root/"
 cp -a "$build/bin"/libggml-vulkan.so* "$root/"
-
 # Strip real ELF files only; preserve the SONAME symlink chains.
 while IFS= read -r -d '' file; do
   if file "$file" | grep -q ELF; then
@@ -105,7 +104,8 @@ cat > "$root/BUILD-INFO.json" <<EOF
 EOF
 
 # A deterministic CycloneDX sidecar generated from the files actually shipped.
-ROOT="$root" VERSION="$WHISPER_VERSION" COMMIT="$WHISPER_COMMIT" EPOCH="$SOURCE_DATE_EPOCH" \
+ROOT="$root" SOURCE_DIR="$source_copy" VERSION="$WHISPER_VERSION" \
+COMMIT="$WHISPER_COMMIT" EPOCH="$SOURCE_DATE_EPOCH" \
 python3 /packaging/make-sbom.py > "$root/$asset.cdx.json"
 
 (

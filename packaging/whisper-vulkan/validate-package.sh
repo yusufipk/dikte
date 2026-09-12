@@ -129,14 +129,54 @@ for family, versions in seen.items():
     print(f'maximum {family} symbol:', '.'.join(map(str, max(versions))))
 PY
 
-python3 - "$root/$asset.cdx.json" <<'PY'
-import json, sys
+python3 - "$root/$asset.cdx.json" "$SOURCE_DIR" <<'PY'
+import json, pathlib, re, sys
 with open(sys.argv[1], encoding='utf-8') as stream:
     doc = json.load(stream)
 assert doc['bomFormat'] == 'CycloneDX'
 assert doc['specVersion'] == '1.6'
 assert doc['metadata']['component']['name'] == 'whisper-server'
 assert len(doc['components']) >= 3
+root = pathlib.Path(sys.argv[1]).parent
+source = pathlib.Path(sys.argv[2])
+
+def one_match(pattern, path):
+    matches = re.findall(pattern, path.read_text(encoding='utf-8'), re.MULTILINE)
+    assert len(matches) == 1, (path, matches)
+    return matches[0]
+
+def numeric_version(version):
+    assert re.fullmatch(
+        r'(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)',
+        version,
+    ), version
+    return version
+
+libraries = [path for path in root.glob('libggml.so.*.*.*')
+             if path.is_file() and not path.is_symlink()]
+assert len(libraries) == 1, libraries
+ggml_version = numeric_version(libraries[0].name.removeprefix('libggml.so.'))
+httplib_version = numeric_version(one_match(
+    r'^#define\s+CPPHTTPLIB_VERSION\s+"([^"]+)"\s*$',
+    source / 'examples/server/httplib.h',
+))
+json_header = source / 'examples/json.hpp'
+json_version = numeric_version('.'.join(one_match(
+    rf'^#define\s+NLOHMANN_JSON_VERSION_{part}\s+([0-9]+)(?:\s|$).*',
+    json_header,
+) for part in ('MAJOR', 'MINOR', 'PATCH')))
+expected = {
+    'ggml': ('ggml-org/ggml', ggml_version),
+    'cpp-httplib': ('yhirose/cpp-httplib', httplib_version),
+    'json': ('nlohmann/json', json_version),
+}
+for name, (repository, version) in expected.items():
+    components = [component for component in doc['components']
+                  if component['name'] == name]
+    assert len(components) == 1, (name, components)
+    component = components[0]
+    assert component['version'] == version, (name, component['version'], version)
+    assert component['purl'] == f'pkg:github/{repository}@v{version}'
 print('SBOM components:', len(doc['components']))
 PY
 
