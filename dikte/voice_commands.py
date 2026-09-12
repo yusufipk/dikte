@@ -117,7 +117,7 @@ def process_commands(text, config):
 
 def available_commands():
     """Return list of available commands for UI/help.
-    
+
     Returns:
         List of (trigger, description) tuples
     """
@@ -128,3 +128,28 @@ def available_commands():
         trigger = trigger.split('|')[0]  # Take first variant
         commands.append((trigger, desc))
     return commands
+
+
+def snippets_to_text(snippets):
+    """Render the {trigger: replacement} config value as editable lines.
+
+    One "trigger: replacement" per line, which is what the settings window
+    shows and what snippets_from_text() reads back.
+    """
+    return "\n".join(f"{trigger}: {replacement}"
+                      for trigger, replacement in snippets.items())
+
+
+def snippets_from_text(text):
+    """Parse the settings window's textbox back into {trigger: replacement}.
+
+    A line with no colon, or an empty trigger, is dropped rather than raising:
+    it is what a half-typed line looks like while the user is still editing.
+    """
+    snippets = {}
+    for line in text.splitlines():
+        trigger, sep, replacement = line.partition(":")
+        trigger = trigger.strip()
+        if sep and trigger:
+            snippets[trigger] = replacement.strip()
+    return snippets

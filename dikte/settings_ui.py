@@ -30,6 +30,7 @@ from . import ipc
 from . import meeting
 from . import paste
 from . import update
+from . import voice_commands
 from .filetranscribe import FileTranscriber
 from .i18n import t
 from . import theme
@@ -1605,6 +1606,34 @@ class SettingsWindow(QDialog):
         self.transcribe_prompt = QPlainTextEdit()
         self.transcribe_prompt.setMaximumHeight(90)
         layout.addWidget(self.transcribe_prompt)
+
+        voice = QGroupBox(t("Voice commands"))
+        voice_layout = QVBoxLayout(voice)
+        self.voice_commands_enabled = QCheckBox(
+            t("Say a command instead of typing it")
+        )
+        builtin = ", ".join(sorted({trigger for trigger, _ in
+                                     voice_commands.available_commands()}))
+        self.voice_commands_enabled.setToolTip(
+            t("Applied to the raw transcript before cleanup: {commands}.",
+              commands=builtin)
+        )
+        voice_layout.addWidget(self.voice_commands_enabled)
+        voice_layout.addWidget(QLabel(t("Custom snippets")))
+        self.voice_snippets = QPlainTextEdit()
+        self.voice_snippets.setMaximumHeight(70)
+        self.voice_snippets.setPlaceholderText(
+            t("my email: name@example.com") + "\n" +
+            t("my signature: Best regards, Jane Doe")
+        )
+        voice_layout.addWidget(self.voice_snippets)
+        snippet_hint = QLabel(t(
+            "One “trigger: replacement” per line. Saying the trigger "
+            "while dictating is replaced with the text after the colon."
+        ))
+        snippet_hint.setWordWrap(True)
+        voice_layout.addWidget(snippet_hint)
+        layout.addWidget(voice)
         return page
 
     def _assistant_tab(self):
@@ -2376,6 +2405,11 @@ class SettingsWindow(QDialog):
         )
         self.transcribe_prompt.setPlainText(conf["transcribe_prompt"])
 
+        self.voice_commands_enabled.setChecked(conf["voice_commands_enabled"])
+        self.voice_snippets.setPlainText(
+            voice_commands.snippets_to_text(conf["voice_snippets"])
+        )
+
         self._select_data(self.assistant_provider, conf["assistant_provider"])
         self.assistant_model.setCurrentText(conf["assistant_model"])
         self._select_data(self.assistant_permission, conf["assistant_permission_mode"])
@@ -2511,6 +2545,11 @@ class SettingsWindow(QDialog):
             self._loaded_defaults["file"], cfg.default_file_cleanup_prompt())
             else file_prompt)
         conf["transcribe_prompt"] = self.transcribe_prompt.toPlainText().strip()
+
+        conf["voice_commands_enabled"] = self.voice_commands_enabled.isChecked()
+        conf["voice_snippets"] = voice_commands.snippets_from_text(
+            self.voice_snippets.toPlainText()
+        )
 
         conf["assistant_provider"] = self.assistant_provider.currentData() or "claude"
         conf["assistant_model"] = (self.assistant_model.currentText().strip()

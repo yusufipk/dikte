@@ -122,5 +122,41 @@ class VoiceCommands(unittest.TestCase):
             self.assertIsInstance(desc, str)
 
 
+class SnippetsTextRoundTrip(unittest.TestCase):
+    """The settings window stores snippets as text; config keeps a dict."""
+
+    def test_empty_dict_is_empty_text(self):
+        self.assertEqual(voice_commands.snippets_to_text({}), "")
+
+    def test_empty_text_is_empty_dict(self):
+        self.assertEqual(voice_commands.snippets_from_text(""), {})
+
+    def test_round_trip(self):
+        snippets = {"my email": "tunahan@example.com", "company name": "Acme Corp"}
+        text = voice_commands.snippets_to_text(snippets)
+        self.assertEqual(voice_commands.snippets_from_text(text), snippets)
+
+    def test_blank_and_malformed_lines_are_dropped(self):
+        text = "my email: tunahan@example.com\n\nno colon here\n: nothing before colon"
+        self.assertEqual(
+            voice_commands.snippets_from_text(text),
+            {"my email": "tunahan@example.com"},
+        )
+
+    def test_replacement_may_contain_a_colon(self):
+        text = "my url: https://example.com:8080/path"
+        self.assertEqual(
+            voice_commands.snippets_from_text(text),
+            {"my url": "https://example.com:8080/path"},
+        )
+
+    def test_surrounding_whitespace_is_trimmed(self):
+        text = "  my email  :   tunahan@example.com  "
+        self.assertEqual(
+            voice_commands.snippets_from_text(text),
+            {"my email": "tunahan@example.com"},
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

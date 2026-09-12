@@ -367,6 +367,17 @@ TR = {
         "Sık kullandığın isimler ve terimler (isteğe bağlı). Transkripsiyon "
         "modeline ipucu, temizleme modeline sözlük olarak gider; böylece yanlış "
         "çıkanları düzeltebilir.",
+    "Voice commands": "Sesli komutlar",
+    "Say a command instead of typing it": "Yazmak yerine söyle",
+    "Applied to the raw transcript before cleanup: {commands}.":
+        "Temizlemeden önce ham metne uygulanır: {commands}.",
+    "Custom snippets": "Özel kısayollar",
+    "my email: name@example.com": "e-postam: isim@ornek.com",
+    "my signature: Best regards, Jane Doe": "imzam: Saygılarımla, Jane Doe",
+    "One “trigger: replacement” per line. Saying the trigger "
+    "while dictating is replaced with the text after the colon.":
+        "Her satırda bir “tetikleyici: karşılık”. Dikte sırasında "
+        "tetikleyiciyi söylemek, iki noktadan sonraki metinle değiştirilir.",
 
     # --- settings: audio file --------------------------------------------
     "Transcribe an existing audio or video file with the same models.":
