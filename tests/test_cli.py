@@ -315,6 +315,101 @@ class ConfigCommands(DikteTest):
         self.assertEqual(code, 0)
         self.assertEqual(cfg.Config()["cleanup_model"], cfg.DEFAULTS["cleanup_model"])
 
+    def test_setting_device_auto_restores_gpu_processing(self):
+        self.write_config({"local_device": "cpu", "local_gpu": False})
+        with mock.patch.object(ipc, "send"):
+            code, _, _ = self.run_cmd(
+                cli.cmd_config_set, key="local_device", value="auto"
+            )
+        self.assertEqual(code, 0)
+        conf = cfg.Config()
+        self.assertEqual((conf["local_device"], conf["local_gpu"]), ("auto", True))
+        conf.apply_local()
+        self.addCleanup(ggml.whisper.configure, gpu=True, device="auto")
+        self.assertTrue(ggml.whisper.settings()["gpu"])
+        self.assertEqual(ggml.whisper.settings()["device"], "auto")
+
+    def test_setting_device_cpu_disables_legacy_gpu_processing(self):
+        self.write_config({"local_device": "auto", "local_gpu": True})
+        with mock.patch.object(ipc, "send"):
+            code, _, _ = self.run_cmd(
+                cli.cmd_config_set, key="local_device", value="cpu"
+            )
+        self.assertEqual(code, 0)
+        conf = cfg.Config()
+        self.assertEqual((conf["local_device"], conf["local_gpu"]), ("cpu", False))
+        conf.apply_local()
+        self.addCleanup(ggml.whisper.configure, gpu=True, device="auto")
+        self.assertFalse(ggml.whisper.settings()["gpu"])
+
+    def test_setting_an_explicit_device_enables_legacy_gpu_processing(self):
+        device = "vulkan:00112233445566778899aabbccddeeff"
+        self.write_config({"local_device": "cpu", "local_gpu": False})
+        with mock.patch.object(ipc, "send"):
+            code, _, _ = self.run_cmd(
+                cli.cmd_config_set, key="local_device", value=device
+            )
+        self.assertEqual(code, 0)
+        conf = cfg.Config()
+        self.assertEqual((conf["local_device"], conf["local_gpu"]), (device, True))
+
+    def test_resetting_device_restores_gpu_processing(self):
+        self.write_config({"local_device": "cpu", "local_gpu": False})
+        with mock.patch.object(ipc, "send"):
+            code, _, _ = self.run_cmd(
+                cli.cmd_config_reset, key=["local_device"], all=False
+            )
+        self.assertEqual(code, 0)
+        conf = cfg.Config()
+        self.assertEqual((conf["local_device"], conf["local_gpu"]), ("auto", True))
+
+    def test_setting_the_legacy_gpu_flag_updates_the_device(self):
+        for value, expected in (("true", ("auto", True)),
+                                ("false", ("cpu", False))):
+            with self.subTest(value=value):
+                self.write_config({"local_device": "cpu", "local_gpu": False})
+                with mock.patch.object(ipc, "send"):
+                    code, _, _ = self.run_cmd(
+                        cli.cmd_config_set, key="local_gpu", value=value
+                    )
+                self.assertEqual(code, 0)
+                conf = cfg.Config()
+                self.assertEqual(
+                    (conf["local_device"], conf["local_gpu"]), expected
+                )
+
+    def test_resetting_the_legacy_gpu_flag_updates_the_device(self):
+        self.write_config({"local_device": "cpu", "local_gpu": False})
+        with mock.patch.object(ipc, "send"):
+            code, _, _ = self.run_cmd(
+                cli.cmd_config_reset, key=["local_gpu"], all=False
+            )
+        self.assertEqual(code, 0)
+        conf = cfg.Config()
+        self.assertEqual((conf["local_device"], conf["local_gpu"]), ("auto", True))
+
+    def test_enabling_the_legacy_gpu_flag_preserves_an_explicit_device(self):
+        device = "vulkan:00112233445566778899aabbccddeeff"
+        self.write_config({"local_device": device, "local_gpu": False})
+        with mock.patch.object(ipc, "send"):
+            code, _, _ = self.run_cmd(
+                cli.cmd_config_set, key="local_gpu", value="true"
+            )
+        self.assertEqual(code, 0)
+        conf = cfg.Config()
+        self.assertEqual((conf["local_device"], conf["local_gpu"]), (device, True))
+
+    def test_disabling_the_legacy_gpu_flag_replaces_an_explicit_device(self):
+        device = "vulkan:00112233445566778899aabbccddeeff"
+        self.write_config({"local_device": device, "local_gpu": True})
+        with mock.patch.object(ipc, "send"):
+            code, _, _ = self.run_cmd(
+                cli.cmd_config_set, key="local_gpu", value="false"
+            )
+        self.assertEqual(code, 0)
+        conf = cfg.Config()
+        self.assertEqual((conf["local_device"], conf["local_gpu"]), ("cpu", False))
+
     def test_resetting_nothing_asks_what_to_reset(self):
         code, _, err = self.run_cmd(cli.cmd_config_reset, key=[], all=False)
         self.assertEqual(code, 2)
@@ -324,7 +419,12 @@ class ConfigCommands(DikteTest):
         with mock.patch.object(ipc, "send"):
             self.run_cmd(cli.cmd_config_set, key="cleanup_model", value="some/model")
             self.run_cmd(cli.cmd_config_reset, key=[], all=True)
-        self.assertEqual(cfg.Config()["cleanup_model"], cfg.DEFAULTS["cleanup_model"])
+        conf = cfg.Config()
+        self.assertEqual(conf["cleanup_model"], cfg.DEFAULTS["cleanup_model"])
+        self.assertEqual(
+            (conf["local_device"], conf["local_gpu"]),
+            (cfg.DEFAULTS["local_device"], cfg.DEFAULTS["local_gpu"]),
+        )
 
     def test_where_things_are_stored(self):
         _, out, _ = self.run_cmd(cli.cmd_config_path, json=True)

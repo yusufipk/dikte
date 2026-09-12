@@ -63,6 +63,12 @@ QPushButton#mode:hover { background: @hover; }
 QPushButton#mode:checked { background: @accent; color: @accent_text; border-color: @accent; }
 QPushButton#mode:focus { border: 2px solid @accent; }
 QPushButton#settings { padding: 0; min-height: 30px; min-width: 32px; }
+QToolButton#disclosure {
+    background: transparent; border: none; border-radius: 5px;
+    padding: 5px 7px; text-align: left; min-height: 20px;
+}
+QToolButton#disclosure:hover, QToolButton#disclosure:checked { background: @hover; }
+QToolButton#disclosure:focus { border: 1px solid @accent; }
 QGroupBox { border: 1px solid @border; border-radius: 8px; margin-top: 14px; padding: 8px; }
 QGroupBox::title { subcontrol-origin: margin; left: 12px; padding: 0 5px; }
 QLineEdit, QPlainTextEdit, QListWidget, QComboBox, QSpinBox {

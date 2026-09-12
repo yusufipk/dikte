@@ -48,6 +48,7 @@ import urllib.error
 import urllib.request
 import zipfile
 
+from . import hardware
 from . import hub
 from . import paths
 from .i18n import t
@@ -532,6 +533,92 @@ def vulkan_missing(program):
             and _read_record(program).get("backend") == "processor")
 
 
+def _vulkan_backend_names(log):
+    """Names in Vulkan-local order; callers must verify the other backends."""
+    indexed = {}
+    for line in log.splitlines():
+        if not line.startswith("ggml_vulkan:"):
+            continue
+        ordinal, separator, details = line[len("ggml_vulkan:"):].partition("=")
+        if not separator:
+            continue
+        try:
+            ordinal = int(ordinal.strip())
+        except ValueError:
+            continue
+        name = details.partition(" | ")[0].strip()
+        if ordinal in indexed and indexed[ordinal] != name:
+            return ()
+        if name:
+            indexed[ordinal] = name
+    if sorted(indexed) != list(range(len(indexed))):
+        return ()
+    return tuple(indexed[index] for index in range(len(indexed)))
+
+
+def managed_vulkan_in_use(binary):
+    """Whether this is the recorded managed Vulkan binary (not backend proof)."""
+    record = _read_record(WHISPER)
+    installed = record.get("binary") or ""
+    if record.get("backend") != "vulkan" or not installed:
+        return False
+    try:
+        return pathlib.Path(binary).resolve() == pathlib.Path(installed).resolve()
+    except OSError:
+        return False
+
+
+def managed_vulkan_devices(binary, devices=None):
+    """Vulkan cards in the managed whisper binary's actual -dev order."""
+    if not managed_vulkan_in_use(binary) or any(
+        name in os.environ for name in (
+            "GGML_VK_VISIBLE_DEVICES", "GGML_BACKEND_PATH",
+            "LD_PRELOAD", "DYLD_LIBRARY_PATH",
+            "DYLD_FALLBACK_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES",
+        )
+    ):
+        # Do not rewrite the user's loader environment. Auto/CPU can still
+        # use it, but its backend ordering is outside our mapping contract.
+        return ()
+    # PyInstaller sets LD_LIBRARY_PATH for ordinary AppImages. Probe with the
+    # same inherited environment as launch and verify the loaded backends below.
+    try:
+        binary = str(pathlib.Path(binary).resolve())
+        completed = subprocess.run(
+            [binary, "--help"],
+            # The pinned GGML loader searches executable directory AND cwd.
+            # Use the same bundle-only search context as the actual server.
+            cwd=str(pathlib.Path(binary).parent),
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, UnicodeError, subprocess.TimeoutExpired):
+        return ()
+    if completed.returncode != 0:
+        return ()
+    log = (completed.stdout or "") + "\n" + (completed.stderr or "")
+    # Vulkan's local indices are Whisper's GPU indices only when no other
+    # device backend is loaded. Metadata/path identity alone cannot prove it.
+    loaded = set()
+    for line in log.splitlines():
+        if line.startswith("load_backend: loaded "):
+            backend, separator, source = line[len("load_backend: loaded "):].partition(
+                " backend from "
+            )
+            if not separator or not source.strip() or backend not in {"CPU", "Vulkan"}:
+                return ()
+            loaded.add(backend)
+    if "Vulkan" not in loaded:
+        return ()
+    inventory = hardware.graphics_devices() if devices is None else devices
+    return hardware.match_backend_devices(
+        inventory, _vulkan_backend_names(log)
+    )
+
+
 def program_path(program, custom=""):
     """Which copy of the program to run, or "" when there is none.
 
@@ -541,7 +628,12 @@ def program_path(program, custom=""):
     """
     custom = (custom or "").strip()
     if custom:
-        return custom if os.path.isfile(custom) and os.access(custom, os.X_OK) else ""
+        if not os.path.isfile(custom) or not os.access(custom, os.X_OK):
+            return ""
+        try:
+            return str(pathlib.Path(custom).resolve())
+        except (OSError, RuntimeError):
+            return ""
     return shutil.which(program.binary) or installed_program(program)
 
 
@@ -1483,6 +1575,15 @@ class Server:
 
     def _launch(self, settings):
         args = self._build(settings)        # raises LocalError when unusable
+        context = {}
+        if self.program == WHISPER and managed_vulkan_in_use(args[0]):
+            args = list(args)
+            # Resolve relative inputs before changing the child's directory;
+            # never chdir the application or alter custom/system/llama runs.
+            args[0] = str(pathlib.Path(args[0]).resolve())
+            model_index = args.index("-m") + 1
+            args[model_index] = str(pathlib.Path(args[model_index]).resolve())
+            context["cwd"] = str(pathlib.Path(args[0]).parent)
         last = ""
         for _ in range(3):
             port = _free_port()
@@ -1501,6 +1602,7 @@ class Server:
                         stdin=subprocess.DEVNULL,
                         # No console window of its own on Windows.
                         creationflags=paths.NO_WINDOW,
+                        **context,
                     )
             except OSError as exc:
                 raise LocalError(t("Could not start {name}: {error}",
@@ -1762,8 +1864,34 @@ def _whisper_args(settings):
     ]
     if int(settings["threads"]) > 0:
         args += ["-t", str(int(settings["threads"]))]
-    if not settings["gpu"]:
+    selection = settings.get("device", "auto")
+    if not settings["gpu"] or selection == "cpu":
         args.append("-ng")
+    elif selection != "auto":
+        if isinstance(selection, int):
+            raise LocalError(t(
+                "The saved processing device is invalid. Choose a device in Settings."
+            ))
+        else:
+            if not managed_vulkan_in_use(binary):
+                raise LocalError(t(
+                    "A specific graphics card can only be selected with "
+                    "Dikte's managed Vulkan program. Choose Automatic or "
+                    "Processor in Settings."
+                ))
+            device = next(
+                (candidate for candidate in managed_vulkan_devices(binary)
+                 if candidate.identifier == selection),
+                None,
+            )
+            if device is None:
+                raise LocalError(t(
+                    "The selected graphics card is not available. "
+                    "Choose another processing device in Settings."
+                ))
+            backend_index = device.backend_index
+        if backend_index >= 0:
+            args += ["-dev", str(backend_index)]
     return args
 
 
@@ -1789,6 +1917,7 @@ whisper = Server(WHISPER, _whisper_args, {
     "model": "",
     "threads": 0,
     "gpu": True,
+    "device": "auto",
     "binary": "",
 })
 
