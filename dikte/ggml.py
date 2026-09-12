@@ -623,8 +623,9 @@ def install_program(program, tag="", on_progress=None, should_stop=None,
         if sys.platform == "darwin" and program is WHISPER:
             raise LocalError(t(
                 "whisper.cpp has no macOS build, and Homebrew's leaves out the "
-                "server. Build whisper-server yourself and give its path here, "
-                "or transcribe in the cloud. See the README."
+                "server. Build it (cmake -B build -DWHISPER_BUILD_SERVER=ON "
+                "-DGGML_METAL=ON && cmake --build build -j), put the binary "
+                "on the PATH, or transcribe in the cloud. See the README."
             ))
         raise LocalError(t("{repo} {tag} has no build for this machine.",
                            repo=program.repo, tag=tag))
