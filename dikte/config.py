@@ -492,6 +492,11 @@ DEFAULTS = {
     "local_idle_unload": True,
     "local_idle_minutes": 10,
 
+
+    # --- voice commands ------------------------------------------------------
+    "voice_commands_enabled": False,  # process voice commands before cleanup
+    "voice_snippets": {},             # custom snippets: {"trigger": "replacement"}
+
     "cleanup_prompt": "",           # empty -> language-specific default
     "auto_paste": True,
     "paste_shortcut": paste.desktop().shortcuts[0],   # cmd+v on a Mac

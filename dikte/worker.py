@@ -24,6 +24,7 @@ from . import config as cfg
 from . import i18n
 from . import paste
 from . import vad
+from . import voice_commands
 from .i18n import t
 
 CHUNK_SECONDS = audio.CHUNK_FRAMES / audio.RATE
@@ -143,6 +144,11 @@ class Pipeline(QObject):
                 self._discard(wav_path)
                 self.failed.emit(t("Discarded a stock phrase: “{text}”", text=raw[:60]))
                 return
+            # Process voice commands before cleanup
+            text = voice_commands.process_commands(raw, conf)
+            if text != raw:
+                # Commands were applied, use processed text
+                raw = text
 
             text = raw
             warning = ""
