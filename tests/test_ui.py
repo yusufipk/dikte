@@ -88,6 +88,8 @@ CHANGED = {
     "cleanup_prompt": "Only fix the punctuation.",
     "file_cleanup_prompt": "Keep the stamps where they are.",
     "transcribe_prompt": "Paraşüt, OpenFrame",
+    "voice_commands_enabled": True,
+    "voice_snippets": {"my email": "tunahan@example.com"},
     "assistant_provider": "codex",
     "assistant_model": "opus",
     "assistant_permission_mode": "manual",

@@ -24,6 +24,7 @@ from . import config as cfg
 from . import i18n
 from . import paste
 from . import vad
+from . import voice_commands
 from .i18n import t
 
 CHUNK_SECONDS = audio.CHUNK_FRAMES / audio.RATE
@@ -143,6 +144,19 @@ class Pipeline(QObject):
                 self._discard(wav_path)
                 self.failed.emit(t("Discarded a stock phrase: “{text}”", text=raw[:60]))
                 return
+            # Process voice commands before cleanup
+            text = voice_commands.process_commands(raw, conf)
+            if text != raw:
+                # Commands were applied, use processed text
+                raw = text
+
+            # A "translate to <language>" command is pulled out the same way,
+            # but it does not rewrite raw: the transcript stays what was
+            # actually said, and only the cleanup step below is told to
+            # translate it rather than merely tidy it.
+            text, translate_to = voice_commands.extract_translation(raw, conf)
+            if translate_to:
+                raw = text
 
             text = raw
             warning = ""
@@ -154,14 +168,16 @@ class Pipeline(QObject):
             # ask path runs cleanup under a different setting, and the record
             # should say what happened, not what one of the two gates implies.
             cleaned = False
-            # Claude reads through “eee” and “hani” without help, so a dictation
-            # on its way there is normally sent as it was heard, one API call and
-            # a second or two lighter.
-            if (conf["assistant_cleanup"] if ask else conf["cleanup_enabled"]):
-                self.stage.emit(t("Cleaning up…"))
+            # A translate command asks for cleanup either way: the transcript
+            # still has its "uh"s and false starts, translated or not.
+            if translate_to or (conf["assistant_cleanup"] if ask else conf["cleanup_enabled"]):
+                self.stage.emit(t("Translating…") if translate_to else t("Cleaning up…"))
                 cleaned = True
                 try:
-                    text = cleanup.run(raw, conf, conf.cleanup_prompt(speech=detected))
+                    prompt = (conf.translate_prompt(translate_to, speech=detected)
+                              if translate_to
+                              else conf.cleanup_prompt(speech=detected))
+                    text = cleanup.run(raw, conf, prompt)
                 except api.ApiError as exc:
                     # Keep the transcript, but never let the failure pass unseen:
                     # a rejected key would otherwise look like working dictation.
@@ -200,6 +216,7 @@ class Pipeline(QObject):
                 "assistant": assistant.provider(conf) if ask else "",
                 "assistant_model": assistant.model(conf) if ask else "",
                 "speech_language": speech_language,
+                "translated_to": translate_to,
                 "raw": raw,
                 "text": text,
             }

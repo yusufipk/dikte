@@ -1,0 +1,224 @@
+"""Tests for voice command processing."""
+
+import unittest
+
+from dikte import voice_commands
+
+
+class VoiceCommands(unittest.TestCase):
+    """Voice command detection and processing."""
+
+    def setUp(self):
+        self.config_enabled = {"voice_commands_enabled": True, "voice_snippets": {}}
+        self.config_disabled = {"voice_commands_enabled": False, "voice_snippets": {}}
+
+    def test_disabled_returns_unchanged(self):
+        text = "This is a test. New paragraph. Some more text."
+        result = voice_commands.process_commands(text, self.config_disabled)
+        self.assertEqual(result, text)
+
+    def test_new_paragraph_command(self):
+        text = "First paragraph. New paragraph. Second paragraph."
+        result = voice_commands.process_commands(text, self.config_enabled)
+        self.assertIn("\n\n", result)
+        self.assertNotIn("New paragraph", result)
+
+    def test_new_paragraph_turkish(self):
+        text = "İlk paragraf. Yeni paragraf. İkinci paragraf."
+        result = voice_commands.process_commands(text, self.config_enabled)
+        self.assertIn("\n\n", result)
+        self.assertNotIn("Yeni paragraf", result)
+
+    def test_delete_that_command(self):
+        text = "Keep this. Delete this sentence. Delete that. Continue here."
+        result = voice_commands.process_commands(text, self.config_enabled)
+        self.assertNotIn("Delete this sentence", result)
+        self.assertIn("Keep this", result)
+        self.assertIn("Continue here", result)
+
+    def test_period_command(self):
+        text = "This is a sentence period another sentence"
+        result = voice_commands.process_commands(text, self.config_enabled)
+        self.assertIn("sentence.", result)
+        self.assertIn("Another sentence", result)  # Capitalized
+        self.assertNotIn(" period ", result.lower())
+
+    def test_comma_command(self):
+        text = "First item comma second item comma third item"
+        result = voice_commands.process_commands(text, self.config_enabled)
+        self.assertEqual(result.count(","), 2)
+        self.assertNotIn(" comma ", result.lower())
+
+    def test_capitalize_command(self):
+        text = "this is lowercase capitalize test word"
+        result = voice_commands.process_commands(text, self.config_enabled)
+        self.assertIn("Test word", result)
+        self.assertNotIn("capitalize", result.lower())
+
+    def test_new_line_command(self):
+        text = "First line. New line. Second line."
+        result = voice_commands.process_commands(text, self.config_enabled)
+        self.assertEqual(result.count("\n"), 1)
+        self.assertNotIn("New line", result)
+
+    def test_custom_snippet(self):
+        config = {
+            "voice_commands_enabled": True,
+            "voice_snippets": {
+                "my email": "tunahan@example.com",
+                "my signature": "Best regards,\nTunahan İpek"
+            }
+        }
+        text = "You can reach me at my email for questions. My signature."
+        result = voice_commands.process_commands(text, config)
+        self.assertIn("tunahan@example.com", result)
+        self.assertIn("Best regards", result)
+        self.assertNotIn("my email", result.lower())
+        self.assertNotIn("my signature", result.lower())
+
+    def test_multiple_commands_in_sequence(self):
+        text = "First sentence period new paragraph second sentence comma with a clause"
+        result = voice_commands.process_commands(text, self.config_enabled)
+        self.assertIn("\n\n", result)
+        self.assertIn(".", result)
+        self.assertIn(",", result)
+        self.assertNotIn("period", result.lower())
+        self.assertNotIn("new paragraph", result.lower())
+
+    def test_case_insensitive_matching(self):
+        text = "Test NEW PARAGRAPH next part PERIOD end"
+        result = voice_commands.process_commands(text, self.config_enabled)
+        self.assertIn("\n\n", result)
+        self.assertIn(".", result)
+
+    def test_scratch_that_variant(self):
+        text = "This is wrong. Scratch that. This is correct."
+        result = voice_commands.process_commands(text, self.config_enabled)
+        self.assertNotIn("This is wrong", result)
+        self.assertIn("This is correct", result)
+
+    def test_turkish_commands(self):
+        text = "Birinci cümle nokta yeni satır ikinci cümle virgül devam ediyor"
+        result = voice_commands.process_commands(text, self.config_enabled)
+        self.assertIn(".", result)
+        self.assertIn("\n", result)
+        self.assertIn(",", result)
+
+    def test_empty_text(self):
+        result = voice_commands.process_commands("", self.config_enabled)
+        self.assertEqual(result, "")
+
+    def test_text_with_no_commands(self):
+        text = "This is just regular text with no commands at all."
+        result = voice_commands.process_commands(text, self.config_enabled)
+        self.assertEqual(result, text)
+
+    def test_available_commands_returns_list(self):
+        commands = voice_commands.available_commands()
+        self.assertIsInstance(commands, list)
+        self.assertTrue(len(commands) > 0)
+        for trigger, desc in commands:
+            self.assertIsInstance(trigger, str)
+            self.assertIsInstance(desc, str)
+
+
+class ExtractTranslation(unittest.TestCase):
+    """The "translate to <language>" voice command."""
+
+    def setUp(self):
+        self.config_enabled = {"voice_commands_enabled": True, "voice_snippets": {}}
+        self.config_disabled = {"voice_commands_enabled": False, "voice_snippets": {}}
+
+    def test_disabled_finds_nothing(self):
+        text, language = voice_commands.extract_translation(
+            "book the meeting translate to Spanish", self.config_disabled)
+        self.assertEqual(language, "")
+        self.assertEqual(text, "book the meeting translate to Spanish")
+
+    def test_no_command_present(self):
+        text, language = voice_commands.extract_translation(
+            "just a normal sentence", self.config_enabled)
+        self.assertEqual(language, "")
+        self.assertEqual(text, "just a normal sentence")
+
+    def test_english_translate_to(self):
+        text, language = voice_commands.extract_translation(
+            "book the meeting for tomorrow translate to Spanish", self.config_enabled)
+        self.assertEqual(language, "Spanish")
+        self.assertEqual(text, "book the meeting for tomorrow")
+
+    def test_english_translate_into(self):
+        text, language = voice_commands.extract_translation(
+            "translate into french say hello", self.config_enabled)
+        self.assertEqual(language, "french")
+        self.assertEqual(text, "say hello")
+
+    def test_turkish_dative_ya(self):
+        text, language = voice_commands.extract_translation(
+            "toplantıyı yarına ertele ispanyolcaya çevir", self.config_enabled)
+        self.assertEqual(language, "ispanyolca")
+        self.assertEqual(text, "toplantıyı yarına ertele")
+
+    def test_turkish_with_apostrophe(self):
+        text, language = voice_commands.extract_translation(
+            "bunu ingilizce'ye çevir", self.config_enabled)
+        self.assertEqual(language, "ingilizce")
+        self.assertEqual(text, "bunu")
+
+    def test_is_case_insensitive(self):
+        text, language = voice_commands.extract_translation(
+            "TRANSLATE TO GERMAN hello there", self.config_enabled)
+        self.assertEqual(language, "GERMAN")
+        self.assertEqual(text, "hello there")
+
+    def test_only_the_first_command_counts(self):
+        text, language = voice_commands.extract_translation(
+            "translate to Spanish translate to French", self.config_enabled)
+        self.assertEqual(language, "Spanish")
+        self.assertEqual(text, "translate to French")
+
+    def test_command_alone_leaves_empty_text(self):
+        text, language = voice_commands.extract_translation(
+            "translate to Spanish", self.config_enabled)
+        self.assertEqual(language, "Spanish")
+        self.assertEqual(text, "")
+
+
+class SnippetsTextRoundTrip(unittest.TestCase):
+    """The settings window stores snippets as text; config keeps a dict."""
+
+    def test_empty_dict_is_empty_text(self):
+        self.assertEqual(voice_commands.snippets_to_text({}), "")
+
+    def test_empty_text_is_empty_dict(self):
+        self.assertEqual(voice_commands.snippets_from_text(""), {})
+
+    def test_round_trip(self):
+        snippets = {"my email": "tunahan@example.com", "company name": "Acme Corp"}
+        text = voice_commands.snippets_to_text(snippets)
+        self.assertEqual(voice_commands.snippets_from_text(text), snippets)
+
+    def test_blank_and_malformed_lines_are_dropped(self):
+        text = "my email: tunahan@example.com\n\nno colon here\n: nothing before colon"
+        self.assertEqual(
+            voice_commands.snippets_from_text(text),
+            {"my email": "tunahan@example.com"},
+        )
+
+    def test_replacement_may_contain_a_colon(self):
+        text = "my url: https://example.com:8080/path"
+        self.assertEqual(
+            voice_commands.snippets_from_text(text),
+            {"my url": "https://example.com:8080/path"},
+        )
+
+    def test_surrounding_whitespace_is_trimmed(self):
+        text = "  my email  :   tunahan@example.com  "
+        self.assertEqual(
+            voice_commands.snippets_from_text(text),
+            {"my email": "tunahan@example.com"},
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
