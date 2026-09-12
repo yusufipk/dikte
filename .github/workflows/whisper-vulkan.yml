@@ -46,7 +46,7 @@ env:
   WHISPER_VERSION: ${{ inputs.whisper_version || '1.9.4' }}
   WHISPER_COMMIT: ${{ inputs.whisper_commit || '927cfce34f31707e17f2bff35c349632fb9e2c3a' }}
   REVIEWED_WHISPER_VERSION: "1.9.4"
-  REVIEWED_WHISPER_SHA256: 042769c8e70c1f603b0eac8dd57bca4eaaf369f68e1e3cf6a25d1b5984aba055
+  REVIEWED_WHISPER_SHA256: 381ec8f07071d616e243b94d275e29763d6d2b4c7204017c166caf389e1f2349
 
 jobs:
   build:
@@ -128,7 +128,9 @@ jobs:
           test "$actual" = "$expected"
 
       - name: Validate archive and ELF contract
-        run: OUT_DIR=dist packaging/whisper-vulkan/validate-package.sh
+        run: >-
+          OUT_DIR=dist SOURCE_DIR=vendor/whisper.cpp
+          packaging/whisper-vulkan/validate-package.sh
 
       - name: Schema-validate CycloneDX 1.6 SBOM
         run: |

@@ -44,6 +44,7 @@ class WhisperVulkanPackaging(unittest.TestCase):
                      "Publish dependency release"):
             self.assertIn(step, workflow)
         self.assertNotRegex(workflow, r"uses: [^\n]+@v\d+(?:\s|$)")
+        self.assertIn("SOURCE_DIR=vendor/whisper.cpp", workflow)
 
     def test_publish_is_safe_for_dikte_and_limited_to_reviewed_master(self):
         workflow = WORKFLOW.read_text(encoding="utf-8")
@@ -172,7 +173,7 @@ class WhisperVulkanPackaging(unittest.TestCase):
         self.assertIn("WHISPER_VERSION:=1.9.3", script)
         self.assertIn("REVIEWED_WHISPER_VERSION: \"1.9.4\"", workflow)
         commit = "927cfce34f31707e17f2bff35c349632fb9e2c3a"
-        digest = "042769c8e70c1f603b0eac8dd57bca4eaaf369f68e1e3cf6a25d1b5984aba055"
+        digest = "381ec8f07071d616e243b94d275e29763d6d2b4c7204017c166caf389e1f2349"
         self.assertIn(commit, workflow)
         self.assertIn(digest, workflow)
         self.assertIn(ggml.MANAGED_WHISPER_VULKAN, workflow)
@@ -187,15 +188,29 @@ class WhisperVulkanPackaging(unittest.TestCase):
 
     def _make_test_sbom(self):
         with tempfile.TemporaryDirectory() as temporary:
-            root = pathlib.Path(temporary)
+            temporary = pathlib.Path(temporary)
+            root = temporary / "bundle"
+            source = temporary / "source"
+            root.mkdir()
+            (source / "examples/server").mkdir(parents=True)
             (root / "whisper-server").write_bytes(b"elf")
+            (root / "libggml.so.9.8.7").write_bytes(b"elf")
+            (source / "examples/server/httplib.h").write_text(
+                '#define CPPHTTPLIB_VERSION "6.5.4"\n', encoding="utf-8",
+            )
+            (source / "examples/json.hpp").write_text(
+                "#define NLOHMANN_JSON_VERSION_MAJOR 3\n"
+                "#define NLOHMANN_JSON_VERSION_MINOR 2\n"
+                "#define NLOHMANN_JSON_VERSION_PATCH 1\n",
+                encoding="utf-8",
+            )
             sbom = root / "whisper-bin-ubuntu-vulkan-x64.cdx.json"
             environment = os.environ | {
                 "ROOT": str(root),
+                "SOURCE_DIR": str(source),
                 "VERSION": "1.9.3",
                 "COMMIT": "371b5a7561823ab2bb32142d2751e35e7534727b",
                 "EPOCH": "1787219223",
-                "GGML_VERSION": "9.8.7",
             }
             with sbom.open("w", encoding="utf-8") as output:
                 subprocess.run(
@@ -209,13 +224,20 @@ class WhisperVulkanPackaging(unittest.TestCase):
         names = {component["name"] for component in document["components"]}
         self.assertNotIn(sbom_name, names)
 
-    def test_the_sbom_lists_ggml(self):
+    def test_the_sbom_derives_vendored_component_versions(self):
         document, _ = self._make_test_sbom()
-        ggml_component = next(component for component in document["components"]
-                              if component["name"] == "ggml")
-        self.assertEqual(ggml_component["version"], "9.8.7")
-        self.assertEqual(ggml_component["purl"],
-                         "pkg:github/ggml-org/ggml@v9.8.7")
+        components = {component["name"]: component
+                      for component in document["components"]}
+        expected = {
+            "ggml": "9.8.7",
+            "cpp-httplib": "6.5.4",
+            "json": "3.2.1",
+        }
+        for name, version in expected.items():
+            self.assertEqual(components[name]["version"], version)
+            self.assertEqual(
+                components[name]["purl"].rsplit("@", 1)[1], f"v{version}",
+            )
 
 
 if __name__ == "__main__":
