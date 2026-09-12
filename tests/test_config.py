@@ -604,12 +604,20 @@ class Defaults(unittest.TestCase):
         self.assertEqual(cfg.DEFAULTS["openai_api_key"], "")
         self.assertEqual(cfg.DEFAULTS["openrouter_api_key"], "")
         self.assertEqual(cfg.DEFAULTS["gemini_api_key"], "")
+        self.assertEqual(cfg.DEFAULTS["deepseek_api_key"], "")
         self.assertEqual(cfg.DEFAULTS["opencode_api_key"], "")
 
     def test_google_ai_studio_is_a_cleanup_provider_and_not_a_transcriber(self):
         """Its compatible endpoint has no /audio/transcriptions behind it."""
         self.assertNotIn("gemini", cfg.TRANSCRIBERS)
         self.assertIn("gemini", cleanup.PROVIDERS)
+
+    def test_deepseek_is_a_cleanup_provider_and_not_a_transcriber(self):
+        self.assertNotIn("deepseek", cfg.TRANSCRIBERS)
+        self.assertIn("deepseek", cleanup.PROVIDERS)
+        self.assertEqual(cfg.DEFAULTS["deepseek_base_url"],
+                         "https://api.deepseek.com")
+        self.assertEqual(cfg.DEFAULTS["cleanup_deepseek_model"], "deepseek-flash")
 
     def test_opencode_ships_on_its_own_endpoint(self):
         self.assertEqual(cfg.DEFAULTS["opencode_base_url"],

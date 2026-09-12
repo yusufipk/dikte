@@ -513,6 +513,23 @@ class Cleanup(DikteTest):
                              service="Google AI Studio")
         self.assertNotIn("reasoning_effort", sent_json(calls[0]))
 
+    def test_deepseek_can_turn_thinking_off(self):
+        _, calls = self.call(chat_reply("Hello."), reasoning="none",
+                             provider="deepseek", service="DeepSeek")
+        payload = sent_json(calls[0])
+        self.assertEqual(payload["thinking"], {"type": "disabled"})
+        self.assertNotIn("reasoning_effort", payload)
+
+    def test_deepseek_maps_the_shared_effort_ladder(self):
+        for asked, expected in (("minimal", "low"), ("medium", "high"),
+                                ("xhigh", "high"), ("max", "max")):
+            with self.subTest(asked=asked):
+                _, calls = self.call(chat_reply("Hello."), reasoning=asked,
+                                     provider="deepseek", service="DeepSeek")
+                payload = sent_json(calls[0])
+                self.assertEqual(payload["thinking"], {"type": "enabled"})
+                self.assertEqual(payload["reasoning_effort"], expected)
+
     def test_a_missing_gemini_key_says_google_ai_studio(self):
         with self.assertRaises(api.ApiError) as caught:
             api.cleanup("hello", "", "gemini-3.5-flash-lite", "prompt",

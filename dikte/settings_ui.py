@@ -65,6 +65,7 @@ GEMINI_MODELS = [
     "gemini-3.5-flash-lite", "gemini-3.1-flash-lite",
     "gemini-2.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash",
 ]
+DEEPSEEK_MODELS = ["deepseek-flash", "deepseek-v4-pro"]
 # agy's model ids carry the reasoning effort in their suffix, which is why one
 # model appears here at more than one level. The same list seeds two boxes:
 # cleanup, which wants the bottom rung, and the agent, which sometimes does not.
@@ -77,8 +78,9 @@ AGY_MODELS = [
 # agent can run on open a whole session to do the smaller job.
 CLEANUP_PROVIDERS = [
     ("OpenRouter", "openrouter"), ("Google AI Studio", "gemini"),
-    ("OpenCode Go", "opencode"), ("This machine (llama.cpp)", "local"),
-    ("Claude Code", "claude"), ("Codex", "codex"), ("Antigravity", "agy"),
+    ("DeepSeek", "deepseek"), ("OpenCode Go", "opencode"),
+    ("This machine (llama.cpp)", "local"), ("Claude Code", "claude"),
+    ("Codex", "codex"), ("Antigravity", "agy"),
 ]
 # Cleaning up a sentence is the lightest thing either of them will ever be
 # asked, so the small model comes first.
@@ -900,6 +902,7 @@ class SettingsWindow(QDialog):
 
     _models_loaded = pyqtSignal(list, str)
     _gemini_models_loaded = pyqtSignal(list, str)
+    _deepseek_models_loaded = pyqtSignal(list, str)
     _opencode_models_loaded = pyqtSignal(list, str)
     _transcribe_models_loaded = pyqtSignal(list, str)
     _codex_models_loaded = pyqtSignal(list)
@@ -989,6 +992,7 @@ class SettingsWindow(QDialog):
 
         self._models_loaded.connect(self._on_models_loaded)
         self._gemini_models_loaded.connect(self._on_gemini_models_loaded)
+        self._deepseek_models_loaded.connect(self._on_deepseek_models_loaded)
         self._transcribe_models_loaded.connect(self._on_transcribe_models_loaded)
         self._codex_models_loaded.connect(self._on_codex_models_loaded)
         self._opencode_models_loaded.connect(self._on_opencode_models_loaded)
@@ -1344,6 +1348,9 @@ class SettingsWindow(QDialog):
         self.gemini_key = self._key_row(
             keys_form, "gemini", t("(falls back to GEMINI_API_KEY)"),
             self._test_gemini, service="Google AI Studio")
+        self.deepseek_key = self._key_row(
+            keys_form, "deepseek", t("(falls back to DEEPSEEK_API_KEY)"),
+            self._test_deepseek, service="DeepSeek")
         self.opencode_key = self._key_row(
             keys_form, "opencode", t("(falls back to OPENCODE_API_KEY)"),
             self._test_opencode, service="OpenCode Go")
@@ -1457,6 +1464,14 @@ class SettingsWindow(QDialog):
         self.cleanup_gemini_model_row = self._row(
             self.cleanup_gemini_model, self.refresh_gemini_models)
         orr_form.addRow(t("Model"), self.cleanup_gemini_model_row)
+        self.cleanup_deepseek_model = QComboBox()
+        self.cleanup_deepseek_model.setEditable(True)
+        self.cleanup_deepseek_model.addItems(DEEPSEEK_MODELS)
+        self.refresh_deepseek_models = QPushButton(t("Fetch model list"))
+        self.refresh_deepseek_models.clicked.connect(self._load_deepseek_models)
+        self.cleanup_deepseek_model_row = self._row(
+            self.cleanup_deepseek_model, self.refresh_deepseek_models)
+        orr_form.addRow(t("Model"), self.cleanup_deepseek_model_row)
 
         # One row per provider rather than one box that means a different thing
         # in each: an OpenRouter id and a Claude alias do not belong in the same
@@ -2326,6 +2341,7 @@ class SettingsWindow(QDialog):
             self._key_fields[name].setText(conf[who.key])
             self._models[name] = conf[who.model]
         self.gemini_key.setText(conf["gemini_api_key"])
+        self.deepseek_key.setText(conf["deepseek_api_key"])
         self.opencode_key.setText(conf["opencode_api_key"])
         self._shown_provider = ""
         self._select_data(self.transcribe_provider, conf["transcribe_provider"])
@@ -2340,6 +2356,9 @@ class SettingsWindow(QDialog):
         self.cleanup_model.setCurrentText(conf["cleanup_model"])
         self.cleanup_gemini_model.setCurrentText(
             conf["cleanup_gemini_model"] or cfg.DEFAULTS["cleanup_gemini_model"]
+        )
+        self.cleanup_deepseek_model.setCurrentText(
+            conf["cleanup_deepseek_model"] or cfg.DEFAULTS["cleanup_deepseek_model"]
         )
         self.cleanup_claude_model.setCurrentText(conf["cleanup_claude_model"])
         self.cleanup_codex_model.setCurrentText(
@@ -2461,6 +2480,7 @@ class SettingsWindow(QDialog):
             conf[who.model] = self._models[name].strip() or cfg.DEFAULTS[who.model]
         conf["openrouter_file_model"] = self.file_model.currentText().strip()
         conf["gemini_api_key"] = self.gemini_key.text().strip()
+        conf["deepseek_api_key"] = self.deepseek_key.text().strip()
         conf["opencode_api_key"] = self.opencode_key.text().strip()
         conf["local_model"] = self.local_whisper.selected()
         conf["local_gpu"] = self.local_gpu.isChecked()
@@ -2473,6 +2493,10 @@ class SettingsWindow(QDialog):
         conf["cleanup_gemini_model"] = (
             self.cleanup_gemini_model.currentText().strip()
             or cfg.DEFAULTS["cleanup_gemini_model"]
+        )
+        conf["cleanup_deepseek_model"] = (
+            self.cleanup_deepseek_model.currentText().strip()
+            or cfg.DEFAULTS["cleanup_deepseek_model"]
         )
         conf["cleanup_claude_model"] = (self.cleanup_claude_model.currentText().strip()
                                         or cfg.DEFAULTS["cleanup_claude_model"])
@@ -2751,6 +2775,31 @@ class SettingsWindow(QDialog):
         self.cleanup_gemini_model.setCurrentText(current)
         self.models_label.setText(t("{count} models loaded.", count=len(models)))
 
+    def _load_deepseek_models(self):
+        self.refresh_deepseek_models.setEnabled(False)
+        self.models_label.setText(t("Fetching model list…"))
+        key, base = self._typed_key("deepseek")
+
+        def work():
+            try:
+                self._deepseek_models_loaded.emit(
+                    api.openai_models(key, base, "DeepSeek"), "")
+            except api.ApiError as exc:
+                self._deepseek_models_loaded.emit([], str(exc))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_deepseek_models_loaded(self, models, error):
+        self.refresh_deepseek_models.setEnabled(True)
+        if error:
+            self.models_label.setText(t("Could not fetch the list: {error}", error=error))
+            return
+        current = self.cleanup_deepseek_model.currentText()
+        self.cleanup_deepseek_model.clear()
+        self.cleanup_deepseek_model.addItems(models)
+        self.cleanup_deepseek_model.setCurrentText(current)
+        self.models_label.setText(t("{count} models loaded.", count=len(models)))
+
     def _load_codex_models(self):
         """Ask Codex which models it offers, off the interface thread.
 
@@ -2855,6 +2904,12 @@ class SettingsWindow(QDialog):
         if gemini_key:
             jobs.append(("gemini",
                          lambda: api.gemini_models(gemini_key, gemini_base)))
+        deepseek_key = self.conf.deepseek_key()
+        deepseek_base = self.conf["deepseek_base_url"]
+        if deepseek_key:
+            jobs.append(("deepseek",
+                         lambda: api.openai_models(deepseek_key, deepseek_base,
+                                                   "DeepSeek")))
         opencode_key = self.conf.opencode_key()
         opencode_base = self.conf["opencode_base_url"]
         if opencode_key:
@@ -2875,6 +2930,12 @@ class SettingsWindow(QDialog):
     def _on_hosted_models_loaded(self, provider, models):
         if provider == "opencode":
             self._fill_opencode_boxes(models)
+            return
+        if provider == "deepseek":
+            current = self.cleanup_deepseek_model.currentText()
+            self.cleanup_deepseek_model.clear()
+            self.cleanup_deepseek_model.addItems(models)
+            self.cleanup_deepseek_model.setCurrentText(current)
             return
         combos = ((self.cleanup_model, self.meeting_model)
                   if provider == "openrouter" else (self.cleanup_gemini_model,))
@@ -2907,6 +2968,13 @@ class SettingsWindow(QDialog):
         self._test_key("gemini", lambda: t(
             "Connection works. {count} models visible.",
             count=len(api.gemini_models(key, base)),
+        ))
+
+    def _test_deepseek(self):
+        key, base = self._typed_key("deepseek")
+        self._test_key("deepseek", lambda: t(
+            "Connection works. {count} models visible.",
+            count=len(api.openai_models(key, base, "DeepSeek")),
         ))
 
     def _test_opencode(self):
@@ -3151,6 +3219,8 @@ class SettingsWindow(QDialog):
                                         provider == "openrouter")
         self.cleanup_form.setRowVisible(self.cleanup_gemini_model_row,
                                         provider == "gemini")
+        self.cleanup_form.setRowVisible(self.cleanup_deepseek_model_row,
+                                        provider == "deepseek")
         self.cleanup_form.setRowVisible(self.cleanup_claude_model,
                                         provider == "claude")
         self.cleanup_form.setRowVisible(self.cleanup_codex_model,
@@ -3173,6 +3243,8 @@ class SettingsWindow(QDialog):
             self.models_label.setText(t("Runs on Google AI Studio."))
         elif provider == "opencode":
             self.models_label.setText(t("Runs on OpenCode Go."))
+        elif provider == "deepseek":
+            self.models_label.setText(t("Runs on DeepSeek."))
         elif not binary:
             self.models_label.setText(t("Runs on OpenRouter."))
         elif found:

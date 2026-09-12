@@ -435,6 +435,16 @@ class Providers(DikteTest):
         self.assertEqual(code, 0)
         self.assertIn("opencode: connection works, 1 models visible", out)
 
+    def test_deepseek_is_a_choice_and_reports_under_its_own_name(self):
+        parser = cli.build_parser()
+        self.assertEqual(
+            parser.parse_args(["test-key", "deepseek"]).which, "deepseek")
+        self.write_config({"deepseek_api_key": "sk-deepseek-test"})
+        with fake_urlopen({"data": [{"id": "deepseek-flash"}]}):
+            code, out, _ = self.run_cmd(cli.cmd_test_key, which="deepseek")
+        self.assertEqual(code, 0)
+        self.assertIn("deepseek: connection works, 1 models visible", out)
+
 
 class Updates(DikteTest):
     """`dikte update` looks, says what it found, and installs nothing."""
@@ -523,6 +533,16 @@ class Doctor(DikteTest):
         self.assertIn("OpenCode Go key, cleaning up on glm-5.3",
                       self.run_doctor(as_json=False, cleanup_provider="opencode",
                                       cleanup_opencode_model="glm-5.3"))
+
+    def test_cleanup_on_deepseek_is_a_question_about_its_own_key(self):
+        reply = self.run_doctor(cleanup_provider="deepseek",
+                                cleanup_deepseek_model="deepseek-flash")
+        self.assertEqual(reply["cleanup"]["provider"], "deepseek")
+        self.assertEqual(reply["cleanup"]["model"], "deepseek-flash")
+        self.assertIn(
+            "DeepSeek key, cleaning up on deepseek-flash",
+            self.run_doctor(as_json=False, cleanup_provider="deepseek"),
+        )
 
     def test_it_survives_every_provider_cleanup_can_be_set_to(self):
         """It used to raise KeyError on the local model, whose executable is ""."""

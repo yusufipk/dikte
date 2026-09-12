@@ -120,14 +120,14 @@ or runs it on the spot.
 
 Speech to text and cleanup each pick a provider in the settings window, and both
 run here by default, on models of your own. The cloud is the other option:
-speech to text on **OpenAI**, **Groq** or **OpenRouter** (`gpt-4o-transcribe`),
-cleanup on OpenRouter (`google/gemini-3.5-flash-lite`), on **Google AI Studio**
-(`gemini-3.5-flash-lite`), on **OpenCode Go** (`deepseek-v4-flash`) or, when one
-of them is installed, on Claude Code, Codex or Antigravity. The first three are
-a single HTTP request; the three CLIs each open a whole session to do it, which
-is where their few extra seconds go. The keys fall back to `OPENAI_API_KEY`,
-`GROQ_API_KEY`, `OPENROUTER_API_KEY`, `GEMINI_API_KEY` and `OPENCODE_API_KEY`,
-and are stored in
+speech to text on **OpenAI**, **Groq** or **OpenRouter** (`gpt-4o-transcribe`);
+cleanup on OpenRouter (`google/gemini-3.5-flash-lite`), **Google AI Studio**
+(`gemini-3.5-flash-lite`), **DeepSeek** (`deepseek-flash`), **OpenCode Go**
+(`deepseek-v4-flash`) or, when one of them is installed, Claude Code, Codex or
+Antigravity. The four hosted cleanup providers use one HTTP request; the three
+CLIs each open a whole session, which is where their few extra seconds go. The
+keys fall back to `OPENAI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`,
+`GEMINI_API_KEY`, `DEEPSEEK_API_KEY` and `OPENCODE_API_KEY`, and are stored in
 `~/.config/dikte/config.json`, mode 600, or in
 `~/Library/Application Support/Dikte` on a Mac. Cleanup can be switched off, in
 which case the raw transcript is pasted, and a thinking model's effort can be

@@ -430,6 +430,8 @@ DEFAULTS = {
     # Google's OpenAI-compatible endpoint. Cleanup only: there is no
     # /audio/transcriptions behind it, so it is not one of the TRANSCRIBERS.
     "gemini_base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "deepseek_api_key": "",
+    "deepseek_base_url": "https://api.deepseek.com",
     "opencode_api_key": "",
     "opencode_base_url": "https://opencode.ai/zen/go/v1",
     "transcribe_provider": "local",  # "local", or a key of TRANSCRIBERS
@@ -463,6 +465,7 @@ DEFAULTS = {
     "cleanup_claude_model": "haiku",   # Claude Code: an alias, or a full model id
     "cleanup_codex_model": "",         # empty -> whatever Codex is set to
     "cleanup_gemini_model": "gemini-3.5-flash-lite",
+    "cleanup_deepseek_model": "deepseek-flash",
     "cleanup_agy_model": "",           # empty -> whatever Antigravity is set to
     "cleanup_opencode_model": "deepseek-v4-flash",
     "cleanup_reasoning": "",        # empty -> whatever the model does by default
@@ -704,6 +707,9 @@ class Config:
 
     def gemini_key(self):
         return self.api_key("gemini_api_key")
+
+    def deepseek_key(self):
+        return self.api_key("deepseek_api_key")
 
     def opencode_key(self):
         return self.api_key("opencode_api_key")

@@ -42,13 +42,13 @@ def t(text, /, **kwargs):
 _TR_CASES = {
     "dative": {
         "Claude": "Claude'a", "Codex": "Codex'e", "OpenRouter": "OpenRouter'a",
-        "Google AI Studio": "Google AI Studio'ya", "Antigravity": "Antigravity'ye",
-        "OpenCode Go": "OpenCode Go'ya",
+        "Google AI Studio": "Google AI Studio'ya", "DeepSeek": "DeepSeek'e",
+        "Antigravity": "Antigravity'ye", "OpenCode Go": "OpenCode Go'ya",
     },
     "accusative": {
         "Claude": "Claude'u", "Codex": "Codex'i", "OpenRouter": "OpenRouter'ı",
-        "Google AI Studio": "Google AI Studio'yu", "Antigravity": "Antigravity'yi",
-        "OpenCode Go": "OpenCode Go'yu",
+        "Google AI Studio": "Google AI Studio'yu", "DeepSeek": "DeepSeek'i",
+        "Antigravity": "Antigravity'yi", "OpenCode Go": "OpenCode Go'yu",
     },
 }
 
@@ -309,11 +309,13 @@ TR = {
     "gsk_… (falls back to GROQ_API_KEY)": "gsk_… (boşsa GROQ_API_KEY kullanılır)",
     "sk-or-… (falls back to OPENROUTER_API_KEY)": "sk-or-… (boşsa OPENROUTER_API_KEY kullanılır)",
     "(falls back to GEMINI_API_KEY)": "(boşsa GEMINI_API_KEY kullanılır)",
+    "(falls back to DEEPSEEK_API_KEY)": "(boşsa DEEPSEEK_API_KEY kullanılır)",
     "(falls back to OPENCODE_API_KEY)": "(boşsa OPENCODE_API_KEY kullanılır)",
     "Test": "Test et",
     "Trying…": "Deneniyor…",
     "Runs on OpenRouter.": "OpenRouter üzerinde çalışır.",
     "Runs on Google AI Studio.": "Google AI Studio üzerinde çalışır.",
+    "Runs on DeepSeek.": "DeepSeek üzerinde çalışır.",
     "Runs on OpenCode Go.": "OpenCode Go üzerinde çalışır.",
     "Connection works. {count} audio models visible.":
         "Bağlantı tamam. {count} ses modeli görünüyor.",

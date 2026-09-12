@@ -61,6 +61,7 @@ class Provider(DikteTest):
         self.assertEqual(cleanup.executable("openrouter"), "")
         self.assertEqual(cleanup.executable("gemini"), "")
         self.assertEqual(cleanup.executable("opencode"), "")
+        self.assertEqual(cleanup.executable("deepseek"), "")
 
     def test_the_model_named_in_the_history_is_the_one_that_did_it(self):
         self.assertEqual(cleanup.model(self.config(cleanup_model="some/model")),
@@ -79,6 +80,9 @@ class Provider(DikteTest):
         self.assertEqual(
             cleanup.model(self.config(cleanup_provider="gemini")),
             "gemini-3.5-flash-lite")
+        self.assertEqual(
+            cleanup.model(self.config(cleanup_provider="deepseek")),
+            "deepseek-flash")
         # Antigravity is left on its own default the way Codex is.
         self.assertEqual(
             cleanup.model(self.config(cleanup_provider="agy")), "agy")
@@ -108,6 +112,35 @@ class OpenRouter(DikteTest):
         with patcher, mock.patch.object(api, "cleanup", return_value="Done."):
             cleanup.run("uh, done", conf, "the rules")
         self.assertEqual(calls, [])
+
+
+class DeepSeek(DikteTest):
+    def test_it_uses_deepseek_s_endpoint_key_and_model(self):
+        conf = self.config(cleanup_provider="deepseek",
+                           deepseek_api_key="sk-deepseek-test",
+                           cleanup_deepseek_model="deepseek-flash",
+                           cleanup_reasoning="none")
+        with mock.patch.object(api, "cleanup", return_value="Done.") as call:
+            self.assertEqual(cleanup.run("uh, done", conf, "the rules"), "Done.")
+        text, key, model, prompt = call.call_args.args
+        self.assertEqual(
+            (text, key, model, prompt),
+            ("uh, done", "sk-deepseek-test", "deepseek-flash", "the rules"),
+        )
+        self.assertEqual(call.call_args.kwargs["provider"], "deepseek")
+        self.assertEqual(call.call_args.kwargs["service"], "DeepSeek")
+        self.assertEqual(call.call_args.kwargs["base_url"],
+                         "https://api.deepseek.com")
+        self.assertEqual(call.call_args.kwargs["reasoning"], "none")
+
+    def test_no_cli_is_started_for_it(self):
+        conf = self.config(cleanup_provider="deepseek",
+                           deepseek_api_key="sk-deepseek-test")
+        patcher, calls = fake_cli(stdout="never")
+        with patcher, mock.patch.object(api, "cleanup", return_value="Done."):
+            cleanup.run("uh, done", conf, "the rules")
+        self.assertEqual(calls, [])
+
 
 
 class OpenCode(DikteTest):
