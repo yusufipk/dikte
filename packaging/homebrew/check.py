@@ -93,7 +93,7 @@ def main():
             assert info["CFBundleShortVersionString"] == version, info
             assert info["CFBundleIdentifier"] == "io.github.yusufipk.dikte", info
             assert binary.is_symlink(), "Homebrew CLI link missing"
-            assert binary.resolve() == app / "Contents/MacOS/Dikte"
+            assert binary.resolve() == (app / "Contents/MacOS/Dikte").resolve()
             assert run("lipo", "-archs", str(binary.resolve())) == platform.machine()
             run("codesign", "--verify", "--deep", str(app))
             # Read-only: quarantine must remain on the installed application.
