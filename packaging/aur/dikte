@@ -1,0 +1,5 @@
+#!/bin/sh
+# Keep interpreter isolation when the CLI respawns the GUI by script path.
+unset PYTHONPATH PYTHONHOME
+export PYTHONNOUSERSITE=1
+exec /usr/bin/python -I -m dikte "$@"

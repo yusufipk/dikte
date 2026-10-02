@@ -1,0 +1,43 @@
+name: Arch package
+
+on:
+  pull_request:
+    paths:
+      - packaging/aur/**
+      - .github/workflows/arch-package.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Prepare clean Arch build environment
+        run: docker build -t dikte-arch-check packaging/aur
+      - name: Build, test released source, lint and compare metadata
+        run: |
+          docker run -d --name arch-check dikte-arch-check sleep infinity
+          docker exec arch-check bash /recipe/validate.sh build
+      - name: Install, upgrade, offscreen CLI and GUI, uninstall without network
+        run: |
+          docker network disconnect bridge arch-check
+          docker exec arch-check bash /recipe/validate.sh lifecycle
+      - name: Collect diagnostics
+        if: always()
+        run: |
+          mkdir -p arch-results
+          docker cp arch-check:/tmp/namcap.log arch-results/ || true
+          docker cp arch-check:/home/builder/smoke arch-results/ || true
+          docker rm -f arch-check || true
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: arch-package-results
+          path: arch-results/
+          if-no-files-found: ignore
