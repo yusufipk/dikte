@@ -88,7 +88,7 @@ def processing_locations(conf, mode="dictation", file_cleanup=None, file_timesta
     if mode == "meeting" or (mode == "file" and timestamps):
         sound_model = api.timestamp_model(target.provider, target.model, target.file_model)
     sound = _model_location(sound_model, target.provider, local.get("whisper"))
-    enabled = conf["cleanup_enabled"]
+    enabled = conf["cleanup_enabled"] or conf["translation_enabled"]
     if mode == "file":
         enabled = conf["file_cleanup"] if file_cleanup is None else file_cleanup
     elif mode == "meeting":
@@ -101,6 +101,8 @@ def processing_locations(conf, mode="dictation", file_cleanup=None, file_timesta
         model = t("{name} default model", name="Codex" if provider == "codex" else "Antigravity")
     text = _model_location(model, provider, local.get("llama")) if enabled else t("Editing off")
     location = t("Dictation: {sound} / Cleanup: {text}", sound=sound, text=text)
+    if mode not in ("file", "meeting", "ask") and conf["translation_enabled"]:
+        location = t("Dictation: {sound} / Translation: {text}", sound=sound, text=text)
     if mode == "meeting":
         location += " / " + t("Minutes: {model}", model=_model_location(conf["meeting_model"], "openrouter"))
     elif mode == "ask":
@@ -368,7 +370,10 @@ class HomeWindow(QWidget):
         if result != self._last_result:
             self._last_result = dict(result)
             self.latest_text.setPlainText(result.get("text", ""))
-            self.latest_time.setText(result.get("ts", ""))
+            stamp = result.get("ts", "")
+            if result.get("mode") == "translate":
+                stamp += "  ·  " + t("Translation") + " → " + result.get("translation_target", "")
+            self.latest_time.setText(stamp)
             self.latest_warning.setText(result.get("cleanup_error", ""))
             self.latest_warning.setVisible(bool(self.latest_warning.text()))
             self.copy_button.setEnabled(bool(result.get("text")))
@@ -408,7 +413,7 @@ class HomeWindow(QWidget):
         self.cancel_button.setVisible(recording)
         self.pause_button.setText(t("Resume the recording") if app.paused else t("Pause the recording"))
         warning = ""
-        if conf["cleanup_enabled"] and conf["cleanup_provider"] == "local" and not conf.local_llm_ready():
+        if (conf["cleanup_enabled"] or conf["translation_enabled"]) and conf["cleanup_provider"] == "local" and not conf.local_llm_ready():
             warning = t("The local editing model is missing. Set it up in Settings; the original transcript is kept if editing fails.")
         self.capture_error.setText(messages.get("dictation", "") or warning)
         self.capture_error.setVisible(bool(self.capture_error.text()))

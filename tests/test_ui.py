@@ -51,6 +51,8 @@ _app = QApplication.instance() or QApplication([])
 CHANGED = {
     "ui_language": "tr",
     "language": "tr",
+    "translation_enabled": True,
+    "translation_target": "de",
     "auto_paste": False,
     "paste_shortcut": "ctrl+shift+v",
     "restore_clipboard": True,
@@ -196,6 +198,21 @@ class Settings(DikteTest):
                            QPoint(0, -120), Qt.MouseButton.NoButton,
                            Qt.KeyboardModifier.NoModifier,
                            Qt.ScrollPhase.NoScrollPhase, False)
+
+    def test_translation_controls_and_original_recovery(self):
+        window = self.window(self.config(translation_enabled=False))
+        self.assertFalse(window.translation_target.isEnabled())
+        window.translation_enabled.setChecked(True)
+        self.assertTrue(window.translation_target.isEnabled())
+        cfg.append_history({"mode": "translate", "raw": "Hello, 42.",
+                            "text": "Hallo, 42.", "translation_target": "de"})
+        window._load_history()
+        self.assertIn("Translation → German", window.history.item(0).text())
+        window.history.item(0).setSelected(True)
+        window._copy_original_history()
+        self.assertEqual(QApplication.clipboard().text(), "Hello, 42.")
+        window._copy_history()
+        self.assertEqual(QApplication.clipboard().text(), "Hallo, 42.")
 
     def test_settings_is_not_tied_to_the_home_windows_desktop(self):
         """A parentless dialog is transient for the whole application under

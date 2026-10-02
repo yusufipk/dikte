@@ -60,6 +60,17 @@ def name(text, /, case=""):
 
 
 TR = {
+    'Translate after recording': 'Kayıt sonrası çevir',
+    'Translation language': 'Çeviri dili',
+    'Translating…': 'Çevriliyor…',
+    'Translation': 'Çeviri',
+    'Translation failed': 'Çeviri başarısız',
+    'Copy original transcript': 'Özgün metni kopyala',
+    'Select a supported translation language in Settings.': 'Ayarlardan desteklenen bir çeviri dili seçin.',
+    'The translation provider returned no text.': 'Çeviri sağlayıcısı metin döndürmedi.',
+    'Dictation: {sound} / Translation: {text}': 'Dikte: {sound} / Çeviri: {text}',
+    'Translation failed. Original copied and saved in history; nothing was pasted. Check the configured text provider.': 'Çeviri başarısız. Özgün metin kopyalandı ve geçmişe kaydedildi; yapıştırılmadı. Seçili metin sağlayıcısını kontrol edin.',
+    'Translation uses the configured cleanup provider and model, instead of cleanup. Runs after recording, not while speaking. Agent, file and meeting modes are unchanged.': 'Çeviri, düzenleme yerine seçili düzenleme sağlayıcısı ve modeliyle çalışır. Konuşurken değil kayıt sonrasında çalışır. Ajan, dosya ve toplantı modları değişmez.',
     "Theme": "Tema",
     "Classic dark": "Klasik karanlık",
     "Classic light": "Klasik beyaz",
