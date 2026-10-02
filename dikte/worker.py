@@ -24,6 +24,7 @@ from . import config as cfg
 from . import i18n
 from . import paste
 from . import vad
+from . import translation
 from .i18n import t
 
 CHUNK_SECONDS = audio.CHUNK_FRAMES / audio.RATE
@@ -81,7 +82,8 @@ class Pipeline(QObject):
         order it was spoken."""
         with self._jobs_lock:
             self._jobs.append((wav_path, duration, list(rms_values), ask, paste,
-                               focus))
+                               focus, (bool(self.conf["translation_enabled"]),
+                                       self.conf["translation_target"])))
             if self._draining:
                 return
             self._draining = True
@@ -139,8 +141,15 @@ class Pipeline(QObject):
                 self.stage.emit(stage)
 
     def _work(self, wav_path, duration, rms_values, ask, paste_override=None,
-              focus=None):
+              focus=None, translation_options=None):
         conf = self.conf
+        enabled, translation_target = (translation_options if translation_options is not None
+                                       else (bool(conf["translation_enabled"]),
+                                             conf["translation_target"]))
+        if not isinstance(translation_target, str):
+            translation_target = ""
+        translating = enabled and not ask
+        translation_error = ""
         started = time.monotonic()
         raw = ""
 
@@ -202,7 +211,19 @@ class Pipeline(QObject):
             # Claude reads through “eee” and “hani” without help, so a dictation
             # on its way there is normally sent as it was heard, one API call and
             # a second or two lighter.
-            if (conf["assistant_cleanup"] if ask else conf["cleanup_enabled"]):
+            if translating:
+                self.stage.emit(t("Translating…"))
+                try:
+                    text = translation.run(raw, conf, translation_target)
+                except Exception:
+                    # Provider failures must leave a recoverable original, even
+                    # when the adapter raises something other than ApiError.
+                    text = raw
+                    translation_error = t(
+                        "Translation failed. Original copied and saved in history; "
+                        "nothing was pasted. Check the configured text provider.")
+                    warning = translation_error
+            elif (conf["assistant_cleanup"] if ask else conf["cleanup_enabled"]):
                 self.stage.emit(t("Cleaning up…"))
                 cleaned = True
                 try:
@@ -230,6 +251,9 @@ class Pipeline(QObject):
             if paste_override is not None:
                 wants_paste = paste_override
 
+            if translation_error:
+                wants_paste = False
+
             # Into the history before the paste is attempted: the record says
             # what was dictated, not whether a key press landed, and a paste
             # that fails must not take the transcript down with it.
@@ -240,7 +264,7 @@ class Pipeline(QObject):
                 "model": target.model,
                 "cleanup_model": cleanup.model(conf) if cleaned else "",
                 "cleanup_error": warning,
-                "mode": "ask" if ask else "",
+                "mode": "ask" if ask else ("translate" if translating else ""),
                 "question": question,
                 "assistant": assistant.provider(conf) if ask else "",
                 "assistant_model": assistant.model(conf) if ask else "",
@@ -248,6 +272,11 @@ class Pipeline(QObject):
                 "raw": raw,
                 "text": text,
             }
+            if translating:
+                record.update(translation_target=translation_target,
+                              translation_model=cleanup.model(conf),
+                              translation_error=translation_error,
+                              translated_text="" if translation_error else text)
             cfg.append_history(record)
             try:
                 cfg.trim_history(conf["history_limit"])

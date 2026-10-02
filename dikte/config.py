@@ -465,6 +465,8 @@ DEFAULTS = {
                                     # than on the first dictation
     "local_binary": "",             # empty -> whichever copy ggml.py finds
 
+    "translation_enabled": False,
+    "translation_target": "en",
     "cleanup_enabled": True,
     "cleanup_provider": "openrouter",  # a name in cleanup.PROVIDERS
     "cleanup_model": "google/gemini-3.5-flash-lite",

@@ -36,6 +36,7 @@ from . import update
 from .filetranscribe import FileTranscriber
 from .i18n import t
 from . import theme
+from . import translation
 
 UI_LANGUAGES = [("Automatic (system)", "auto"), ("Turkish", "tr"), ("English", "en")]
 LANGUAGES = [
@@ -1297,6 +1298,19 @@ class SettingsWindow(QDialog):
             self.language.addItem(t(label), code)
         form.addRow(t("Speech language"), self.language)
 
+        self.translation_enabled = QCheckBox(t("Translate after recording"))
+        form.addRow("", self.translation_enabled)
+        self.translation_target = QComboBox()
+        for code, label in translation.LANGUAGES.items():
+            self.translation_target.addItem(t(label), code)
+        form.addRow(t("Translation language"), self.translation_target)
+        self.translation_enabled.toggled.connect(self.translation_target.setEnabled)
+        note = QLabel(t("Translation uses the configured cleanup provider and model, "
+                        "instead of cleanup. Runs after recording, not while speaking. "
+                        "Agent, file and meeting modes are unchanged."))
+        note.setWordWrap(True)
+        form.addRow(note)
+
         self.auto_paste = QCheckBox(t("Paste the text into the focused window"))
         form.addRow("", self.auto_paste)
 
@@ -2350,6 +2364,8 @@ class SettingsWindow(QDialog):
 
         copy = QPushButton(t("Copy selected to clipboard"))
         copy.clicked.connect(self._copy_history)
+        original = QPushButton(t("Copy original transcript"))
+        original.clicked.connect(self._copy_original_history)
         delete = QPushButton(t("Delete selected"))
         delete.clicked.connect(self._delete_history)
         clear = QPushButton(t("Clear history"))
@@ -2358,6 +2374,7 @@ class SettingsWindow(QDialog):
         reload_.clicked.connect(self._load_history)
         self.history_actions = row = QHBoxLayout()
         row.addWidget(copy)
+        row.addWidget(original)
         row.addWidget(delete)
         row.addWidget(clear)
         row.addWidget(reload_)
@@ -2471,6 +2488,9 @@ class SettingsWindow(QDialog):
         theme.apply(self, self.theme_choice.currentData())
         self._select_source(self.mic, conf["mic_target"])
         self._select_data(self.language, conf["language"])
+        self.translation_enabled.setChecked(bool(conf["translation_enabled"]))
+        self._select_data(self.translation_target, conf["translation_target"])
+        self.translation_target.setEnabled(self.translation_enabled.isChecked())
         self.auto_paste.setChecked(conf["auto_paste"])
         self.paste_shortcut.setCurrentText(conf["paste_shortcut"])
         self.restore_clipboard.setChecked(conf["restore_clipboard"])
@@ -2631,6 +2651,8 @@ class SettingsWindow(QDialog):
         conf["theme"] = self.theme_choice.currentData() or theme.DEFAULT
         conf["mic_target"] = self.mic.currentData() or ""
         conf["language"] = self.language.currentData() or "auto"
+        conf["translation_enabled"] = self.translation_enabled.isChecked()
+        conf["translation_target"] = self.translation_target.currentData() or "en"
         conf["auto_paste"] = self.auto_paste.isChecked()
         conf["paste_shortcut"] = self.paste_shortcut.currentText().strip()
         conf["restore_clipboard"] = self.restore_clipboard.isChecked()
@@ -3727,6 +3749,12 @@ class SettingsWindow(QDialog):
                 header += t("  ·  asked {who}: {question}",
                             who=i18n.name(who, "dative"),
                             question=asked[:60] + ("…" if len(asked) > 60 else ""))
+            if row.get("mode") == "translate":
+                label = (t("Translation failed") if row.get("translation_error")
+                         else t("Translation"))
+                code = row.get("translation_target", "")
+                language = t(translation.LANGUAGES.get(code, code))
+                header += f"  ·  {label} → {language}"
             item = QListWidgetItem(f"{header}\n{preview}")
             item.setData(Qt.ItemDataRole.UserRole, row)
             self.history.addItem(item)
@@ -3742,6 +3770,12 @@ class SettingsWindow(QDialog):
             QGuiApplication.clipboard().setText(
                 "\n\n".join(row.get("text", "") for row in rows)
             )
+
+    def _copy_original_history(self):
+        rows = self._selected_rows()
+        if rows:
+            QGuiApplication.clipboard().setText(
+                "\n\n".join(row.get("raw", row.get("text", "")) for row in rows))
 
     def _delete_history(self):
         rows = self._selected_rows()
