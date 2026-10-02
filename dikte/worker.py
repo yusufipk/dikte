@@ -24,6 +24,7 @@ from . import config as cfg
 from . import i18n
 from . import paste
 from . import vad
+from . import writing_style
 from .i18n import t
 
 CHUNK_SECONDS = audio.CHUNK_FRAMES / audio.RATE
@@ -206,7 +207,10 @@ class Pipeline(QObject):
                 self.stage.emit(t("Cleaning up…"))
                 cleaned = True
                 try:
-                    text = cleanup.run(raw, conf, conf.cleanup_prompt(speech=detected))
+                    prompt = conf.cleanup_prompt(speech=detected)
+                    if not ask:
+                        prompt = writing_style.apply(prompt, conf)
+                    text = cleanup.run(raw, conf, prompt)
                 except api.ApiError as exc:
                     # Keep the transcript, but never let the failure pass unseen:
                     # a rejected key would otherwise look like working dictation.

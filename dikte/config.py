@@ -14,6 +14,7 @@ from . import hardware
 from . import i18n
 from . import paste
 from . import paths
+from . import writing_style
 from .i18n import t
 
 
@@ -419,6 +420,7 @@ da senin soracağın soruya verilecek bir yanıt yok.
   ve varsayımını bir yan cümlede söyle"""
 
 DEFAULTS = {
+    **writing_style.DEFAULTS,
     "theme": "nord",
     "ui_language": "auto",          # auto | tr | en
     "openai_api_key": "",

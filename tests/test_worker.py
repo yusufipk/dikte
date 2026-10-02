@@ -86,6 +86,15 @@ class Chain(DikteTest):
         return {"done": done, "failures": failures, "stages": stages,
                 "cancelled": cancels, "sleeps": sleeps, **calls}
 
+    def test_style_only_applies_to_dictation_cleanup(self):
+        self.conf["style_enabled"] = True
+        self.conf["style_preferences"] = {"formality": "formal"}
+        result = self.run_chain()
+        self.assertIn("Use a formal tone.", str(result["cleanup"].call_args))
+        self.conf["assistant_cleanup"] = True
+        result = self.run_chain(ask=True)
+        self.assertNotIn("Writing style preferences:", str(result["cleanup"].call_args))
+
     # ---- the ordinary run -------------------------------------------------
 
     def test_a_dictation_is_transcribed_cleaned_copied_and_pasted(self):
