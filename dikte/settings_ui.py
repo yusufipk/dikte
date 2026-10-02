@@ -1109,6 +1109,7 @@ class SettingsWindow(QDialog):
                 box.valueChanged.connect(self._show_dirty)
         self.local_threads.valueChanged.connect(self._local_threads_was_changed)
         self.local_whisper.program_changed.connect(self._refresh_processing_devices)
+        self.writing_style.changed.connect(self._show_dirty)
         self.local_whisper.program_changed.connect(self._show_dirty)
         self.local_llm.program_changed.connect(self._show_dirty)
         self._refresh_processing_devices()
@@ -1151,6 +1152,7 @@ class SettingsWindow(QDialog):
         provider = self.transcribe_provider.currentData()
         if provider in models:
             models[provider] = self.transcribe_model.currentText().strip()
+        values.append(dict(self.writing_style.learned))
         values.append(models)
         values.extend((
             self.local_whisper.custom_binary,
@@ -1200,6 +1202,7 @@ class SettingsWindow(QDialog):
         self._local_state_timer.start()
 
     def hideEvent(self, event):
+        self.writing_style.clear_examples()
         self._local_state_timer.stop()
         super().hideEvent(event)
 
@@ -1742,6 +1745,9 @@ class SettingsWindow(QDialog):
               "shortened, and misheard words are repaired from the context."),
             cfg.default_file_cleanup_prompt,
         )
+        from .writing_style_ui import WritingStyle
+        self.writing_style = WritingStyle()
+        inner.addTab(self.writing_style, t("Writing style"))
         layout.addWidget(inner, 1)
 
         hint = QLabel(t("Names and terms you say often (optional). They go to the "
@@ -2524,6 +2530,7 @@ class SettingsWindow(QDialog):
         if binary_changed and hasattr(self, "_saved_form"):
             self._refresh_processing_devices()
 
+        self.writing_style.load(conf)
         self.cleanup_enabled.setChecked(conf["cleanup_enabled"])
         self.cleanup_model.setCurrentText(conf["cleanup_model"])
         self.cleanup_gemini_model.setCurrentText(
@@ -2667,6 +2674,7 @@ class SettingsWindow(QDialog):
         if self._local_threads_changed:
             conf["local_threads"] = self.local_threads.value()
 
+        self.writing_style.save(conf)
         conf["cleanup_enabled"] = self.cleanup_enabled.isChecked()
         conf["cleanup_provider"] = self.cleanup_provider.currentData() or "openrouter"
         conf["cleanup_model"] = self.cleanup_model.currentText().strip()

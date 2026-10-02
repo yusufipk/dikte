@@ -49,6 +49,9 @@ _app = QApplication.instance() or QApplication([])
 # window does not touch is left out: the round trip cannot lose what it never
 # reads.
 CHANGED = {
+    "style_enabled": True,
+    "style_preferences": {"formality": "formal", "brevity": "concise"},
+    "style_learned": {"sentences": "short", "punctuation": "standard"},
     "ui_language": "tr",
     "language": "tr",
     "auto_paste": False,
@@ -188,6 +191,36 @@ class Settings(DikteTest):
         self.addCleanup(window.deleteLater)
         self.addCleanup(window.close)
         return window
+
+    def test_hiding_settings_clears_shared_style_examples(self):
+        window = self.window(self.config())
+        profile = window.writing_style
+        profile.consent.setChecked(True)
+        profile.example.setPlainText("We will meet tomorrow morning. Please bring the blue notebook.")
+        profile.before.setPlainText("An original correction shared deliberately.")
+        profile.preview()
+        window.hideEvent(QHideEvent())
+        self.assertFalse(profile.consent.isChecked())
+        self.assertEqual(profile.example.toPlainText(), "")
+        self.assertEqual(profile.before.toPlainText(), "")
+        self.assertEqual(profile.pending, {})
+
+    def test_learned_preferences_stay_dirty_until_saved(self):
+        window = self.window(self.config())
+        profile = window.writing_style
+        profile.consent.setChecked(True)
+        profile.example.setPlainText("We will meet tomorrow morning. Please bring the blue notebook.")
+        profile.preview()
+        profile.accept()
+        self.assertTrue(window.dirty_label.text())
+        window.refresh_configuration()
+        self.assertEqual(profile.learned["sentences"], "short")
+        window._save()
+        self.assertFalse(window.dirty_label.text())
+        profile.remove("sentences")
+        self.assertTrue(window.dirty_label.text())
+        window.refresh_configuration()
+        self.assertNotIn("sentences", profile.learned)
 
     @staticmethod
     def wheel():
