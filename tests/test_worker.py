@@ -515,3 +515,20 @@ class Busy(DikteTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DictionaryLearning(Chain):
+    def test_only_successful_dictation_learns_without_changing_raw_history(self):
+        self.conf['dictionary_learning'] = True
+        raw = 'we tested Aster and compared Aster today.'
+        self.run_chain(transcript=raw, cleaned=raw)
+        self.assertEqual(self.conf['transcribe_prompt'], 'Aster')
+        self.assertEqual(cfg.read_history()[0]['raw'], raw)
+
+    def test_ask_and_cleanup_warning_do_not_learn(self):
+        self.conf['dictionary_learning'] = True
+        raw = 'we tested Aster and compared Aster today.'
+        self.run_chain(ask=True, transcript=raw, cleaned=raw)
+        self.assertEqual(self.conf.dictionary_entries(), [])
+        self.run_chain(transcript=raw, cleanup_error=api.ApiError('failed'))
+        self.assertEqual(self.conf.dictionary_entries(), [])

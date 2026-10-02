@@ -283,6 +283,12 @@ class Pipeline(QObject):
                     time.sleep(0.35)
                     paste.copy_bytes(previous)
 
+            if not ask and not warning and not self._stop.is_set():
+                try:
+                    conf.learn_dictionary(raw, text)
+                except OSError:
+                    # A dictionary write must never lose successful dictation.
+                    warning = t("Could not save learned dictionary entries.")
             self.finished.emit(raw, text, warning, speech_language)
 
         except assistant.Cancelled:

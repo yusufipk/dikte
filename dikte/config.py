@@ -9,6 +9,7 @@ import threading
 import time
 
 from . import api
+from . import dictionary
 from . import ggml
 from . import hardware
 from . import i18n
@@ -450,6 +451,8 @@ DEFAULTS = {
     # language hint in auto mode; local whisper also reports the detected code.
     "language": "auto",
     "transcribe_prompt": "",
+    "dictionary_entries": [],
+    "dictionary_learning": False,
 
     # --- whisper.cpp, on this machine ---------------------------------------
     # The program and the model are both fetched from Settings; empty means
@@ -657,8 +660,15 @@ def _local_thread_count(value):
         return 0
 
 
+def key_in_glossary(term, glossary):
+    import re
+    return bool(re.search(r"(?<!\w)" + re.escape(dictionary.key(term))
+                          + r"(?!\w)", dictionary.key(glossary)))
+
+
 class Config:
     def __init__(self):
+        self._dictionary_lock = threading.RLock()
         self.data = dict(DEFAULTS)
         self.load()
 
@@ -701,6 +711,11 @@ class Config:
         i18n.set_language(self.data["ui_language"])
 
     def save(self):
+        with self._dictionary_lock:
+            self._save_locked()
+
+    def _save_locked(self):
+        self.dictionary_entries()
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         tmp = CONFIG_FILE.with_suffix(".json.tmp")
         with open(tmp, "w", encoding="utf-8") as fh:
@@ -722,6 +737,40 @@ class Config:
 
     def get(self, key, default=None):
         return self.data.get(key, DEFAULTS.get(key, default))
+
+    def dictionary_entries(self):
+        with self._dictionary_lock:
+            rows = dictionary.reconcile(self["dictionary_entries"],
+                                        self["transcribe_prompt"])
+            self.data["dictionary_entries"] = rows
+            return [dict(row) for row in rows]
+
+    def set_dictionary(self, rows):
+        with self._dictionary_lock:
+            self.data["dictionary_entries"] = [dict(row) for row in rows]
+            self.data["transcribe_prompt"] = dictionary.render(rows)
+
+    def learn_dictionary(self, raw, text):
+        with self._dictionary_lock:
+            if not self["dictionary_learning"]:
+                return
+            rows = self.dictionary_entries()
+            original = rows
+            for term in dictionary.candidates(raw, text):
+                # Migrated freeform text may already contain the same term.
+                if key_in_glossary(term, self["transcribe_prompt"]):
+                    continue
+                try:
+                    rows = dictionary.add(rows, term, "auto")
+                except ValueError:
+                    pass
+            if rows != original and len(rows) <= 1000:
+                self.set_dictionary(rows)
+                try:
+                    self.save()
+                except OSError:
+                    self.set_dictionary(original)
+                    raise
 
     def api_key(self, setting):
         """A stored key, or the environment variable that shares its name."""
