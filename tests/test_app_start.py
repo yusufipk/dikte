@@ -101,6 +101,21 @@ class Present(unittest.TestCase):
         self.present(active=self.left, current=self.left)
         self.assertFalse(self.window.isMinimized())
 
+    def test_mac_space_policy_is_applied_before_restore_and_show(self):
+        window = mock.Mock()
+        window.isVisible.return_value = False
+        window.isMinimized.return_value = True
+        window.windowState.return_value = app.Qt.WindowState.WindowMinimized
+        calls = []
+        window.setWindowState.side_effect = lambda state: calls.append('restore')
+        window.show.side_effect = lambda: calls.append('show')
+        with mock.patch.object(app.sys, 'platform', 'darwin'), \
+                mock.patch.object(app, 'active_screen', return_value=None), \
+                mock.patch.object(app.mac_window, 'move_to_active_space',
+                                  side_effect=lambda widget: calls.append('policy')):
+            app._present(window)
+        self.assertEqual(calls, ['policy', 'restore', 'show'])
+
     def test_the_active_window_is_not_blinked(self):
         self.window.show()
         with mock.patch.object(self.window, "isActiveWindow", return_value=True), \
