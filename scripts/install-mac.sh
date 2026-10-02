@@ -229,13 +229,17 @@ int main(int argc, char *argv[]) {
         return py_main(argc, argv);
     }
 
-    int new_argc = argc + 2;
+    // A Finder/open launch has no verb. Make that explicit without changing
+    // --gui (quiet restart), --autostart, or a caller's command arguments.
+    int manual_launch = argc == 1;
+    int new_argc = argc + 2 + manual_launch;
     char **new_argv = malloc((new_argc + 1) * sizeof(char*));
     if (!new_argv) return 1;
 
     new_argv[0] = argv[0];
     new_argv[1] = (char*)entry;
     new_argv[2] = "--gui";
+    if (manual_launch) new_argv[3] = "home";
     for (int i = 1; i < argc; i++) {
         new_argv[i+2] = argv[i];
     }
@@ -311,6 +315,7 @@ if [ ! -d "\$PYTHONHOME" ]; then
   osascript -e 'display alert "Dikte" message "The Python this was installed against is gone, most likely after a brew upgrade. Run ./install.sh again."' >/dev/null 2>&1
   exit 1
 fi
+if [ "\$#" -eq 0 ]; then set -- home; fi
 exec "\$HERE/python3" $SHELL_ENTRY --gui "\$@"
 EOF
 fi

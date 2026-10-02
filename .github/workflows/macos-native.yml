@@ -9,6 +9,10 @@ on:
       - scripts/uninstall.sh
       - dikte/ipc.py
       - dikte/app.py
+      - dikte/mac_window.py
+      - tests/test_mac_presentation.py
+      - tests/test_app_start.py
+      - tests/test_security_paths.py
       - .github/workflows/macos-native.yml
 
 permissions:
@@ -31,7 +35,7 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install --quiet PyQt6
       - name: Generated wrappers and native platform integration tests
-        run: python -m unittest -v tests.test_security_paths tests.test_ipc tests.test_integrate tests.test_app_start
+        run: python -m unittest -v tests.test_security_paths tests.test_ipc tests.test_integrate tests.test_app_start tests.test_mac_presentation
       - name: Compile, sign, launch Cocoa and exercise native IPC restart
         run: python scripts/native-macos-smoke.py
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
