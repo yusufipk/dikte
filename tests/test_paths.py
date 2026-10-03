@@ -6,6 +6,9 @@ about macOS.
 """
 
 import os
+import shutil
+import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -90,6 +93,44 @@ class CacheDir(unittest.TestCase):
         with mock.patch.dict(os.environ, {}, clear=True):
             self.assertTrue(paths.cache_dir("win32").as_posix()
                             .endswith("/AppData/Local/Dikte/cache"))
+
+
+class ScratchDir(unittest.TestCase):
+    """Intermediate audio stays out of a /tmp that may be held in RAM."""
+
+    def setUp(self):
+        self.cache = tempfile.mkdtemp(prefix="dikte-test-cache-")
+        self.addCleanup(shutil.rmtree, self.cache, True)
+
+    def test_linux_puts_it_under_the_cache(self):
+        with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": self.cache,
+                                          "TMPDIR": ""}):
+            work = paths.scratch_dir("linux")
+        self.assertEqual(work, os.path.join(self.cache, "dikte", "work"))
+        self.assertTrue(os.path.isdir(work))
+
+    def test_a_tmpdir_set_on_purpose_wins(self):
+        with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": self.cache,
+                                          "TMPDIR": "/somewhere"}):
+            self.assertIsNone(paths.scratch_dir("linux"))
+
+    def test_elsewhere_tempfile_decides(self):
+        self.assertIsNone(paths.scratch_dir("darwin"))
+        self.assertIsNone(paths.scratch_dir("win32"))
+
+    def test_a_killed_run_is_swept_and_a_live_one_is_not(self):
+        with mock.patch.dict(os.environ, {"XDG_CACHE_HOME": self.cache,
+                                          "TMPDIR": ""}):
+            work = paths.scratch_dir("linux")
+            stale = os.path.join(work, "dikte-file-old")
+            live = os.path.join(work, "dikte-file-new")
+            os.mkdir(stale)
+            os.mkdir(live)
+            old = time.time() - paths.STALE_SCRATCH_SECONDS - 60
+            os.utime(stale, (old, old))
+            paths.scratch_dir("linux")
+        self.assertFalse(os.path.exists(stale))
+        self.assertTrue(os.path.isdir(live))
 
 
 class OnePlace(unittest.TestCase):
