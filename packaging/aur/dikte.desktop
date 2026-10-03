@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Dikte
+Comment=Voice dictation: record, transcribe, clean up, paste
+Exec=dikte
+Icon=dikte
+Terminal=false
+Categories=Utility;AudioVideo;
+StartupNotify=false
