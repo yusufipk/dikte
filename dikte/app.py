@@ -36,7 +36,7 @@ if sys.platform == "darwin":
 
 from PyQt6.QtCore import (QObject, QTimer, QElapsedTimer, QSocketNotifier,  # noqa: E402
                           Qt, QUrl, pyqtSignal)
-from PyQt6.QtGui import QAction, QDesktopServices, QIcon  # noqa: E402
+from PyQt6.QtGui import QAction, QCursor, QDesktopServices, QIcon  # noqa: E402
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon  # noqa: E402
 
@@ -238,6 +238,10 @@ class Dikte:
         QTimer.singleShot(UPDATE_DELAY_MS, self._look_for_update)
 
         self.tray = QSystemTrayIcon()
+        # The tray object lives for the process lifetime, while its menu is
+        # rebuilt when settings change. Connect once here so a rebuild cannot
+        # make one click dispatch the same action more than once.
+        self.tray.activated.connect(self._tray_clicked)
         self._apply_settings()
         self.tray.show()
 
@@ -316,17 +320,25 @@ class Dikte:
         self.quit_action.triggered.connect(self.app.quit)
         self.menu.addAction(self.quit_action)
 
-        self.tray.setContextMenu(self.menu)
+        if _uses_native_tray_context_menu():
+            self.tray.setContextMenu(self.menu)
+        else:
+            # On macOS the native menu opens on the same press that emits
+            # Trigger, so one click both showed the menu and ran its action.
+            self.tray.setContextMenu(None)
         # A model unloads itself in the background, so what the unload row says
         # goes stale between state changes. Refreshed as the menu opens, which
         # is the only moment anybody reads it.
         self.menu.aboutToShow.connect(self._refresh_tray)
         self.tray.setToolTip(t("Dikte: ready"))
-        self.tray.activated.connect(self._tray_clicked)
         self._refresh_update()
         self._set_icon("audio-input-microphone")
 
     def _tray_clicked(self, reason):
+        if (sys.platform == "darwin"
+                and reason == QSystemTrayIcon.ActivationReason.Context):
+            self.menu.popup(QCursor.pos())
+            return
         if reason != QSystemTrayIcon.ActivationReason.Trigger:
             return
         # The icon ends whatever is being recorded rather than only a dictation.
@@ -1506,6 +1518,11 @@ class Dikte:
 def _preview(text):
     line = text.replace("\n", " ")
     return line[:48] + ("…" if len(line) > 48 else "")
+
+
+def _uses_native_tray_context_menu(platform_name=None):
+    """Whether Qt should attach its automatic menu to the status item."""
+    return (platform_name or sys.platform) != "darwin"
 
 
 def _clock(seconds):
