@@ -23,6 +23,7 @@ from . import assistant
 from . import audio
 from . import cleanup
 from . import config as cfg
+from .dictionary_ui import DictionaryEditor
 from . import filetranscribe
 from . import ggml
 from . import hardware
@@ -1750,9 +1751,9 @@ class SettingsWindow(QDialog):
         hint.setWordWrap(True)
         layout.addWidget(hint)
         layout.addWidget(QLabel(t("Dictionary")))
-        self.transcribe_prompt = QPlainTextEdit()
-        self.transcribe_prompt.setMaximumHeight(90)
-        layout.addWidget(self.transcribe_prompt)
+        self.dictionary_editor = DictionaryEditor()
+        self.transcribe_prompt = self.dictionary_editor.legacy
+        layout.addWidget(self.dictionary_editor)
         return page
 
     def _assistant_tab(self):
@@ -2567,7 +2568,7 @@ class SettingsWindow(QDialog):
         self.file_cleanup_prompt.setPlainText(
             conf["file_cleanup_prompt"] or self._loaded_defaults["file"]
         )
-        self.transcribe_prompt.setPlainText(conf["transcribe_prompt"])
+        self.dictionary_editor.load(conf)
 
         self._select_data(self.assistant_provider, conf["assistant_provider"])
         self.assistant_model.setCurrentText(conf["assistant_model"])
@@ -2718,7 +2719,7 @@ class SettingsWindow(QDialog):
         conf["file_cleanup_prompt"] = ("" if file_prompt in (
             self._loaded_defaults["file"], cfg.default_file_cleanup_prompt())
             else file_prompt)
-        conf["transcribe_prompt"] = self.transcribe_prompt.toPlainText().strip()
+        self.dictionary_editor.save(conf)
 
         conf["assistant_provider"] = self.assistant_provider.currentData() or "claude"
         conf["assistant_model"] = (self.assistant_model.currentText().strip()
