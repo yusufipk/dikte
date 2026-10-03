@@ -220,15 +220,19 @@ TR = {
     "Could not connect: {reason}": "Bağlantı kurulamadı: {reason}",
     "Could not parse the response: {error}": "Yanıt çözümlenemedi: {error}",
 
-    "whisper.cpp has no macOS build, and Homebrew's leaves out the "
-    "server. Build it (cmake -B build -DWHISPER_BUILD_SERVER=ON "
-    "-DGGML_METAL=ON && cmake --build build -j), put the binary "
-    "on the PATH, or transcribe in the cloud. See the README.":
-        "whisper.cpp'nin macOS için hazır paketi yok; Homebrew paketi de "
-        "sunucuyu içermiyor. Sunucuyu derle (cmake -B build "
-        "-DWHISPER_BUILD_SERVER=ON -DGGML_METAL=ON && cmake --build build -j) "
-        "ve whisper-server dosyasını PATH üzerindeki bir dizine koy "
-        "veya bulutta transkripsiyon yap. README'ye bak.",
+    "Graphics capability unknown. The active backend is reported after "
+    "whisper.cpp starts.":
+        "Grafik desteği bilinmiyor. Etkin arka uç whisper.cpp başladıktan sonra "
+        "gösterilir.",
+    "Installed on the system: whisper.cpp {version}\n{path}":
+        "Sistemde kurulu: whisper.cpp {version}\n{path}",
+    "No macOS server download is available here. Install it with "
+    "`brew install whisper.cpp`, then reopen Settings. Dikte detects "
+    "Homebrew's whisper-server automatically. See the README for custom builds.":
+        "Buradan indirilebilen bir macOS sunucusu yok. "
+        "`brew install whisper.cpp` ile kur, ardından Ayarlar'ı yeniden aç. "
+        "Dikte, Homebrew'un whisper-server programını otomatik bulur. "
+        "Özel derlemeler için README'ye bak.",
 
     # --- settings: tabs and general ------------------------------------
     "Dikte Settings": "Dikte Ayarları",
@@ -1107,7 +1111,7 @@ TR = {
     "A specific graphics card can only be selected with Dikte's managed Vulkan program. Choose Automatic or Processor in Settings.": "Belirli bir ekran kartı yalnızca Dikte'nin yönettiği Vulkan programıyla seçilebilir. Ayarlar'dan Otomatik veya İşlemci'yi seç.",
     "Advanced": "Gelişmiş",
     "Automatic (whisper.cpp default)": "Otomatik (whisper.cpp varsayılanı)",
-    "Automatic lets whisper.cpp choose a graphics card when its build supports one. Processor keeps all speech recognition on the CPU.": "Otomatik seçeneği, kullanılan derleme destekliyorsa ekran kartını whisper.cpp'nin seçmesini sağlar. İşlemci seçeneğinde tüm konuşma tanıma işlemi CPU üzerinde yapılır.",
+    "Automatic lets whisper.cpp choose a graphics card through Metal, CUDA, ROCm or Vulkan when its build supports one. Processor keeps all speech recognition on the CPU.": "Otomatik seçeneği, kullanılan derleme destekliyorsa Metal, CUDA, ROCm veya Vulkan üzerinden bir ekran kartını whisper.cpp'nin seçmesini sağlar. İşlemci seçeneğinde tüm konuşma tanıma işlemi CPU üzerinde yapılır.",
     "CPU threads": "İşlemci iş parçacıkları",
     "CPU-thread limit available to this process: {count}. Automatic lets whisper.cpp choose. More threads are not always faster.": "Bu işlem için kullanılabilir iş parçacığı sınırı: {count}. Otomatik seçeneğinde sayıyı whisper.cpp belirler. Daha fazla iş parçacığı her zaman daha hızlı değildir.",
     "Custom program unavailable: {path}": "Özel program kullanılamıyor: {path}",

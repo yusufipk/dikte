@@ -417,21 +417,22 @@ class InstallProgram(Local):
         with fake_urlopen(listing):
             with self.assertRaises(ggml.LocalError) as caught:
                 ggml.install_program(ggml.WHISPER)
-        self.assertIn("Build it (cmake", str(caught.exception))
-        self.assertIn("put the binary on the PATH", str(caught.exception))
+        message = str(caught.exception)
+        self.assertIn("brew install whisper.cpp", message)
+        self.assertNotIn("leaves out", message)
+        self.assertNotIn("WHISPER_BUILD_SERVER", message)
 
-    def test_the_macos_download_guidance_is_localized_and_names_path(self):
+    def test_the_macos_download_guidance_is_localized_and_names_homebrew(self):
         self.patch_attr(sys, "platform", "darwin")
         self.patch_attr(ggml, "_arch", lambda: "arm64")
-        for language, expected in (("en", "put the binary on the PATH"),
-                                   ("tr", "PATH üzerindeki bir dizine koy")):
+        for language, expected in (("en", "brew install whisper.cpp"),
+                                   ("tr", "brew install whisper.cpp")):
             with self.subTest(language=language):
                 i18n.set_language(language)
                 with fake_urlopen(self.release("whisper-bin-ubuntu-arm64.tar.gz")):
                     with self.assertRaises(ggml.LocalError) as caught:
                         ggml.install_program(ggml.WHISPER)
                 self.assertIn(expected, str(caught.exception))
-                self.assertIn("-DWHISPER_BUILD_SERVER=ON", str(caught.exception))
 
     def test_a_mac_uses_the_native_llama_archive_instead_of_ubuntu(self):
         self.patch_attr(sys, "platform", "darwin")
@@ -825,6 +826,16 @@ whisper_backend_init_gpu: device 0: Vulkan0 (type: 1)
 whisper_backend_init_gpu: using Vulkan0 backend
 """
 
+WHISPER_METAL = """\
+load_backend: loaded MTL backend from /opt/homebrew/lib/libggml-metal.so
+load_backend: loaded CPU backend from /opt/homebrew/lib/libggml-cpu.so
+ggml_metal_init: picking default device: Apple M1
+whisper_model_load:          MTL0 total size =   189.49 MB
+whisper_backend_init_gpu: device 1: MTL0 (type: 1)
+whisper_backend_init_gpu: using MTL0 backend
+"""
+
+
 # A whisper built by hand on a Mac: Metal is compiled in rather than loaded, so
 # there is no line to read and no honest answer but "it did not say".
 WHISPER_QUIET = """\
@@ -905,6 +916,13 @@ class WhatItRunsOn(Local):
         self.assertEqual(ggml.accel_kind(accel), "gpu")
         self.assertEqual(ggml.accel_detail(accel),
                          "CUDA, NVIDIA GeForce RTX 4070")
+
+    def test_homebrew_mtl_is_reported_as_metal_with_the_apple_device(self):
+        accel = self.read(ggml.WHISPER, WHISPER_METAL)
+        self.assertEqual(accel.backend, "Metal")
+        self.assertEqual(accel.device, "Apple M1")
+        self.assertEqual(accel.available, ("Metal", "CPU"))
+        self.assertEqual(ggml.accel_detail(accel), "Metal, Apple M1")
 
     def test_a_card_named_only_by_its_slot_is_looked_up(self):
         accel = self.read(ggml.WHISPER, WHISPER_VULKAN)
@@ -2103,9 +2121,18 @@ class Machine(Local):
                 mock.patch.object(sys, "platform", "linux"):
             self.assertEqual(ggml.total_memory(), 0)
 
-    def test_a_mac_is_taken_to_have_a_graphics_interface(self):
-        with mock.patch.object(sys, "platform", "darwin"):
+    def test_an_apple_silicon_mac_has_a_metal_interface(self):
+        with mock.patch.object(sys, "platform", "darwin"), \
+                mock.patch.object(ggml.platform, "machine", return_value="arm64"):
             self.assertEqual(ggml.accelerator(), "Metal")
+
+    def test_an_intel_or_rosetta_mac_does_not_claim_metal(self):
+        for architecture in ("x86_64", "amd64"):
+            with self.subTest(architecture=architecture):
+                with mock.patch.object(sys, "platform", "darwin"), \
+                        mock.patch.object(ggml.platform, "machine",
+                                          return_value=architecture):
+                    self.assertEqual(ggml.accelerator(), "")
 
     def test_elsewhere_the_vulkan_loader_is_what_says_so(self):
         with mock.patch.object(sys, "platform", "linux"), \

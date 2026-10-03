@@ -2019,6 +2019,33 @@ class LocalModels(DikteTest):
         self.assertNotIn("Detected GPU", window.local_whisper.machine_label.text())
         self.assertIn("Graphics card unavailable", window.local_whisper.machine_label.text())
 
+    def test_processing_device_tooltip_names_metal(self):
+        window = self.window(cfg.Config())
+        tooltip = window.local_device.toolTip()
+        self.assertIn("Metal", tooltip)
+        self.assertIn("CUDA", tooltip)
+        self.assertIn("Vulkan", tooltip)
+
+    def test_an_unknown_macos_graphics_interface_does_not_claim_cpu_or_metal(self):
+        with mock.patch.object(sys, "platform", "darwin"), \
+                mock.patch.object(ggml, "accelerator", return_value=""), \
+                mock.patch.object(ggml, "total_memory", return_value=0):
+            box = self.window(cfg.Config()).local_whisper
+            box._show_machine()
+        text = box.machine_label.text()
+        self.assertIn("reported after whisper.cpp starts", text)
+        self.assertNotIn("processor", text.lower())
+        self.assertNotIn("Metal", text)
+
+    def test_a_homebrew_program_shows_its_formula_version(self):
+        path = "/opt/homebrew/opt/whisper.cpp/bin/whisper-server"
+        with mock.patch.object(ggml, "program_path", return_value=path), \
+                mock.patch.object(ggml, "system_program", return_value=True), \
+                mock.patch.object(ggml, "homebrew_version", return_value="1.9.4"):
+            box = self.window(cfg.Config()).local_whisper
+        self.assertIn("whisper.cpp 1.9.4", box.program_label.text())
+        self.assertIn(path, box.program_label.text())
+
     def test_explicit_managed_copy_is_labeled_downloaded_even_with_a_system_copy(self):
         binary = self.path("managed-server")
         binary.write_text("")
@@ -2571,7 +2598,8 @@ class LocalModels(DikteTest):
 
     def test_a_machine_with_no_card_is_told_it_is_on_the_processor(self):
         box = self.window(cfg.Config()).local_whisper
-        with mock.patch.object(ggml, "accelerator", return_value=""), \
+        with mock.patch.object(sys, "platform", "linux"), \
+                mock.patch.object(ggml, "accelerator", return_value=""), \
                 mock.patch.object(ggml, "total_memory", return_value=8 << 30):
             box._show_machine()
         self.assertIn("processor", box.machine_label.text().lower())

@@ -491,9 +491,15 @@ class LocalModelBox(QGroupBox):
         managed = bool(installed and pathlib.Path(path).resolve()
                        == pathlib.Path(installed).resolve())
         if not managed:
-            self.program_label.setText(
-                t("Using custom build: {path}", path=path) if self.custom_binary else
-                t("Installed on the system: {path}", path=path))
+            if self.custom_binary:
+                self.program_label.setText(t("Using custom build: {path}", path=path))
+            else:
+                version = ggml.homebrew_version(self.program, path)
+                self.program_label.setText(
+                    t("Installed on the system: whisper.cpp {version}\n{path}",
+                      version=version, path=path)
+                    if version else t("Installed on the system: {path}", path=path)
+                )
         elif ggml.vulkan_missing(self.program):
             # The download landed the processor build where the graphics card
             # one belongs, and nothing else on this window would say so.
@@ -540,9 +546,21 @@ class LocalModelBox(QGroupBox):
                 )))
             elif where:
                 parts.append(t("Graphics: {name}.", name=where))
+            elif sys.platform == "darwin":
+                parts.append(t(
+                    "Graphics capability unknown. The active backend is reported "
+                    "after whisper.cpp starts."
+                ))
         elif selection is None:
-            parts.append(t("Graphics: {name}.", name=where) if where
-                         else t("Graphics: Processor only."))
+            if where:
+                parts.append(t("Graphics: {name}.", name=where))
+            elif sys.platform == "darwin":
+                parts.append(t(
+                    "Graphics capability unknown. The active backend is reported "
+                    "after whisper.cpp starts."
+                ))
+            else:
+                parts.append(t("Graphics: Processor only."))
         if memory:
             memory_parts.append(t("{size} system", size=ggml.human_size(memory)))
         if memory_parts:
@@ -1502,8 +1520,9 @@ class SettingsWindow(QDialog):
         self._selectable_graphics_devices = ()
         LocalModelBox._fit_popup(self.local_device)
         self.local_device.setToolTip(t(
-            "Automatic lets whisper.cpp choose a graphics card when its build "
-            "supports one. Processor keeps all speech recognition on the CPU."
+            "Automatic lets whisper.cpp choose a graphics card through Metal, "
+            "CUDA, ROCm or Vulkan when its build supports one. Processor keeps "
+            "all speech recognition on the CPU."
         ))
         self.local_device.currentIndexChanged.connect(
             self._processing_device_changed
