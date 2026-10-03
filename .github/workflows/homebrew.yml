@@ -1,0 +1,35 @@
+name: homebrew
+
+on:
+  pull_request:
+    paths:
+      - Casks/**
+      - packaging/homebrew/**
+      - .github/workflows/homebrew.yml
+  push:
+    branches: [master]
+    paths:
+      - Casks/**
+      - packaging/homebrew/**
+      - .github/workflows/homebrew.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cask:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    env:
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_ANALYTICS: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check the released cask and its lifecycle
+        run: python3 packaging/homebrew/check.py
