@@ -619,6 +619,49 @@ def managed_vulkan_devices(binary, devices=None):
     )
 
 
+_HOMEBREW_PREFIXES = (pathlib.Path("/opt/homebrew"), pathlib.Path("/usr/local"))
+
+
+def _macos_homebrew_program(program):
+    """Find Homebrew whisper-server outside a shell PATH."""
+    if sys.platform != "darwin" or program is not WHISPER:
+        return ""
+    arch = platform.machine().lower()
+    if arch in ("arm64", "aarch64"):
+        prefix = "/opt/homebrew"
+    elif arch in ("x86_64", "amd64"):
+        prefix = "/usr/local"
+    else:
+        return ""
+    # This is a macOS path even when a cross-platform test stands on Darwin
+    # from a Windows runner, where os.path would otherwise insert backslashes.
+    candidate = f"{prefix}/opt/whisper.cpp/bin/{program.binary}"
+    return (candidate if os.path.isfile(candidate)
+            and os.access(candidate, os.X_OK) else "")
+
+
+def homebrew_version(program, path):
+    """Homebrew Whisper version encoded by a resolved Cellar path, or empty."""
+    if program is not WHISPER or not path:
+        return ""
+    try:
+        resolved = pathlib.Path(path).resolve()
+        if not resolved.is_file() or not os.access(resolved, os.X_OK):
+            return ""
+    except (OSError, RuntimeError):
+        return ""
+    for prefix in _HOMEBREW_PREFIXES:
+        try:
+            cellar = (prefix / "Cellar" / "whisper.cpp").resolve()
+            relative = resolved.relative_to(cellar)
+        except (OSError, RuntimeError, ValueError):
+            continue
+        parts = relative.parts
+        if len(parts) == 3 and parts[1:] == ("bin", program.binary):
+            return parts[0]
+    return ""
+
+
 def program_path(program, custom=""):
     """Which copy of the program to run, or "" when there is none.
 
@@ -634,12 +677,13 @@ def program_path(program, custom=""):
             return str(pathlib.Path(custom).resolve())
         except (OSError, RuntimeError):
             return ""
-    return shutil.which(program.binary) or installed_program(program)
+    return (shutil.which(program.binary) or _macos_homebrew_program(program)
+            or installed_program(program))
 
 
 def system_program(program):
     """Whether the program came from the system rather than from Dikte."""
-    return bool(shutil.which(program.binary))
+    return bool(shutil.which(program.binary) or _macos_homebrew_program(program))
 
 
 def _binary_file(program):
@@ -706,18 +750,14 @@ def install_program(program, tag="", on_progress=None, should_stop=None,
         raise LocalError(str(exc)) from exc
 
     if item is None:
-        # Nothing to download and nothing to install for you: whisper.cpp
-        # publishes no macOS binary, and Homebrew's whisper-cpp is configured
-        # with WHISPER_BUILD_SERVER=OFF, so it is whisper-cli that lands and not
-        # the server Dikte talks to. Building it is a cmake line, and the
-        # binary is picked up from the PATH, the same way
-        # a distribution's own build is on Linux.
+        # Homebrew's whisper.cpp formula provides the macOS server. Dikte
+        # discovers its stable opt path even when the app starts outside a shell.
         if sys.platform == "darwin" and program is WHISPER:
             raise LocalError(t(
-                "whisper.cpp has no macOS build, and Homebrew's leaves out the "
-                "server. Build it (cmake -B build -DWHISPER_BUILD_SERVER=ON "
-                "-DGGML_METAL=ON && cmake --build build -j), put the binary "
-                "on the PATH, or transcribe in the cloud. See the README."
+                "No macOS server download is available here. Install it with "
+                "`brew install whisper.cpp`, then reopen Settings. Dikte detects "
+                "Homebrew's whisper-server automatically. See the README for "
+                "custom builds."
             ))
         raise LocalError(t("{repo} {tag} has no build for this machine.",
                            repo=program.repo, tag=tag))
@@ -886,7 +926,8 @@ def accelerator():
     is for is the other half, which nothing else on the window says at all.
     """
     if sys.platform == "darwin":
-        return "Metal"
+        return ("Metal" if platform.machine().lower() in ("arm64", "aarch64")
+                else "")
     return "Vulkan" if _has_vulkan() else ""
 
 
@@ -1192,12 +1233,17 @@ _LLAMA_BUFFER = re.compile(
 # which slot rather than which card. Each backend prints the real name as it
 # enumerates, one line further up.
 _HANDLE = re.compile(r"^([A-Za-z]+?)(\d*)$")
-_BARE = re.compile(r"^(?:Vulkan|CUDA|ROCm|SYCL|Metal|GPU|CPU)\d*$", re.I)
+_BARE = re.compile(r"^(?:Vulkan|CUDA|ROCm|SYCL|Metal|MTL|GPU|CPU)\d*$", re.I)
 _METAL_DEVICE = re.compile(r"^ggml_metal.*picking default device: (.+)$", re.M)
 # The driver in brackets after the card's own name: "(radv)", "(nvidia)". The
 # name carries brackets of its own, but in capitals, so the case is what tells
 # a driver tag from part of the name.
 _DRIVER_TAG = re.compile(r"\s*\([a-z0-9_.\- ]+\)$")
+
+
+def _backend_name(name):
+    """Stable user-facing name for a backend's current log spelling."""
+    return "Metal" if name.lower() in ("metal", "mtl") else name
 
 
 def _enumerated(text, backend, index):
@@ -1214,7 +1260,7 @@ def _enumerated(text, backend, index):
     }
     pattern = listings.get(backend.lower())
     found = re.search(pattern, text, re.M) if pattern else None
-    if found is None and backend.lower() == "metal":
+    if found is None and backend.lower() in ("metal", "mtl"):
         found = _METAL_DEVICE.search(text)
     if found is None:
         return ""
@@ -1262,7 +1308,9 @@ def _read_accel(program, log_path):
         return NO_ACCEL
     # dict.fromkeys rather than a set: the order they were loaded in is the
     # order they are worth showing in, and CPU is always one of them.
-    available = tuple(dict.fromkeys(_BACKEND_LOADED.findall(text)))
+    available = tuple(dict.fromkeys(
+        _backend_name(name) for name in _BACKEND_LOADED.findall(text)
+    ))
     cards = [name for name in available if name.upper() != "CPU"]
     if program is WHISPER:
         handle, failed = "", False
@@ -1280,7 +1328,7 @@ def _read_accel(program, log_path):
             return Accel("CPU", handle or "", "", available)
         if handle:
             parts = _HANDLE.match(handle)
-            backend = parts.group(1) if parts else ""
+            backend = _backend_name(parts.group(1)) if parts else ""
             # The backend as the build spells it, so "Vulkan" rather than the
             # capitalisation the handle happened to use.
             backend = next((name for name in cards
@@ -1305,7 +1353,8 @@ def _read_accel(program, log_path):
                 and not handle.upper().startswith("CPU")))
             if len(handles) == 1:
                 handle = handles[0]
-                backend = _HANDLE.fullmatch(handle).group(1)
+                parts = _HANDLE.fullmatch(handle)
+                backend = _backend_name(parts.group(1)) if parts else "GPU"
                 return Accel(backend, _card_name(text, handle), layers,
                              available)
             return Accel("GPU", "", layers, available)

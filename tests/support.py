@@ -105,6 +105,9 @@ class DikteTest(unittest.TestCase):
         self.patch_attr(shutil, "which", lambda tool, *args, **rest: (
             None if tool in ("whisper-server", "llama-server")
             else _which(tool, *args, **rest)))
+        # Stable Homebrew paths are another system lookup, independent of PATH.
+        # Discovery itself is exercised with controlled files in test_homebrew.
+        self.patch_attr(ggml, "_macos_homebrew_program", lambda program: "")
         self.patch_attr(ggml, "DATA_DIR", data_dir)
         self.patch_attr(ggml, "BIN_DIR", data_dir / "bin")
         self.patch_attr(ggml, "MODELS_DIR", data_dir / "models")

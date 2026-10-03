@@ -91,14 +91,17 @@ tutar. PyQt6 pip'ten değil brew'dan geliyor, Homebrew'un Python'u içine
 kurulmayı reddediyor; sanal ortam kullanacaksan
 `DIKTE_PYTHON=…/venv/bin/python ./install.sh`.
 
-Orada elle derlenmesi gereken tek parça yerel transkripsiyon: whisper.cpp'nin
-macOS sürümü yok, Homebrew'unki de `WHISPER_BUILD_SERVER=OFF` ile derleniyor,
-yani `whisper-cli` kuruluyor, Dikte'nin konuştuğu sunucu değil. Kendin derle
-(`cmake -B build -DWHISPER_BUILD_SERVER=ON -DGGML_METAL=ON && cmake --build
-build -j`) ve `build/bin/whisper-server` dosyasını `PATH` üzerindeki bir dizine koy,
-ya da buluta çevir. Toplantı için
-BlackHole veya Loopback gerekiyor (`brew install blackhole-2ch`); dikte için
-gerekmiyor.
+macOS'ta yerel konuşmadan metne çeviri, Homebrew'un resmi `whisper.cpp`
+formülünü kullanır (`brew install whisper.cpp`). Formül `whisper-server` içerir;
+Dikte, Finder veya LaunchServices uygulamayı kabuğun PATH'i olmadan başlatsa
+bile sabit Homebrew yolunu bulur. İstediğin modeli Ayarlar → API ve modellerden
+indir.
+
+Normal dikte yalnızca mikrofonu kaydeder; sanal ses sürücüsü gerektirmez.
+Toplantılarda bilgisayarın sistem sesini de kaydetmek isteyenlerin BlackHole veya
+Loopback'i ayrıca kurup yapılandırması gerekir. BlackHole isteğe bağlıdır ve
+Dikte Cask tarafından otomatik kurulmaz (`brew install --cask blackhole-2ch`;
+kurulumdan sonra Mac'i yeniden başlatmak gerekir).
 
 Windows da aynı şekilde çalışıyor, Dikte açıkken kombinasyonu sistemin kendi
 kısayol servisi üzerinden tutuyor. Sürümler sayfasındaki kurulum kaydın
