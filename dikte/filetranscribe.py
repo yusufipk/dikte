@@ -134,7 +134,7 @@ class FileTranscriber(QObject):
             if not shutil.which("ffmpeg"):
                 raise api.ApiError(t("ffmpeg not found. Install it to transcribe files."))
 
-            workdir = tempfile.mkdtemp(prefix="dikte-file-")
+            workdir = tempfile.mkdtemp(prefix="dikte-file-", dir=paths.scratch_dir())
             self.progress.emit(t("Converting audio…"))
             wav_path = _to_wav(path, workdir, self._abort)
             self._check()
