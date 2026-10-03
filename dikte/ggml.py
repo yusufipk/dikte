@@ -633,7 +633,9 @@ def _macos_homebrew_program(program):
         prefix = "/usr/local"
     else:
         return ""
-    candidate = os.path.join(prefix, "opt", "whisper.cpp", "bin", program.binary)
+    # This is a macOS path even when a cross-platform test stands on Darwin
+    # from a Windows runner, where os.path would otherwise insert backslashes.
+    candidate = f"{prefix}/opt/whisper.cpp/bin/{program.binary}"
     return (candidate if os.path.isfile(candidate)
             and os.access(candidate, os.X_OK) else "")
 

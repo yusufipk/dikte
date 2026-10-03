@@ -80,7 +80,10 @@ class HomebrewDiscovery(unittest.TestCase):
 
     def test_non_executable_keg_target_has_no_formula_version(self):
         with self.keg(executable=False) as (link, _, _):
-            self.assertEqual(ggml.homebrew_version(ggml.WHISPER, link), "")
+            # Windows does not derive X_OK from POSIX mode bits. Pin the
+            # permission result so this tests Dikte's guard on every runner.
+            with mock.patch.object(ggml.os, "access", return_value=False):
+                self.assertEqual(ggml.homebrew_version(ggml.WHISPER, link), "")
 
     def test_broken_and_looping_opt_symlinks_have_no_formula_version(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -112,7 +115,7 @@ class HomebrewDiscovery(unittest.TestCase):
                           path="/path/whisper-server"):
             self.assertEqual(
                 ggml.program_path(ggml.WHISPER, "/explicit/whisper-server"),
-                "/explicit/whisper-server",
+                str(pathlib.Path("/explicit/whisper-server").resolve()),
             )
         with self.machine(files=(current,)):
             self.assertEqual(ggml.program_path(ggml.WHISPER), current)
