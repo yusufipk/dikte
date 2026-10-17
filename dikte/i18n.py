@@ -1179,4 +1179,56 @@ TR = {
     "{size} system": "{size} sistem belleği",
     "{size} {kind} graphics": "{size} {kind} ekran kartı belleği",
 
+    # Asking about selected text.
+    "Selected text": "Seçili metin",
+    "Ask about the selected text": "Seçili metin hakkında sor",
+    "Select text, press the shortcut and say what to do with it. The answer "
+    "opens in a window with Copy, and Apply for edits; nothing is pasted until "
+    "you press Apply. On Linux the selection is read directly; on macOS and "
+    "Windows Dikte presses the copy shortcut and puts your clipboard back "
+    "afterwards. The selection goes to the agent as data, with no tools; "
+    "Codex and Antigravity are not sent it, and the key asks them a plain "
+    "question. The history keeps your instruction and the reply, which for "
+    "an edit is the rewritten text. On Linux the last highlighted text can be "
+    "sent even after the highlight is gone. On Windows a clipboard holding "
+    "only an image or files means no selection is read.":
+        "Metni seç, kısayola bas ve onunla ne yapılacağını söyle. Cevap, "
+        "kopyalama düğmesi ve düzenlemeler için Uygula düğmesi olan bir "
+        "pencerede açılır; Uygula'ya basmadan hiçbir şey yapıştırılmaz. "
+        "Linux'ta seçim doğrudan okunur; macOS ve Windows'ta Dikte kopyalama "
+        "kısayoluna basar ve panonu sonra eski haline getirir. Seçim ajana "
+        "veri olarak, araçsız gönderilir; Codex ve Antigravity'ye gönderilmez, "
+        "kısayol onlara düz bir soru sorar. Geçmişte talimatın ve cevap "
+        "saklanır; düzenlemelerde bu, yeniden yazılmış metindir. Linux'ta en "
+        "son vurgulanan metin, vurgu kalktıktan sonra da gönderilebilir. "
+        "Windows'ta panoda yalnızca bir resim ya da dosya varsa seçim okunmaz.",
+    "The clipboard holds an image or files, which pasting would lose, so "
+    "nothing was pasted. Use Copy instead.":
+        "Panoda bir resim ya da dosya var ve yapıştırmak onu kaybettirirdi, bu "
+        "yüzden hiçbir şey yapıştırılmadı. Bunun yerine kopyalamayı kullan.",
+    "{tool} is needed to check the clipboard, so nothing was pasted. Install "
+    "it, or use Copy.":
+        "Panoyu denetlemek için {tool} gerekiyor, bu yüzden hiçbir şey "
+        "yapıştırılmadı. Kur ya da kopyalamayı kullan.",
+    "The clipboard could not be read just now, so nothing was pasted. Try "
+    "again, or use Copy.":
+        "Pano şu an okunamadı, bu yüzden hiçbir şey yapıştırılmadı. Yeniden "
+        "dene ya da kopyalamayı kullan.",
+    "{name} cannot run without tools, so selected text is not sent to it. "
+    "Use Claude Code or a chat provider.":
+        "{name} araçsız çalıştırılamadığı için seçili metin ona gönderilmez. "
+        "Claude Code'u ya da bir sohbet sağlayıcısını kullan.",
+    "Dikte: {name}": "Dikte: {name}",
+    "You said: {text}": "Söylediğin: {text}",
+    "About the selection ({count} characters)": "Seçim hakkında ({count} karakter)",
+    "Apply": "Uygula",
+    "Replaces the selected text in the window it came from. Nothing is pasted "
+    "until you press this.":
+        "Seçili metni geldiği pencerede değiştirir. Buna basmadan hiçbir şey "
+        "yapıştırılmaz.",
+    "Cancel": "Vazgeç",
+    "Closes this and leaves the original text alone.":
+        "Pencereyi kapatır, asıl metne dokunmaz.",
+    "Copy failed": "Kopyalanamadı",
+
 }

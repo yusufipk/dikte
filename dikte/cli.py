@@ -1212,6 +1212,9 @@ def build_parser():
 
     for name in ("ask-cancel", "ask-reset"):
         leaf(subs, name).set_defaults(func=cmd_plain)
+    # The key the desktop binds; it does nothing unless switched on in Settings.
+    leaf(subs, "assist", "ask the agent about the selected text"
+         ).set_defaults(func=cmd_plain)
 
     # --- a file -----------------------------------------------------------
     transcribe = leaf(subs, "transcribe", "transcribe an audio or video file")

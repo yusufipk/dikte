@@ -23,6 +23,7 @@ from . import cleanup
 from . import config as cfg
 from . import i18n
 from . import paste
+from . import selection
 from . import vad
 from .i18n import t
 
@@ -60,6 +61,9 @@ class Pipeline(QObject):
     finished = pyqtSignal(str, str, str, str)  # raw, final text, warning, language
     failed = pyqtSignal(str)
     cancelled = pyqtSignal()
+    # A question about selected text: a dict with the instruction, the reply,
+    # whether it is an edit, and what was selected. Never pasted from here.
+    answered = pyqtSignal(object)
 
     def __init__(self, conf, parent=None):
         super().__init__(parent)
@@ -83,7 +87,7 @@ class Pipeline(QObject):
         return self._thread is not None and self._thread.is_alive()
 
     def run(self, wav_path, duration, rms_values=(), ask=False, paste=None,
-            focus=None, retry=None):
+            focus=None, retry=None, assist=None):
         """`paste` overrides the setting for this one run, which is what a
         dictation asked for from a terminal wants: the text comes back down the
         socket, and pasting it into whatever had focus is nobody's intention.
@@ -98,14 +102,17 @@ class Pipeline(QObject):
 
         `retry` is the history row of a failed dictation whose kept recording
         `wav_path` is. Its outcome takes that row's place rather than adding a
-        new one. False when that recording is already being retried."""
+        new one. False when that recording is already being retried.
+
+        `assist` is the selection.Grab of a question about selected text. The
+        reply then goes out on `answered` rather than to the clipboard."""
         with self._jobs_lock:
             if retry is not None:
                 if wav_path in self._retrying:
                     return False
                 self._retrying.add(wav_path)
             self._jobs.append((wav_path, duration, list(rms_values), ask, paste,
-                               focus, retry))
+                               focus, retry, assist))
             if self._draining:
                 return
             self._draining = True
@@ -167,7 +174,7 @@ class Pipeline(QObject):
                 self.stage.emit(stage)
 
     def _work(self, wav_path, duration, rms_values, ask, paste_override=None,
-              focus=None, retry=None):
+              focus=None, retry=None, assist=None):
         conf = self.conf
         started = time.monotonic()
         raw = ""
@@ -260,15 +267,37 @@ class Pipeline(QObject):
                     print(f"dikte: cleanup failed: {exc}", file=sys.stderr)
 
             question = ""
+            selected = selection.NOTHING
+            kind = ""
             if ask:
                 question = text
                 self.stage.emit(t("Asking {name}…", name=i18n.name(
                     assistant.display_name(conf), "dative")))
-                text, denied = assistant.ask(
-                    question, conf,
-                    on_stage=self.stage.emit,
-                    should_stop=self._stop.is_set,
-                )
+                if assist is None:
+                    text, denied = assistant.ask(
+                        question, conf,
+                        on_stage=self.stage.emit,
+                        should_stop=self._stop.is_set,
+                    )
+                else:
+                    # Collected only now: the key press started it, and the
+                    # transcription has given it all the time it needs.
+                    selected = assist.result()
+                    prompt = selection.build_prompt(
+                        question, selected.text, assistant.uses_tools(conf))
+                    reply, denied = assistant.ask(
+                        prompt, conf,
+                        on_stage=self.stage.emit,
+                        should_stop=self._stop.is_set,
+                        keep_session=False,
+                        # Selected text was not written by the user and may
+                        # carry instructions of its own, so it only goes to a
+                        # run with no tools; a provider that cannot do that
+                        # refuses it with a message.
+                        tool_free=bool(selected.text),
+                        system=selection.SYSTEM_PROMPT,
+                    )
+                    kind, text = selection.parse_reply(reply, selected.text)
                 warning = "\n".join(x for x in (warning, denied) if x)
 
             wants_paste = (conf["assistant_paste"] if ask else conf["auto_paste"])
@@ -293,6 +322,12 @@ class Pipeline(QObject):
                 "raw": raw,
                 "text": text,
             }
+            if assist is not None:
+                # What kind of reply it was, and nothing of the selection
+                # itself: the history keeps what was said and what came back,
+                # as it does for every command. An edit's reply is a rewrite
+                # of the selection, so much of it is in `text` all the same.
+                record["assist"] = kind
             if retry is not None:
                 # Listed where it was spoken, not where it was retried.
                 record["ts"] = retry.get("ts") or record["ts"]
@@ -304,6 +339,16 @@ class Pipeline(QObject):
                 cfg.trim_history(conf["history_limit"])
             except OSError as exc:
                 print(f"dikte: could not trim the history: {exc}", file=sys.stderr)
+
+            if assist is not None:
+                # Shown, never pasted: the answer window decides what happens
+                # to it, and only when the user says so.
+                self.answered.emit({
+                    "instruction": question, "text": text, "kind": kind,
+                    "selection": selected.text, "warning": warning,
+                    "focus": focus, "speech_language": speech_language,
+                })
+                return
 
             with _paste_lock:
                 previous = (paste.read_clipboard()

@@ -54,10 +54,14 @@ from . import integrate  # noqa: E402
 from . import ipc  # noqa: E402
 from . import mac_window  # noqa: E402
 from . import meeting  # noqa: E402
+from . import paste  # noqa: E402
+from . import selection  # noqa: E402
 from . import trayicon  # noqa: E402
 from . import update  # noqa: E402
 from .i18n import t  # noqa: E402
 from .meeting import MeetingPipeline  # noqa: E402
+from . import answer_window  # noqa: E402
+from .answer_window import AnswerWindow  # noqa: E402
 from .overlay import Overlay, active_screen  # noqa: E402
 from .settings_ui import SettingsWindow  # noqa: E402
 from .home_ui import HomeWindow  # noqa: E402
@@ -172,6 +176,16 @@ class Dikte:
         # _give_the_front_back.
         self.front_before = None
         self._front_watch = None
+        # A question about the selection rides on the agent's run: the same
+        # microphone turn and the same pipeline, plus the selection read at the
+        # key press and the window its answer is shown in.
+        self.assist_grab = None
+        self.answer_window = None
+        # Where answer windows' Apply and Copy threads report, by token. It
+        # outlives every window, so a window can be deleted the moment it is
+        # replaced, and a late failure still has somewhere to be said.
+        self.answer_bridge = answer_window.shared_bridge()
+        self.answer_bridge.apply_finished.connect(self._on_answer_applied)
 
         self.overlay = Overlay(self.conf["overlay_corner"],
                                screen_name=self.conf["overlay_screen"],
@@ -212,6 +226,7 @@ class Dikte:
         self.ask_pipeline.finished.connect(self._on_ask_finished)
         self.ask_pipeline.failed.connect(self._on_ask_error)
         self.ask_pipeline.cancelled.connect(self._on_ask_cancelled)
+        self.ask_pipeline.answered.connect(self._on_assist_answered)
         self.meeting_recorder.levels.connect(self._on_meeting_levels)
         self.meeting_recorder.stopped.connect(self._on_meeting_recorded)
         self.meeting_recorder.died.connect(self._on_meeting_died)
@@ -500,6 +515,9 @@ class Dikte:
     def toggle_meeting(self):
         self._external("meeting", self._toggle_meeting)
 
+    def toggle_assist(self):
+        self._external("assist", self._toggle_assist)
+
     def toggle_pause(self):
         self._external("pause", self._toggle_pause)
 
@@ -530,7 +548,8 @@ class Dikte:
             timer = self.last_evdev[name] = QElapsedTimer()
         timer.restart()
         handlers = {"meeting": self._toggle_meeting, "ask": self._toggle_ask,
-                    "cancel": self._cancel, "pause": self._toggle_pause}
+                    "cancel": self._cancel, "pause": self._toggle_pause,
+                    "assist": self._toggle_assist}
         handlers.get(name, self._toggle)()
 
     def _retire_listener(self):
@@ -568,6 +587,7 @@ class Dikte:
                 "pause": self.toggle_pause,
                 "ask-cancel": self.cancel_ask,
                 "ask-reset": self.reset_conversation,
+                "assist": self.toggle_assist,
                 "meeting-cancel": self.cancel_meeting,
                 "settings": self.open_settings,
                 "home": self.open_home,
@@ -730,6 +750,19 @@ class Dikte:
         elif self.ask_state == IDLE:
             self.start_ask()
 
+    def _toggle_assist(self):
+        """The selection shortcut: start a question, or stop the one recording.
+
+        Does nothing at all while the feature is off, whatever the desktop
+        still has bound to the key.
+        """
+        if not self.conf["selection_assist"] or self._repeated("assist"):
+            return
+        if self.ask_state == RECORDING:
+            self.stop_ask()
+        elif self.ask_state == IDLE:
+            self.start_assist()
+
     def _repeated(self, name):
         # Per action, the way last_evdev already is: the window is meant to
         # swallow a duplicate delivery of the same press, not a pause landing
@@ -785,6 +818,35 @@ class Dikte:
             return
         self._set_ask_state(RECORDING)
         self.cues.play("start")
+
+    def start_assist(self):
+        """Read the selection, then record what to do with it."""
+        if (not self.conf["selection_assist"] or self.ask_state != IDLE
+                or self.recording):
+            return
+        if isinstance(getattr(self, "home_messages", None), dict):
+            self.home_messages[ASK] = ""
+            self.home_messages.pop("ask_stage", None)
+        self.front_before = self._the_front()
+        # Before the indicator goes up, while the window holding the selection
+        # still has the keyboard: on macOS and Windows the copy is a key press.
+        # A provider that is never sent selected text gets none read at all.
+        self.assist_grab = (selection.Grab(focus=self.front_before)
+                            if assistant.can_run_tool_free(self.conf)
+                            else selection.NoGrab())
+        self.ask_overlay.show_recording(asking=True)
+        self._begin_recording(ASK)
+        if not self.recorder.active:
+            self._drop_grab()
+            return
+        self._set_ask_state(RECORDING)
+        self.cues.play("start")
+
+    def _drop_grab(self):
+        """A question that will not run: stop its copy if it has not happened."""
+        grab, self.assist_grab = getattr(self, "assist_grab", None), None
+        if grab is not None:
+            grab.cancel()
 
     def _begin_recording(self, owner):
         """One microphone, so one of the two holds it at a time."""
@@ -934,6 +996,8 @@ class Dikte:
         self.cues.play("failed")
         # The preference dies with the run it was given for.
         self.paste_override.pop(ASK if asking else DICTATION, None)
+        if asking:
+            self._drop_grab()
         self.recorder_owner = None
         # What goes over the socket is read by a program as often as by a
         # person, so it stays in one language; only what a run itself said
@@ -1135,8 +1199,10 @@ class Dikte:
         wants_paste = self.paste_override.pop(owner, None)
         focus, self.front_before = self.front_before, None
         if owner == ASK:
+            grab, self.assist_grab = getattr(self, "assist_grab", None), None
+            extra = {"assist": grab} if grab is not None else {}
             self.ask_pipeline.run(wav_path, duration, rms_values, ask=True,
-                                  paste=wants_paste, focus=focus)
+                                  paste=wants_paste, focus=focus, **extra)
         else:
             self._transcripts_pending += 1
             self._queued_retries.append(False)
@@ -1247,6 +1313,53 @@ class Dikte:
                            "warning": warning, "agent": agent,
                            "speech_language": speech_language})
 
+    def _on_assist_answered(self, payload):
+        """A question about the selection came back: show it, paste nothing."""
+        agent = assistant.display_name(self.conf)
+        warning = payload.get("warning") or ""
+        if warning:
+            self.ask_overlay.show_warning(
+                t("{name} answered, but: {error}",
+                  name=agent, error=warning.splitlines()[0]))
+        else:
+            self.ask_overlay.dismiss()
+        self.cues.play("done")
+        self._set_ask_state(IDLE)
+        self._show_answer(payload, agent)
+        self._settle(ASK, {"ok": True, "answer": payload.get("text", ""),
+                           "question": payload.get("instruction", ""),
+                           "kind": payload.get("kind", ""),
+                           "warning": warning, "agent": agent,
+                           "speech_language": payload.get("speech_language", "")})
+
+    def _show_answer(self, payload, agent):
+        old = getattr(self, "answer_window", None)
+        if old is not None:
+            # Its threads hold the bridge and a token, not the window, so it
+            # can go now; whatever they report later reaches only the app.
+            old.close()
+            old.deleteLater()
+        focus = payload.get("focus")
+        selected = payload.get("selection") or ""
+        # Apply is for an edit of something that was selected, on a desktop
+        # that can press the paste for it. An answer is never offered it.
+        can_apply = (payload.get("kind") == selection.EDIT and bool(selected)
+                     and len(selected) <= selection.MAX_CHARS
+                     and paste.paste_ready())
+        window = AnswerWindow(
+            payload.get("instruction", ""), payload.get("text", ""),
+            selected=selected, can_apply=can_apply, agent=agent,
+            apply_fn=lambda text: selection.apply(text, self.conf, focus=focus),
+            bridge=self.answer_bridge,
+        )
+        self.answer_window = window
+        _present(window)
+
+    def _on_answer_applied(self, _token, error):
+        """An Apply finished, for the current window or one long replaced."""
+        if error:
+            self._report(error, self.ask_overlay)
+
     def _on_ask_cancelled(self):
         self.cues.play("failed")
         self.ask_overlay.show_done(t("Stopped."), 2000)
@@ -1257,6 +1370,8 @@ class Dikte:
         """The microphone itself could not run, so it belongs to whoever asked."""
         owner, self.recorder_owner = self.recorder_owner, None
         self.paste_override.pop(owner, None)
+        if owner == ASK:
+            self._drop_grab()
         self.ticker.stop()
         (self._on_ask_error if owner == ASK else self._on_error)(message)
 
@@ -1510,10 +1625,18 @@ class Dikte:
         # not the fallback the setting offers to turn on: it is the only way the
         # keys arrive at all, so it runs whatever the setting says.
         if self.conf["evdev_hotkey"] or not self._registry_shortcuts:
-            self.evdev.start({name: self.conf[spec.setting]
-                              for name, spec in hotkey.SHORTCUTS.items()})
+            self.evdev.start(self._bindings())
         else:
             self.evdev.stop()
+
+    def _bindings(self):
+        """{name: combination} for the listener to hold."""
+        bindings = {name: self.conf[spec.setting]
+                    for name, spec in hotkey.SHORTCUTS.items()}
+        # Switched off, the selection key is not listened for at all.
+        if not self.conf["selection_assist"]:
+            bindings.pop("assist", None)
+        return bindings
 
     def restart(self):
         """Replace this process with a fresh one, picking up code and settings."""
@@ -1841,5 +1964,7 @@ def run_app(args):
         QTimer.singleShot(0, dikte.toggle_ask)
     elif command == "meeting":
         QTimer.singleShot(0, dikte.toggle_meeting)
+    elif command == "assist":
+        QTimer.singleShot(0, dikte.toggle_assist)
 
     return app.exec()

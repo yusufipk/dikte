@@ -2035,6 +2035,32 @@ class SettingsWindow(QDialog):
         answer_form.addRow("", self.assistant_cleanup)
         layout.addWidget(answer)
 
+        # Its own switch and its own key, so that turning it on changes
+        # nothing about the spoken command above.
+        selected = QGroupBox(t("Selected text"))
+        selected_form = QFormLayout(selected)
+        selected_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.selection_assist = QCheckBox(t("Ask about the selected text"))
+        self.selection_assist.setToolTip(t(
+            "Select text, press the shortcut and say what to do with it. The "
+            "answer opens in a window with Copy, and Apply for edits; nothing "
+            "is pasted until you press Apply. On Linux the selection is read "
+            "directly; on macOS and Windows Dikte presses the copy shortcut and "
+            "puts your clipboard back afterwards. The selection goes to the "
+            "agent as data, with no tools; Codex and Antigravity are not sent "
+            "it, and the key asks them a plain question. The history keeps "
+            "your instruction and the reply, which for an edit is the "
+            "rewritten text. On Linux the last highlighted text can be sent "
+            "even after the highlight is gone. On Windows a clipboard holding "
+            "only an image or files means no selection is read."))
+        selected_form.addRow("", self.selection_assist)
+        self._shortcut_row(
+            selected_form, "assist", t("Shortcut"),
+            t("No global shortcut installed."),
+        )
+        layout.addWidget(selected)
+
         prompt_label = QLabel(t(
             "Told to the agent alongside every command, on top of whatever your "
             "own configuration already says."
@@ -2677,6 +2703,7 @@ class SettingsWindow(QDialog):
         self.assistant_session_minutes.setValue(int(conf["assistant_session_minutes"]))
         self.assistant_paste.setChecked(conf["assistant_paste"])
         self.assistant_cleanup.setChecked(conf["assistant_cleanup"])
+        self.selection_assist.setChecked(conf["selection_assist"])
         self.assistant_prompt.setPlainText(
             conf["assistant_prompt"] or self._loaded_defaults["assistant"]
         )
@@ -2857,6 +2884,7 @@ class SettingsWindow(QDialog):
         conf["assistant_session_minutes"] = self.assistant_session_minutes.value()
         conf["assistant_paste"] = self.assistant_paste.isChecked()
         conf["assistant_cleanup"] = self.assistant_cleanup.isChecked()
+        conf["selection_assist"] = self.selection_assist.isChecked()
         assistant_prompt = self.assistant_prompt.toPlainText().strip()
         conf["assistant_prompt"] = ("" if assistant_prompt in (
             self._loaded_defaults["assistant"], cfg.default_assistant_prompt())

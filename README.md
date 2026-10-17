@@ -212,8 +212,9 @@ running.
   whatever its own allow-rules say. OpenRouter, OpenCode Go or Requesty is
   there as a
   plain question-and-answer fallback for a machine with no CLI on it. Provider,
-  model, permissions and working directory are under Settings → Agent, and
-  commands close together stay in one conversation.
+  model, permissions and working directory are under Settings → Agent, along
+  with an optional key that asks about the selected text, and commands close
+  together stay in one conversation.
 - **Meetings** are recorded from the microphone and the speaker output at the
   same time, which settles who said what by the channel a voice arrived on
   instead of guessing at it. The two sides are transcribed separately and
