@@ -3016,12 +3016,29 @@ class SettingsWindow(QDialog):
             self._graphics_devices,
             self._selectable_graphics_devices,
         )
+        binary = ggml.program_path(ggml.WHISPER, self.local_whisper.custom_binary)
+        # A downloaded build with no graphics backend ignores every choice but
+        # the processor, and a box that can be set to a card it will never
+        # reach is a setting that silently does nothing. The saved choice is
+        # left as it is, so a later download that can reach the card picks it
+        # up again. A specific card saved from an earlier build is the
+        # exception: that one fails to start here, so the box stays usable
+        # until it is moved off it.
+        processor_only = ggml.processor_only(ggml.WHISPER, binary)
+        self.local_device.setEnabled(
+            not processor_only
+            or (self.local_device.currentData() or "auto") not in ("auto", "cpu"))
+        if processor_only:
+            label = self.local_whisper.machine_label
+            label.setText(label.text() + "\n" + t(
+                "This whisper.cpp build has no graphics card support, so it "
+                "always runs on the processor."))
+            return
         selectable = {device.identifier for device in self._selectable_graphics_devices
                       if device.identifier}
         if self._graphics_devices and any(
                 not device.identifier or device.identifier not in selectable
                 for device in self._graphics_devices):
-            binary = ggml.program_path(ggml.WHISPER, self.local_whisper.custom_binary)
             if "GGML_VK_VISIBLE_DEVICES" in os.environ:
                 reason = t("GGML_VK_VISIBLE_DEVICES overrides graphics visibility.")
             elif not ggml.managed_vulkan_in_use(binary):

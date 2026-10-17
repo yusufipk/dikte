@@ -29,6 +29,21 @@ on:
         required: false
         default: ""
         type: string
+      expected_windows_sha256:
+        description: >-
+          Reviewed SHA-256 of the Windows x64 zip, with the same rule: empty
+          reports the digest and refuses to publish.
+        required: false
+        default: ""
+        type: string
+      platforms:
+        description: >-
+          Which bundles to build and publish. Each is its own release, so one
+          never waits on the other.
+        required: true
+        default: linux
+        type: choice
+        options: [linux, windows, both]
       publish:
         description: Publish a Dikte dependency release
         required: true
@@ -38,8 +53,15 @@ on:
 permissions:
   contents: read
 
+# One queue per pull request, and per ref, platform choice and version for a
+# dispatch, so a Linux publish never waits behind a running Windows build or
+# gets replaced by a later Windows dispatch. A running dispatch is not
+# cancelled, though GitHub keeps only the newest pending one per queue. A
+# linux or windows dispatch can still race a both dispatch for the same tag;
+# the loser stops at the existing-release or existing-tag check, or when it
+# creates the tag ref.
 concurrency:
-  group: whisper-vulkan-${{ github.event.pull_request.number || github.ref }}
+  group: whisper-vulkan-${{ github.event.pull_request.number || github.ref }}-${{ inputs.platforms || 'pr' }}-${{ inputs.whisper_version || 'pr' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -47,9 +69,14 @@ env:
   WHISPER_COMMIT: ${{ inputs.whisper_commit || '927cfce34f31707e17f2bff35c349632fb9e2c3a' }}
   REVIEWED_WHISPER_VERSION: "1.9.4"
   REVIEWED_WHISPER_SHA256: 381ec8f07071d616e243b94d275e29763d6d2b4c7204017c166caf389e1f2349
+  # No Windows archive has been reviewed yet. Fill both in, together with
+  # MANAGED_WHISPER_WINDOWS_SHA256 in dikte/ggml.py, once one has.
+  REVIEWED_WHISPER_WINDOWS_VERSION: ""
+  REVIEWED_WHISPER_WINDOWS_SHA256: ""
 
 jobs:
   build:
+    if: github.event_name == 'pull_request' || inputs.platforms != 'windows'
     runs-on: ubuntu-22.04
     timeout-minutes: 45
     steps:
@@ -157,10 +184,200 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+  # Windows x64 is a sibling job rather than a workflow of its own: it builds
+  # the same reviewed upstream commit behind the same kind of gate, and goes
+  # out as a release of its own, whisper.cpp-v<version>-windows.
+  # packaging/whisper-vulkan/windows_bundle.py says what is different about
+  # Windows and why.
+  build-windows:
+    if: github.event_name == 'pull_request' || inputs.platforms != 'linux'
+    # Not pinned to an image version, because GitHub retires them. The image
+    # and the MSVC it brings are recorded in BUILD-INFO.json instead, and a
+    # change of either can change the digest: byte-identical rebuilds hold
+    # between two runs on the same image, not across an image update.
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      # The same LunarG release as the Linux packages; the digest is the one
+      # LunarG publishes for this installer.
+      VULKAN_SDK_VERSION: "1.4.313.0"
+      VULKAN_SDK_SHA256: b643ca8ab4aea5c47b9c4e021a0b33b3a13871bf1d8131e162a9e48c257c4694
+    steps:
+      - name: Keep line endings as committed
+        # Converted line endings would change the license files in the
+        # archive, and so its digest, depending on the runner's git config.
+        run: git config --global core.autocrlf false
+
+      - name: Check out Dikte
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Validate source coordinates
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$WHISPER_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$WHISPER_COMMIT" =~ ^[0-9a-f]{40}$ ]]
+
+      - name: Check out pinned whisper.cpp source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ggml-org/whisper.cpp
+          ref: ${{ env.WHISPER_COMMIT }}
+          path: vendor/whisper.cpp
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify source version and commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C vendor/whisper.cpp rev-parse HEAD)" = "$WHISPER_COMMIT"
+          git -C vendor/whisper.cpp fetch --depth=1 origin \
+            "refs/tags/v$WHISPER_VERSION:refs/tags/v$WHISPER_VERSION"
+          test "$(git -C vendor/whisper.cpp rev-list -n1 "v$WHISPER_VERSION")" = "$WHISPER_COMMIT"
+          echo "SOURCE_DATE_EPOCH=$(git -C vendor/whisper.cpp show -s --format=%ct HEAD)" >> "$GITHUB_ENV"
+
+      - name: Set up pinned Python
+        # The zip is written by Python's zlib, so its version is part of what
+        # makes two builds come out the same.
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.10"
+
+      - name: Install pinned Vulkan SDK
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $installer = Join-Path $env:RUNNER_TEMP 'vulkansdk.exe'
+          Invoke-WebRequest -UseBasicParsing -OutFile $installer `
+            -Uri "https://sdk.lunarg.com/sdk/download/$env:VULKAN_SDK_VERSION/windows/vulkansdk-windows-X64-$env:VULKAN_SDK_VERSION.exe"
+          $actual = (Get-FileHash -Algorithm SHA256 $installer).Hash.ToLowerInvariant()
+          if ($actual -ne $env:VULKAN_SDK_SHA256) {
+            throw "Vulkan SDK installer digest $actual is not the pinned one"
+          }
+          $root = "C:\VulkanSDK\$env:VULKAN_SDK_VERSION"
+          $process = Start-Process -FilePath $installer -Wait -PassThru -NoNewWindow `
+            -ArgumentList '--root', $root, '--accept-licenses', '--default-answer', '--confirm-command', 'install'
+          if ($process.ExitCode -ne 0) { throw "Vulkan SDK installer exited with $($process.ExitCode)" }
+          foreach ($file in 'Bin\glslc.exe', 'Include\vulkan\vulkan.h', 'Lib\vulkan-1.lib') {
+            if (-not (Test-Path (Join-Path $root $file))) { throw "Vulkan SDK has no $file" }
+          }
+          "VULKAN_SDK=$root" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          "$root\Bin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+
+      - name: Build Windows archive
+        run: >-
+          python packaging/whisper-vulkan/windows_bundle.py build
+          --source vendor/whisper.cpp --work work --out dist
+
+      - name: Verify reviewed Windows archive digest
+        shell: bash
+        env:
+          EXPECTED_SHA256: ${{ inputs.expected_windows_sha256 }}
+          PUBLISH: ${{ inputs.publish }}
+        run: |
+          set -euo pipefail
+          read -r actual _ < dist/whisper-bin-win-vulkan-x64.zip.sha256
+          echo "built Windows archive sha256: $actual"
+          expected="$EXPECTED_SHA256"
+          if [ -z "$expected" ] \
+              && [ "$WHISPER_VERSION" = "$REVIEWED_WHISPER_WINDOWS_VERSION" ]; then
+            expected="$REVIEWED_WHISPER_WINDOWS_SHA256"
+          fi
+          if [ -z "$expected" ]; then
+            if [ "${PUBLISH:-false}" = true ]; then
+              echo "refusing to publish an archive whose digest has not been reviewed" >&2
+              exit 1
+            fi
+            echo "::notice::no reviewed Windows digest for $WHISPER_VERSION." \
+                 "Review the one above, then dispatch again with expected_windows_sha256."
+            exit 0
+          fi
+          test "$actual" = "$expected"
+
+      - name: Validate archive and PE contract
+        run: >-
+          python packaging/whisper-vulkan/windows_bundle.py validate
+          --out dist --source vendor/whisper.cpp
+
+      - name: Upload reviewed Windows outputs
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: whisper-bin-win-vulkan-x64
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14
+
+  smoke-windows:
+    # A fresh runner that never had the Vulkan SDK installed, which is the
+    # machine a user has. It has no GPU either, so only the processor
+    # fallback is proven here; the card needs a person with one.
+    needs: build-windows
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out Dikte
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out the test model and sample
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ggml-org/whisper.cpp
+          ref: ${{ env.WHISPER_COMMIT }}
+          path: vendor/whisper.cpp
+          persist-credentials: false
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            models/for-tests-ggml-base.en.bin
+            samples/jfk.wav
+
+      - name: Set up pinned Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12.10"
+
+      - name: Download the built archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: whisper-bin-win-vulkan-x64
+          path: dist
+
+      - name: CPU fallback smoke test (no GPU)
+        run: >-
+          python packaging/whisper-vulkan/windows_bundle.py smoke --out dist
+          --model vendor/whisper.cpp/models/for-tests-ggml-base.en.bin
+          --sample vendor/whisper.cpp/samples/jfk.wav
+
+  sbom-windows:
+    # The schema check runs on Linux, since this image cannot run on a
+    # Windows runner, and on every run that builds Windows, so a bad SBOM
+    # shows up on the pull request rather than after a digest is reviewed.
+    needs: build-windows
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - name: Download the built archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: whisper-bin-win-vulkan-x64
+          path: dist
+
+      - name: Schema-validate the Windows CycloneDX 1.6 SBOM
+        run: |
+          docker run --rm \
+            -v "$PWD/dist/whisper-bin-win-vulkan-x64.cdx.json:/sbom.json:ro" \
+            cyclonedx/cyclonedx-cli@sha256:252c2e26f468c25fea1e63ecde1bc3198ad6e9dbb57f5ed3236bddcb2281b3a7 \
+            validate --input-file /sbom.json --input-format json \
+            --input-version v1_6 --fail-on-errors
+
   publish:
     if: >-
       github.event_name == 'workflow_dispatch' && inputs.publish &&
-      github.ref == 'refs/heads/master'
+      github.ref == 'refs/heads/master' && inputs.platforms != 'windows'
     needs: build
     runs-on: ubuntu-22.04
     environment: dependency-release
@@ -200,7 +417,7 @@ jobs:
             Verify with: gh attestation verify
             whisper-bin-ubuntu-vulkan-x64.tar.gz
             --repo ${{ github.repository }}
-        run: |
+        run: &publish-release |
           set -euo pipefail
           if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             echo "refusing to replace existing release $RELEASE_TAG" >&2
@@ -222,3 +439,53 @@ jobs:
             --latest=false \
             --title "$RELEASE_TITLE" \
             --notes "$RELEASE_NOTES"
+
+  # A release of its own, so either platform can go out without the other:
+  # an urgent Linux bump never waits on a Windows build or review, and a
+  # Windows bundle can follow a Linux tag that already exists.
+  publish-windows:
+    if: >-
+      github.event_name == 'workflow_dispatch' && inputs.publish &&
+      github.ref == 'refs/heads/master' && inputs.platforms != 'linux'
+    needs: [build-windows, smoke-windows, sbom-windows]
+    runs-on: ubuntu-22.04
+    environment: dependency-release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Download the exact tested Windows outputs
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: whisper-bin-win-vulkan-x64
+          path: dist
+
+      - name: Verify Windows digest sidecar
+        run: (cd dist && sha256sum --check whisper-bin-win-vulkan-x64.zip.sha256)
+
+      - name: Attest Windows build provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/whisper-bin-win-vulkan-x64.zip
+
+      - name: Attest SBOM to Windows archive
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/whisper-bin-win-vulkan-x64.zip
+          sbom-path: dist/whisper-bin-win-vulkan-x64.cdx.json
+
+      - name: Publish Windows dependency release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: whisper.cpp-v${{ inputs.whisper_version }}-windows
+          RELEASE_TITLE: whisper.cpp v${{ inputs.whisper_version }} Vulkan bundle for Windows
+          RELEASE_NOTES: >-
+            Pinned source: ggml-org/whisper.cpp@${{ inputs.whisper_commit }}.
+            Verify with: gh attestation verify
+            whisper-bin-win-vulkan-x64.zip
+            --repo ${{ github.repository }}
+        # The Linux job's script, by YAML alias, so the tag and release checks
+        # cannot drift apart between the two.
+        run: *publish-release
