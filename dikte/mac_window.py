@@ -1,6 +1,6 @@
 """The parts of AppKit a dictation needs on macOS and Qt does not reach.
 
-Two jobs, both about staying out of the user's way.
+Window and activation policies that Qt does not expose.
 
 The first is keeping the indicator on screen. Qt draws it as a tool window,
 which on macOS is an NSPanel, and an NSPanel is hidden by the system the moment
@@ -19,6 +19,9 @@ The second is putting the front back. Opening the microphone activates Dikte
 whatever the indicator does, so app.py watches for that and calls activate()
 here. See _give_the_front_back() there for the measurement.
 
+Home and Settings instead need to join the active Space when explicitly
+requested, without acquiring the indicator's all-Spaces or panel policy.
+
 Done through the Objective-C runtime rather than a binding, because Dikte has no
 third party Python packages and this is a handful of messages to three objects.
 The runtime is loaded in _appkit() rather than at import, the way paste.py loads
@@ -34,6 +37,7 @@ from PyQt6.QtGui import QGuiApplication
 
 # NSWindowCollectionBehavior, as of the macOS these names come from:
 CAN_JOIN_ALL_SPACES = 1 << 0
+MOVE_TO_ACTIVE_SPACE = 1 << 1
 IGNORES_CYCLE = 1 << 6        # not a window Cmd+Tab should ever land on
 FULL_SCREEN_AUXILIARY = 1 << 8
 BEHAVIOUR = CAN_JOIN_ALL_SPACES | IGNORES_CYCLE | FULL_SCREEN_AUXILIARY
@@ -198,6 +202,32 @@ def keep_on_screen(widget):
             if not mask & NONACTIVATING_PANEL:
                 api.tell_unsigned(window, api.selector(b"setStyleMask:"),
                                   mask | NONACTIVATING_PANEL)
+        return True
+    except (AttributeError, OSError, RuntimeError, ValueError):
+        return False
+
+
+def move_to_active_space(widget):
+    """Let a requested Home/Settings window join the user's current Space.
+
+    AppKit moves a window with this policy when it becomes active, instead of
+    switching the user to its old Space. Unlike the indicator's policy, it
+    remains on one Space. Keep unrelated collection flags and all style bits.
+    Call before showing or restoring the window, which can activate it.
+    """
+    if QGuiApplication.platformName() != "cocoa":
+        return False
+    try:
+        api = _appkit()
+        view = ctypes.c_void_p(int(widget.winId()))
+        window = api.ask(view, api.selector(b"window"))
+        if not window:
+            return False
+        window = ctypes.c_void_p(window)
+        behavior = api.ask_unsigned(window, api.selector(b"collectionBehavior"))
+        wanted = (behavior & ~CAN_JOIN_ALL_SPACES) | MOVE_TO_ACTIVE_SPACE
+        if wanted != behavior:
+            api.tell_unsigned(window, api.selector(b"setCollectionBehavior:"), wanted)
         return True
     except (AttributeError, OSError, RuntimeError, ValueError):
         return False
