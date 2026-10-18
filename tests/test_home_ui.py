@@ -45,7 +45,7 @@ class Home(DikteTest):
         self.assertTrue(self.settings.minutes_view.isVisible())
         self.window.show_mode("history")
         self.assertTrue(self.settings.history.isVisible())
-        self.assertEqual(self.settings.tabs.count(), 7)
+        self.assertEqual(self.settings.tabs.count(), 8)
         self.assertFalse(self.settings.tabs.tabBar().isVisible())
 
     def test_native_chrome_and_capture_geometry(self):
@@ -124,6 +124,25 @@ class Home(DikteTest):
         self.assertEqual(self.window.latest_text.toPlainText(), "")
         self.assertFalse(self.window.copy_button.isEnabled())
         self.assertFalse(self.window.open_button.isEnabled())
+
+    def test_a_translation_says_so_and_offers_the_original(self):
+        cfg.append_history({"ts": "2026-10-17 10:00:00", "raw": "book it for Thursday",
+                            "text": "Buch es für Donnerstag.", "profile": "Email",
+                            "translate_to": "de", "translated": True})
+        self.window.refresh_results()
+        self.assertIn("profile: Email", self.window.latest_time.text())
+        self.assertIn("translated into German", self.window.latest_time.text())
+        self.assertFalse(self.window.original_button.isHidden())
+        self.window.original_button.click()
+        self.assertEqual(QApplication.clipboard().text(), "book it for Thursday")
+        self.window.show_mode("history")
+        self.settings.history.item(0).setSelected(True)
+        self.assertTrue(self.settings.history_original.isEnabled())
+
+    def test_an_ordinary_result_has_no_original_button(self):
+        cfg.append_history({"raw": "uh, hi", "text": "Hi."})
+        self.window.refresh_results()
+        self.assertTrue(self.window.original_button.isHidden())
 
     def test_clearing_history_removes_the_latest_preview(self):
         cfg.append_history({"text": "Remove this preview"})

@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
 
 from . import api, assistant, audio, cleanup, config as cfg, ggml
 from .i18n import t
+from .settings_ui import history_marks
 from . import theme
 
 
@@ -249,7 +250,13 @@ class HomeWindow(QWidget):
         actions.addWidget(self.latest_time, 1)
         self.copy_button = _button(t("Copy"), lambda: QApplication.clipboard().setText(self.latest_text.toPlainText()))
         self.open_button = _button(t("Open text"), lambda: self._open_text(self.latest_text.toPlainText()))
+        # Shown only under a translation: the text above is not what was said.
+        self.original_button = _button(t("Copy original"), self._copy_original)
+        self.original_button.setToolTip(t(
+            "Copy the transcript as it was heard, before it was translated."))
+        self.original_button.hide()
         actions.addWidget(self.copy_button)
+        actions.addWidget(self.original_button)
         actions.addWidget(self.open_button)
         content.addLayout(actions)
         layout.addWidget(card)
@@ -320,6 +327,9 @@ class HomeWindow(QWidget):
         self.settings.history.itemDoubleClicked.connect(self._open_selected)
         return page
 
+    def _copy_original(self):
+        QApplication.clipboard().setText(self._last_result.get("raw", ""))
+
     def _open_selected(self, *_):
         rows = self.settings._selected_rows()
         if rows:
@@ -376,7 +386,11 @@ class HomeWindow(QWidget):
         if result != self._last_result:
             self._last_result = dict(result)
             self.latest_text.setPlainText(result.get("text", ""))
-            self.latest_time.setText(result.get("ts", ""))
+            # The same marks the history list carries: which profile, and
+            # whether this is a translation.
+            self.latest_time.setText(result.get("ts", "") + history_marks(result))
+            self.original_button.setVisible(bool(result.get("translate_to")
+                                                 and result.get("raw")))
             self.latest_warning.setText(result.get("cleanup_error", ""))
             self.latest_warning.setVisible(bool(self.latest_warning.text()))
             self.copy_button.setEnabled(bool(result.get("text")))

@@ -169,6 +169,8 @@ class FileTranscriber(QObject):
             chunks = self._chunks(wav_path, workdir, target, timestamps, speakers)
             heard_before = []
             voices = 0
+            # Read once for every chunk: the same file, the same dictionary.
+            hint = conf.dictionary_hint()
             if len(chunks) > 1:
                 self.progress.emit(t("Splitting into {count} chunks…", count=len(chunks)))
 
@@ -183,7 +185,7 @@ class FileTranscriber(QObject):
                         target,
                         chunk_path,
                         language=conf["language"],
-                        prompt=conf["transcribe_prompt"],
+                        prompt=hint,
                         timeout=HOSTED_TIMEOUT,
                         aborter=self._abort,
                     ), stage)
@@ -199,7 +201,7 @@ class FileTranscriber(QObject):
                         target,
                         chunk_path,
                         language=conf["language"],
-                        prompt=conf["transcribe_prompt"],
+                        prompt=hint,
                         timeout=HOSTED_TIMEOUT,
                         aborter=self._abort,
                     ), stage)
@@ -212,7 +214,7 @@ class FileTranscriber(QObject):
                         target,
                         chunk_path,
                         language=conf["language"],
-                        prompt=conf["transcribe_prompt"],
+                        prompt=hint,
                         timeout=HOSTED_TIMEOUT,
                         aborter=self._abort,
                     ), stage))
