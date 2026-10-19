@@ -705,6 +705,59 @@ class AskAgy(DikteTest):
         self.assertIn("Antigravity", str(caught.exception))
 
 
+class AskOmp(DikteTest):
+    def test_two_turns_resume_without_exposing_memory_context(self):
+        conf = self.config(assistant_provider="omp")
+        first = FakeCli([
+            {"type": "session", "id": "voice-123"},
+            {"type": "message_end", "message": {
+                "role": "custom", "content": "private memory"}},
+            {"type": "turn_end", "message": {"role": "assistant", "content": [
+                {"type": "text", "text": "Thursday"}]}},
+        ])
+        second = FakeCli([
+            {"type": "session", "id": "voice-123"},
+            {"type": "turn_end", "message": {"role": "assistant", "content": [
+                {"type": "text", "text": "Friday"}]}},
+        ])
+        with only_these_tools("omp"), mock.patch.object(
+                subprocess, "Popen", side_effect=[first, second]) as popen:
+            answer, _ = assistant.ask("Which day?", conf)
+            followup, _ = assistant.ask("Move it to the next day", conf)
+        self.assertEqual((answer, followup), ("Thursday", "Friday"))
+        self.assertEqual(assistant.read_session("omp", 1800), "voice-123")
+        second_cmd = popen.call_args_list[1].args[0]
+        self.assertEqual(second_cmd[second_cmd.index("--resume") + 1],
+                         "voice-123")
+
+    def test_tool_activity_is_reported_while_work_is_running(self):
+        conf = self.config(assistant_provider="omp")
+        proc = FakeCli([
+            {"type": "session", "id": "voice-123"},
+            {"type": "tool_execution_start", "toolName": "web_search"},
+            {"type": "tool_execution_end", "toolName": "web_search"},
+            {"type": "turn_end", "message": {"role": "assistant", "content": [
+                {"type": "text", "text": "Done"}]}},
+        ])
+        stages = []
+        with only_these_tools("omp"), mock.patch.object(
+                subprocess, "Popen", return_value=proc):
+            assistant.ask("Look it up", conf, on_stage=stages.append)
+        self.assertEqual(stages, ["Using web_search…"])
+
+    def test_no_assistant_answer_is_an_error(self):
+        conf = self.config(assistant_provider="omp")
+        proc = FakeCli([
+            {"type": "session", "id": "voice-123"},
+            {"type": "message_end", "message": {
+                "role": "custom", "content": "private memory"}},
+        ])
+        with only_these_tools("omp"), mock.patch.object(
+                subprocess, "Popen", return_value=proc):
+            with self.assertRaises(assistant.AssistantError):
+                assistant.ask("Merhaba", conf)
+
+
 class AskOpenRouter(DikteTest):
     def test_a_question_and_an_answer(self):
         conf = self.config(assistant_provider="openrouter",

@@ -110,7 +110,7 @@ def processing_locations(conf, mode="dictation", file_cleanup=None, file_timesta
     elif mode == "ask":
         provider = assistant.provider(conf)
         model = assistant.model(conf)
-        if provider in ("codex", "agy") and not conf[f"assistant_{provider}_model"].strip():
+        if provider in ("codex", "agy", "omp") and not conf[f"assistant_{provider}_model"].strip():
             model = t("{name} default model", name=assistant.display_name(conf))
         location += " / " + t("Assistant: {model}", model=_model_location(model, provider))
     return location
@@ -466,11 +466,11 @@ class HomeWindow(QWidget):
             permission = {"workspace-write": t("Read files; write in the working directory"),
                           "read-only": t("Read only"),
                           "danger-full-access": t("No sandbox at all")}.get(conf["assistant_codex_sandbox"], conf["assistant_codex_sandbox"])
-        elif provider == "agy":
+        elif provider in ("agy", "omp"):
             permission = t("Uses the CLI's configured permissions")
         else:
             permission = t("Chat provider; no local command execution")
-        self.ask_scope.setText(t("{name}\nPermissions: {permission}\nWorking directory: {directory}\nShortcut: {shortcut}\nThis button sends a spoken command to the assistant. Its reply is copied without automatic pasting.", name=name, permission=permission, directory=directory if provider in ("claude", "codex", "agy") else t("Not used"), shortcut=conf["assistant_shortcut"] or t("Not assigned")))
+        self.ask_scope.setText(t("{name}\nPermissions: {permission}\nWorking directory: {directory}\nShortcut: {shortcut}\nThis button sends a spoken command to the assistant. Its reply is copied without automatic pasting.", name=name, permission=permission, directory=directory if provider in ("claude", "codex", "agy", "omp") else t("Not used"), shortcut=conf["assistant_shortcut"] or t("Not assigned")))
         state = app.ask_state
         self.ask_status.setText(t("Paused") if state == "recording" and app.paused else t("Recording") if state == "recording" else messages.get("ask_stage", t("Working…")) if state == "busy" else t("Assistant"))
         available = self._assistant_available()

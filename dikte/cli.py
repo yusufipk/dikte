@@ -218,7 +218,7 @@ def cmd_ask(opts):
     if opts.model:
         key = {"claude": "assistant_model", "codex": "assistant_codex_model",
                "openrouter": "assistant_openrouter_model",
-               "agy": "assistant_agy_model",
+               "agy": "assistant_agy_model", "omp": "assistant_omp_model",
                "opencode": "assistant_opencode_model",
                "requesty": "assistant_requesty_model"}[assistant.provider(conf)]
         conf[key] = opts.model

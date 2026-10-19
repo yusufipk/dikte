@@ -201,13 +201,15 @@ olmasını ister.
   yapıştırır: cevabı ya da ne yapıldığını söyleyen bir cümle. Kendi açacağın
   oturumun aynısıdır, yani skill'lerin ve bağlı servislerin oradadır; "bunu
   perşembe üçe takvime koy" cümlesini Claude olmayan bir pencerede söyleyebilir
-  olmanı sağlayan da budur. Codex (`codex exec`) ile Antigravity (`agy -p`) da
-  aynı şekilde çalışır; ama Antigravity'ye Dikte bir izin kipi ya da sandbox
-  veremiyor, sormadan ne yapabileceğini kendi allow-rule'ları belirliyor.
-  OpenRouter, OpenCode Go ya da Requesty ise hiçbiri kurulu olmayan bir
-  makinede düz soru
-  cevap için duruyor. Sağlayıcı, model, izinler ve çalışma dizini Ayarlar → Ajan
-  sekmesinde; arka arkaya verilen komutlar tek bir konuşmada kalır.
+  olmanı sağlayan da budur. Codex (`codex exec`), Antigravity (`agy -p`) ve
+  OMP (`omp -p --mode json`) de desteklenir. OMP ayrı bir sesli oturum açar;
+  sonraki sesli komutlarda o oturumu sürdürür, hâlihazırda açık bir terminal
+  sohbetine katılmaz. OMP'nin kuralları, Beyin erişimi ve araç izinleri seçilen
+  çalışma dizinine ve kendi yapılandırmasına bağlıdır; Dikte bunları değiştirmez.
+  Antigravity'ye Dikte bir izin kipi ya da sandbox veremiyor, sormadan ne
+  yapabileceğini kendi allow-rule'ları belirliyor. OpenRouter, OpenCode Go ve
+  Requesty, kurulu bir CLI gerektirmeyen düz soru-cevap seçenekleridir.
+  Sağlayıcı, model ve çalışma dizini Ayarlar → Ajan sekmesindedir.
 - **Toplantılar** mikrofonla hoparlör çıkışından aynı anda kaydedilir; kimin ne
   dediği tahmin edilmez, sesin hangi kanaldan geldiğiyle belli olur. İki taraf
   ayrı ayrı yazıya çevrilip tek bir zaman damgalı transkriptte birleştirilir,

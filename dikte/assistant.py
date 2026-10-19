@@ -46,12 +46,12 @@ from . import paths
 from .i18n import t
 
 SESSION_FILE = cfg.DATA_DIR / "assistant.json"
-PROVIDERS = ("claude", "codex", "agy", "openrouter", "opencode", "requesty")
+PROVIDERS = ("claude", "codex", "agy", "omp", "openrouter", "opencode", "requesty")
 
 # What each one is called where a person reads it: the tray, the corner of
 # the screen, and the line an error is written in.
 SERVICES = {"claude": "Claude", "codex": "Codex", "agy": "Antigravity",
-            "openrouter": "OpenRouter", "opencode": "OpenCode Go",
+            "omp": "OMP", "openrouter": "OpenRouter", "opencode": "OpenCode Go",
             "requesty": "Requesty"}
 
 # How many messages of a chat provider's conversation are carried forward. The
@@ -145,7 +145,7 @@ def provider(conf):
 
 def executable(name):
     """The CLI a provider runs, or "" when it needs none."""
-    return {"claude": "claude", "codex": "codex", "agy": "agy"}.get(name, "")
+    return {"claude": "claude", "codex": "codex", "agy": "agy", "omp": "omp"}.get(name, "")
 
 
 def model(conf):
@@ -159,6 +159,8 @@ def model(conf):
         return conf["assistant_codex_model"].strip() or "codex"
     if name == "agy":
         return conf["assistant_agy_model"].strip() or "agy"
+    if name == "omp":
+        return conf["assistant_omp_model"].strip() or "omp"
     if name == "openrouter":
         return conf["assistant_openrouter_model"]
     if name == "opencode":
@@ -270,7 +272,8 @@ def ask(prompt, conf, on_stage=None, should_stop=None):
             "Settings → Agent.", binary=binary,
         ))
 
-    run = {"claude": _ask_claude, "codex": _ask_codex, "agy": _ask_agy}[name]
+    run = {"claude": _ask_claude, "codex": _ask_codex, "agy": _ask_agy,
+           "omp": _ask_omp}[name]
     session = read_session(name, conf["assistant_session_minutes"] * 60)
     try:
         return run(prompt, conf, session, on_stage, should_stop)
@@ -520,7 +523,48 @@ def agy_models():
     return ids
 
 
+# --- OMP -------------------------------------------------------------------
+
+def _ask_omp(prompt, conf, session, on_stage, should_stop):
+    # OMP loads its own instructions. Dikte's default prompt assumes a
+    # one-shot reply, whereas this conversation is resumed across dictations.
+    instruction = (conf["assistant_prompt"].strip()
+                   or t("This was dictated. Use context to resolve misheard words."))
+    cmd = ["omp", "-p", "--mode", "json", "--no-title",
+           "--append-system-prompt", instruction]
+    if session:
+        cmd += ["--resume", session]
+    if conf["assistant_omp_model"].strip():
+        cmd += ["--model", conf["assistant_omp_model"].strip()]
+    if conf["assistant_reasoning"]:
+        cmd += ["--thinking", conf["assistant_reasoning"]]
+    cmd.append(prompt)
+
+    found = {"answer": "", "warning": "", "session": "", "failure": ""}
+
+    def on_event(event):
+        kind = event.get("type")
+        if kind == "session":
+            found["session"] = event.get("id") or found["session"]
+        elif kind == "tool_execution_start" and on_stage:
+            on_stage(t("Using {name}…", name=event.get("toolName") or "a tool"))
+        elif kind == "turn_end":
+            message = event.get("message") or {}
+            if message.get("role") == "assistant":
+                found["answer"] = "".join(
+                    block.get("text", "") for block in message.get("content", [])
+                    if isinstance(block, dict) and block.get("type") == "text"
+                ).strip() or found["answer"]
+        elif kind == "error":
+            error = event.get("error") or event.get("message") or ""
+            found["failure"] = (error.get("message", "") if isinstance(error, dict)
+                                else str(error))
+
+    code, stderr = _stream(cmd, conf, on_event, should_stop)
+    return _conclude(found, code, stderr, session, "omp")
+
 # --- OpenRouter, OpenCode Go and Requesty ---------------------------------
+
 
 def _ask_chat(name, service, prompt, conf, on_stage):
     """A plain question and answer, over a chat provider's key.

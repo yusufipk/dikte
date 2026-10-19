@@ -107,6 +107,7 @@ CHANGED = {
     "assistant_codex_sandbox": "read-only",
     "assistant_openrouter_model": "some/agent-model",
     "assistant_agy_model": "gemini-3.1-pro-low",
+    "assistant_omp_model": "anthropic/claude-3-7-sonnet",
     "assistant_requesty_model": "deepseek-v4-flash",
     "assistant_reasoning": "high",
     "assistant_dir": "/tmp",
@@ -431,6 +432,7 @@ class Settings(DikteTest):
             window.cleanup_codex_model,
             window.assistant_model,
             window.assistant_agy_model,
+            window.assistant_omp_model,
             window.assistant_opencode_model,
             window.assistant_requesty_model,
             window.assistant_codex_model,
@@ -531,6 +533,13 @@ class Settings(DikteTest):
         self.assertFalse(window.requesty_box.isHidden())
         self.assertTrue(window.openrouter_box.isHidden())
         self.assertTrue(window.opencode_box.isHidden())
+    def test_omp_agent_shows_its_own_box(self):
+        window = self.window(cfg.Config())
+        window._select_data(window.assistant_provider, "omp")
+        self.assertFalse(window.omp_box.isHidden())
+        self.assertTrue(window.openrouter_box.isHidden())
+        self.assertTrue(window.agy_box.isHidden())
+
 
     def test_agy_answering_refills_both_of_its_boxes(self):
         """The same arrangement as Codex: both boxes, nothing chosen is lost."""
@@ -2742,7 +2751,8 @@ class LocalModels(DikteTest):
     def test_each_agent_brings_its_own_box_and_no_other(self):
         window = self.window(cfg.Config())
         boxes = {"claude": window.claude_box, "codex": window.codex_box,
-                 "agy": window.agy_box, "openrouter": window.openrouter_box}
+                 "agy": window.agy_box, "omp": window.omp_box,
+                 "openrouter": window.openrouter_box}
         for chosen, box in boxes.items():
             with self.subTest(provider=chosen):
                 window._select_data(window.assistant_provider, chosen)

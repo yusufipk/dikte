@@ -206,14 +206,16 @@ running.
   what comes of it: the answer, or a sentence saying what was done. It is the
   session you would have opened yourself, so your skills and connected services
   are there, which is what makes "put that in my calendar on Thursday at three"
-  a thing you can say to a window that is not Claude. Codex (`codex exec`) and
-  Antigravity (`agy -p`) run the same way, though Antigravity takes neither a
-  permission mode nor a sandbox from Dikte: what it may do without asking is
-  whatever its own allow-rules say. OpenRouter, OpenCode Go or Requesty is
-  there as a
-  plain question-and-answer fallback for a machine with no CLI on it. Provider,
-  model, permissions and working directory are under Settings → Agent, and
-  commands close together stay in one conversation.
+  a thing you can say to a window that is not Claude. Codex (`codex exec`),
+  Antigravity (`agy -p`), and OMP (`omp -p --mode json`) work too. OMP starts a
+  separate voice conversation and resumes it across commands; it does not join
+  an already-open interactive terminal session. Its rules, memory access and
+  tool permissions depend on its own configuration and the selected working
+  directory; Dikte does not override them. Dikte cannot pass Antigravity a
+  permission mode or sandbox, so its own allow-rules decide what it can do.
+  OpenRouter, OpenCode Go and Requesty offer plain question-and-answer without
+  an installed CLI. Provider, model and working directory are under Settings
+  → Agent.
 - **Meetings** are recorded from the microphone and the speaker output at the
   same time, which settles who said what by the channel a voice arrived on
   instead of guessing at it. The two sides are transcribed separately and

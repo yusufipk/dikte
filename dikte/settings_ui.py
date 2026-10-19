@@ -113,7 +113,7 @@ MEETING_MODELS = [
 ]
 ASSISTANT_PROVIDERS = [
     ("Claude Code", "claude"), ("Codex", "codex"), ("Antigravity", "agy"),
-    ("OpenRouter", "openrouter"), ("OpenCode Go", "opencode"),
+    ("OMP", "omp"), ("OpenRouter", "openrouter"), ("OpenCode Go", "opencode"),
     ("Requesty", "requesty"),
 ]
 # Aliases resolve to the newest model of that name, so they age better than an
@@ -1960,6 +1960,22 @@ class SettingsWindow(QDialog):
         agy_note.setWordWrap(True)
         agy_form.addRow(agy_note)
         layout.addWidget(self.agy_box)
+        self.omp_box = QGroupBox("OMP")
+        omp_form = QFormLayout(self.omp_box)
+        omp_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.assistant_omp_model = QComboBox()
+        self.assistant_omp_model.setEditable(True)
+        self.assistant_omp_model.addItem(t("OMP's own default"), "")
+        omp_form.addRow(t("Model"), self.assistant_omp_model)
+        omp_note = QLabel(t(
+            "OMP runs locally via the omp CLI. Permissions and tools follow your "
+            "own OMP configuration; the working directory still applies."
+        ))
+        omp_note.setWordWrap(True)
+        omp_form.addRow(omp_note)
+        layout.addWidget(self.omp_box)
+
 
         self.opencode_box = QGroupBox("OpenCode Go")
         og_form = QFormLayout(self.opencode_box)
@@ -2668,6 +2684,7 @@ class SettingsWindow(QDialog):
         self._select_data(self.assistant_codex_sandbox, conf["assistant_codex_sandbox"])
         self.assistant_openrouter_model.setCurrentText(conf["assistant_openrouter_model"])
         self.assistant_agy_model.setCurrentText(conf["assistant_agy_model"])
+        self.assistant_omp_model.setCurrentText(conf["assistant_omp_model"])
         self.assistant_opencode_model.setCurrentText(conf["assistant_opencode_model"])
         self.assistant_requesty_model.setCurrentText(conf["assistant_requesty_model"])
         self._assistant_provider_changed()  # selecting index 0 fires no signal
@@ -2842,6 +2859,10 @@ class SettingsWindow(QDialog):
         agy_model = self.assistant_agy_model.currentText().strip()
         conf["assistant_agy_model"] = (
             "" if agy_model == t("Antigravity's own default") else agy_model
+        )
+        omp_model = self.assistant_omp_model.currentText().strip()
+        conf["assistant_omp_model"] = (
+            "" if omp_model == t("OMP's own default") else omp_model
         )
         conf["assistant_opencode_model"] = (
             self.assistant_opencode_model.currentText().strip()
@@ -3734,6 +3755,7 @@ class SettingsWindow(QDialog):
         self.codex_box.setVisible(provider == "codex")
         self.openrouter_box.setVisible(provider == "openrouter")
         self.agy_box.setVisible(provider == "agy")
+        self.omp_box.setVisible(provider == "omp")
         self.opencode_box.setVisible(provider == "opencode")
         self.requesty_box.setVisible(provider == "requesty")
         self._refresh_assistant_status()

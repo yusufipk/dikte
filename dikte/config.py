@@ -583,6 +583,7 @@ DEFAULTS = {
     "assistant_codex_sandbox": "workspace-write",
     "assistant_openrouter_model": "google/gemini-3.5-flash",
     "assistant_agy_model": "",      # empty -> whatever Antigravity is set to
+    "assistant_omp_model": "",      # empty -> whatever OMP is set to
     "assistant_opencode_model": "deepseek-v4-flash",
     "assistant_requesty_model": "google/gemini-3.5-flash",
     "assistant_reasoning": "",      # empty -> the model's own default

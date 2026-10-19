@@ -43,12 +43,12 @@ _TR_CASES = {
     "dative": {
         "Claude": "Claude'a", "Codex": "Codex'e", "OpenRouter": "OpenRouter'a",
         "Google AI Studio": "Google AI Studio'ya", "DeepSeek": "DeepSeek'e",
-        "Antigravity": "Antigravity'ye", "OpenCode Go": "OpenCode Go'ya", "Requesty": "Requesty'ye",
+        "Antigravity": "Antigravity'ye", "OMP": "OMP'ye", "OpenCode Go": "OpenCode Go'ya", "Requesty": "Requesty'ye",
     },
     "accusative": {
         "Claude": "Claude'u", "Codex": "Codex'i", "OpenRouter": "OpenRouter'ı",
         "Google AI Studio": "Google AI Studio'yu", "DeepSeek": "DeepSeek'i",
-        "Antigravity": "Antigravity'yi", "OpenCode Go": "OpenCode Go'yu", "Requesty": "Requesty'yi",
+        "Antigravity": "Antigravity'yi", "OMP": "OMP'yi", "OpenCode Go": "OpenCode Go'yu", "Requesty": "Requesty'yi",
     },
 }
 
@@ -361,6 +361,7 @@ TR = {
     "Thinking": "Düşünme",
     "Model's own default": "Modelin kendi varsayılanı",
     "Antigravity's own default": "Antigravity'nin kendi varsayılanı",
+    "OMP's own default": "OMP'nin kendi varsayılanı",
     "Off": "Kapalı",
     "Minimal": "En az",
     "Low": "Düşük",
@@ -693,6 +694,10 @@ TR = {
         "Antigravity'ye verilebilecek bir izin kipi ya da sandbox yok; sormadan "
         "ne yapabileceğini kendi allow-rule'ları belirler. Yukarıdaki İzinler ve "
         "Sandbox kutuları diğer ikisine ait; çalışma dizini burada da geçerli.",
+    "OMP runs locally via the omp CLI. Permissions and tools follow your own OMP configuration; the working directory still applies.":
+        "OMP, yerel olarak omp CLI üzerinden çalışır. Yetkiler ve araçlar kendi OMP yapılandırmanızı izler; çalışma dizini burada da geçerlidir.",
+    "This was dictated. Use context to resolve misheard words.":
+        "Bu metin dikte edildi. Yanlış duyulmuş kelimeleri bağlamdan değerlendir.",
     "{binary} is not on your PATH, so this cannot run yet. Install it, or pick "
     "another one above.":
         "{binary} PATH'te değil, dolayısıyla bu henüz çalışamaz. Kur ya da "
