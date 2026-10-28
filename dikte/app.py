@@ -62,7 +62,7 @@ from .i18n import t  # noqa: E402
 from .meeting import MeetingPipeline  # noqa: E402
 from . import answer_window  # noqa: E402
 from .answer_window import AnswerWindow  # noqa: E402
-from .overlay import Overlay, active_screen  # noqa: E402
+from .overlay import LIVE, Overlay, active_screen  # noqa: E402
 from .settings_ui import SettingsWindow  # noqa: E402
 from .home_ui import HomeWindow  # noqa: E402
 from .worker import Pipeline  # noqa: E402
@@ -629,12 +629,13 @@ class Dikte:
 
     def _ask_request(self, request, reply):
         before = self.ask_state
-        held = getattr(self, "_stop_held_since", None)
         self.toggle_ask()
-        # A stop held for the selection's preview is a stop that landed: the
-        # run it ends is on its way, and a waiter is told how it went.
-        moved = (self.ask_state != before
-                 or getattr(self, "_stop_held_since", None) is not held)
+        # A stop held for the selection's preview, whether this request held
+        # it or found it held, is a stop that landed: the run it ends is on
+        # its way, and a waiter is told how it went.
+        moved = self.ask_state != before or (
+            before == RECORDING == self.ask_state
+            and getattr(self, "_stop_held_since", None) is not None)
         if "paste" in request and moved:
             self.paste_override[ASK] = request["paste"]
         self._answer(ASK, before, self.ask_state, request, reply, moved)
@@ -873,20 +874,29 @@ class Dikte:
             if not noted:
                 read = grab.peek()
                 if read is not None:
-                    noted.append(True)
+                    noted.append(read)
                     self.ask_overlay.set_note(_grab_note(grab, read))
-                    if read.text and grab.reads:
-                        grab.shown_at = time.monotonic()
-                        grab.shown.set()
-                    # Never stopped in the tick that put the note up: it has
-                    # not been painted yet.
+                    # Never counted as shown, nor a stop let through, in the
+                    # tick that put the note up: it has not been painted yet.
                     return
+            elif (noted[0].text and grab.reads and not grab.shown.is_set()
+                    and self._note_on_screen()):
+                grab.shown_at = time.monotonic()
+                grab.shown.set()
+                return
             if getattr(self, "_stop_held_since", None) is not None:
                 self._release_held_stop(grab)
 
         timer.timeout.connect(look)
         timer.start()
         look()
+
+    def _note_on_screen(self):
+        """Whether the indicator is up and drawing a recording, which is the
+        only state its note is painted in. An error shown in its place, say,
+        would leave the note set but unseen."""
+        indicator = self.ask_overlay
+        return bool(getattr(indicator, "showing", False)) and indicator.state in LIVE
 
     def _preview_pending(self):
         """Whether the selection has yet to be on screen long enough to send.
@@ -917,13 +927,17 @@ class Dikte:
     def _release_held_stop(self, grab):
         """Let a held stop through once the preview has been up long enough.
 
-        A read still unfinished after ASSIST_HOLD_SECONDS is given up on, and
-        never shown, so nothing it reads is sent. A read that finished before
-        then always gets its full ASSIST_PREVIEW_SECONDS on screen.
+        A read still unfinished, or not yet on screen, after
+        ASSIST_HOLD_SECONDS is given up on, so nothing it reads is sent. A
+        preview that made it on screen before then always gets its full
+        ASSIST_PREVIEW_SECONDS.
         """
         read = grab.peek()
-        if read is None:
-            if time.monotonic() - self._stop_held_since < ASSIST_HOLD_SECONDS:
+        held_out = time.monotonic() - self._stop_held_since >= ASSIST_HOLD_SECONDS
+        if read is None or grab.shown_at is None:
+            # Not read, or read but never on screen: waited for until the cap,
+            # then given up on, and Grab.result sends none of it.
+            if not held_out and (read is None or read.text):
                 return
             grab.cancel()
         elif self._preview_pending():
@@ -1472,7 +1486,14 @@ class Dikte:
 
     def _on_answer_applied(self, _token, error):
         """An Apply finished, for the current window or one long replaced."""
-        if error:
+        if not error:
+            return
+        if self.ask_state == RECORDING:
+            # The corner belongs to the question being recorded, and its note
+            # has to stay on screen; the failure goes to the tray instead.
+            self.tray.showMessage("Dikte", error,
+                                  QSystemTrayIcon.MessageIcon.Warning, 8000)
+        else:
             self._report(error, self.ask_overlay)
 
     def _on_ask_cancelled(self):
@@ -1485,6 +1506,7 @@ class Dikte:
         """The microphone itself could not run, so it belongs to whoever asked."""
         owner, self.recorder_owner = self.recorder_owner, None
         self.paste_override.pop(owner, None)
+        self._stop_held_since = None
         if owner == ASK:
             self._drop_grab()
         self.ticker.stop()
@@ -1516,7 +1538,9 @@ class Dikte:
             QSystemTrayIcon.MessageIcon.Warning, 8000,
         )
         if owner == ASK and self.ask_state == RECORDING:
-            self.stop_ask()
+            # Nothing is being recorded to hold for a preview; a selection
+            # not yet shown is simply not sent.
+            self._stop_ask_now()
         elif self.state == RECORDING:
             self.stop()
 

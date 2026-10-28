@@ -34,6 +34,19 @@ from tests.support import DikteTest, make_wav, speech
 _qt_app = QApplication.instance() or QApplication([])
 
 
+def _no_real_tool(argv, *args, **kwargs):
+    raise AssertionError(f"a test ran a real program: {argv!r}")
+
+
+def setUpModule():
+    # wl-paste, xclip, xsel, pbpaste and osascript would read or write the
+    # desktop the suite runs on. Every test here fakes them; one that forgets
+    # fails here instead of touching the live clipboard.
+    patcher = mock.patch.object(subprocess, "run", _no_real_tool)
+    patcher.start()
+    unittest.addModuleCleanup(patcher.stop)
+
+
 def completed(code=0, stdout=b"", stderr=b""):
     return subprocess.CompletedProcess([], code, stdout, stderr)
 
@@ -238,7 +251,7 @@ class Capture(DikteTest):
     def test_the_grab_runs_off_the_calling_thread(self):
         seen = []
 
-        def fake(focus, cancelled):
+        def fake(focus, cancelled, **kwargs):
             seen.append((threading.current_thread(), focus))
             return selection.Selection("x", "primary")
 
@@ -253,10 +266,32 @@ class Capture(DikteTest):
     def test_a_grab_that_hangs_gives_nothing(self):
         release = threading.Event()
         with mock.patch.object(selection, "capture",
-                               side_effect=lambda focus, cancelled: release.wait(5) and None):
+                               side_effect=lambda focus, cancelled, **kw: release.wait(5) and None):
             grab = selection.Grab()
             self.assertEqual(grab.result(timeout=0.05), selection.NOTHING)
             release.set()
+
+    def test_the_read_is_there_before_the_clipboard_is_put_back(self):
+        """The preview does not wait on the late-copy watch and restore."""
+        restoring = threading.Event()
+
+        def fake(focus, cancelled, publish=None):
+            publish(selection.Selection("early", "clipboard"))
+            restoring.wait(5)
+            return selection.Selection("early", "clipboard")
+
+        with mock.patch.object(selection, "capture", side_effect=fake):
+            grab = selection.Grab()
+            for _ in range(200):
+                if grab.peek() is not None:
+                    break
+                threading.Event().wait(0.01)
+            self.assertTrue(grab._thread.is_alive())
+            self.assertEqual(grab.peek().text, "early")
+            grab.shown.set()
+            self.assertEqual(grab.result(timeout=0.5).text, "early")
+            restoring.set()
+            grab._thread.join(2)
 
     def test_a_selection_never_shown_is_never_sent(self):
         with mock.patch.object(selection, "capture",
@@ -376,28 +411,48 @@ class CopyTiming(DikteTest):
         self.assertEqual(self.counts.call_count, selection.QUIET_MAX_POLLS + 1)
         self.calls.copy_bytes.assert_called_once_with(b"what was there")
 
-    def script(self, late_after=None, bump_on_restore=True):
-        """A change count that our restores bump, and a late copy that lands
-        after `late_after` further reads."""
-        state = {"count": 5, "reads": 0, "landed": False}
+    def clipboard(self, events=(), during_restore=None):
+        """A fake clipboard with a change count. `events` are (read number,
+        new text) pairs: the change lands once the count has been read that
+        many times. Every restore puts the old text back and moves the count;
+        `during_restore` lands as well while the first restore runs, the way
+        a copy can arrive while macOS's restore helper is busy."""
+        state = {"count": 5, "reads": 0, "text": "", "restores": 0}
+        pending = sorted(events)
 
         def count():
             state["reads"] += 1
-            if (late_after is not None and not state["landed"]
-                    and state["reads"] > late_after):
-                state["landed"] = True
+            while pending and state["reads"] > pending[0][0]:
+                _, text = pending.pop(0)
+                state["text"] = text
                 state["count"] += 1
             return state["count"]
 
         def restored(data, **kwargs):
             self.calls.restored(data, **kwargs)
-            if bump_on_restore:
+            state["restores"] += 1
+            state["text"] = data.decode()
+            state["count"] += 1
+            if during_restore and state["restores"] == 1:
+                state["text"] = during_restore
                 state["count"] += 1
 
         self.counts.side_effect = count
         self.patch_attr(paste, "copy_bytes", restored)
         self.patch_attr(selection, "discard", self.calls.discard)
+        self.calls.read_text.side_effect = None
         self.calls.read_text.return_value = ""
+        # Read only by the late-copy watch, after the copy has given up.
+        reads = {"n": 0}
+
+        def read_text():
+            reads["n"] += 1
+            # The copy's own polls see an empty clipboard throughout.
+            if reads["n"] <= round(selection.SETTLE / selection.POLL):
+                return ""
+            return state["text"]
+
+        self.patch_attr(paste, "read_text", read_text)
         return state
 
     def restores(self):
@@ -409,28 +464,59 @@ class CopyTiming(DikteTest):
         self.calls.copy_bytes.assert_called_once_with(b"what was there")
 
     def test_a_copy_that_never_answers_is_restored_once(self):
-        self.script()
+        self.clipboard()
         self.copy()
         self.assertEqual(len(self.restores()), 1)
         self.calls.discard.assert_called_once_with(b"what was there")
 
     def test_a_late_copy_before_the_restore_is_waited_out(self):
-        state = self.script(late_after=3)
+        state = self.clipboard(events=[(3, "the selection")])
         self.copy()
-        self.assertTrue(state["landed"])
+        self.assertEqual(state["text"], "what was there")
         self.assertEqual(len(self.restores()), 1)
-        # The restore went over the late copy, not under it.
         names = [call[0] for call in self.calls.mock_calls]
-        self.assertGreater(state["reads"], 3)
         self.assertEqual(names[-2:], ["restored", "discard"])
 
-    def test_a_late_copy_after_the_restore_is_restored_over_again(self):
-        # 1 read before the first watch, 10 in it, then the restore; the late
-        # copy lands two reads into the watch after it.
-        self.script(late_after=13)
+    def test_the_late_copys_text_landing_again_is_restored_over(self):
+        # Two writes from the application: one in the watch before the
+        # restore, the same text again in the watch after it.
+        state = self.clipboard(events=[(3, "the selection"),
+                                       (10, "the selection")])
         self.copy()
         self.assertEqual(len(self.restores()), 2)
+        self.assertEqual(state["text"], "what was there")
         self.calls.discard.assert_called_once_with(b"what was there")
+
+    def test_a_late_copy_during_the_restore_is_not_taken_for_the_restore(self):
+        state = self.clipboard(events=[(3, "the selection")],
+                               during_restore="the selection")
+        self.copy()
+        self.assertEqual(len(self.restores()), 2)
+        self.assertEqual(state["text"], "what was there")
+
+    def test_the_users_own_copy_after_the_restore_is_left_alone(self):
+        for text in ("my own copy", ""):   # a copy, or a password manager clearing
+            with self.subTest(text=text):
+                self.calls.reset_mock()
+                state = self.clipboard(events=[(3, "the selection"), (10, text)])
+                self.copy()
+                self.assertEqual(len(self.restores()), 1)
+                self.assertEqual(state["text"], text)
+
+    def test_without_a_late_copy_seen_nothing_after_the_restore_is_watched(self):
+        self.clipboard()
+        self.copy()
+        self.assertEqual(len(self.restores()), 1)
+        # The first count, the watch before the restore, and the baseline.
+        self.assertEqual(self.counts.call_count, 1 + selection.LATE_POLLS + 1)
+
+    def test_the_read_is_published_before_the_watch(self):
+        seen = []
+        self.clipboard()
+        with mock.patch.object(paste, "desktop", return_value=paste.WINDOWS):
+            selection.copy_selection(None, None, publish=lambda text: seen.append(
+                (text, len(self.restores()), self.counts.call_count)))
+        self.assertEqual(seen, [("", 0, 0)])
 
     def test_a_copy_never_pressed_needs_no_watch(self):
         cancelled = threading.Event()
@@ -903,6 +989,7 @@ class Apply(DikteTest):
             with self.assertRaises(paste.PasteError) as caught:
                 selection.apply("New text.", self.conf)
         self.assertIn("could not be read just now", str(caught.exception))
+        self.assertIn("Try again", str(caught.exception))
         self.assertEqual(snap.call_count, selection.SNAPSHOT_TRIES)
         self.calls.copy.assert_not_called()
 
@@ -1322,7 +1409,7 @@ class App(DikteTest):
         target.home_messages = {}
         target.home_window = None
         target.ask_pipeline = mock.Mock()
-        target.ask_overlay = mock.Mock()
+        target.ask_overlay = mock.Mock(showing=True, state="asking")
         target.cues = mock.Mock()
         target.recorder = mock.Mock(active=True)
         target._begin_recording = mock.Mock()
@@ -1384,7 +1471,8 @@ class App(DikteTest):
     def assist_with(self, read, enabled_provider="claude"):
         target = self.controller(True)
         target.conf["assistant_provider"] = enabled_provider
-        grab = mock.Mock(reads=True)
+        grab = mock.Mock(reads=True, shown_at=None)
+        grab.shown = mock.Mock(wraps=threading.Event())
         grab.peek.return_value = read
         with mock.patch.object(selection, "Grab", return_value=grab):
             app.Dikte._toggle_assist(target)
@@ -1406,9 +1494,33 @@ class App(DikteTest):
         note = target.ask_overlay.set_note.call_args.args[0]
         self.assertTrue(note.startswith("Selected (300 characters): xxx"))
         self.assertLess(len(note), 80)
+        grab.shown.set.assert_not_called()     # not painted yet
+        target._grab_timer.timeout.emit()
         grab.shown.set.assert_called_once_with()
         target._grab_timer.timeout.emit()
         target.ask_overlay.set_note.assert_called_once()
+
+    def test_a_note_the_indicator_is_not_drawing_never_counts_as_shown(self):
+        """An error put up in its place leaves the note set but unseen."""
+        target, grab = self.assist_with(selection.Selection("secret", "primary"))
+        target.ask_overlay.state = "error"
+        for _ in range(3):
+            target._grab_timer.timeout.emit()
+        grab.shown.set.assert_not_called()
+        target.ask_overlay.state = "asking"
+        target._grab_timer.timeout.emit()
+        grab.shown.set.assert_called_once_with()
+
+    def test_an_apply_failing_during_a_recording_goes_to_the_tray(self):
+        target = self.controller(True)
+        target.ask_state = app.RECORDING
+        target.tray = mock.Mock()
+        target._report = mock.Mock()
+        app.Dikte._on_answer_applied(target, 1, "Nothing was pasted.\nWhy.")
+        target._report.assert_not_called()
+        target.ask_overlay.show_error.assert_not_called()
+        self.assertEqual(target.tray.showMessage.call_args.args[1],
+                         "Nothing was pasted.\nWhy.")
 
     def test_a_read_finishing_after_the_recording_is_not_shown(self):
         target, grab = self.assist_with(None)
@@ -1496,6 +1608,7 @@ class App(DikteTest):
         """A run whose stop is held, driven tick by tick through the watcher."""
         target = self.controller(True)
         grab = mock.Mock(reads=True, shown_at=None)
+        grab.shown = mock.Mock(wraps=threading.Event())
         grab.peek.return_value = None
         self.clock = 100.0
         self.enterContext(mock.patch.object(app.time, "monotonic",
@@ -1516,6 +1629,10 @@ class App(DikteTest):
         grab.peek.return_value = selection.Selection("text", "primary")
         self.clock = 100.0 + app.ASSIST_HOLD_SECONDS - 0.01
         target._grab_timer.timeout.emit()      # the note goes up
+        grab.shown.set.assert_not_called()
+        target.recorder.stop.assert_not_called()
+        self.clock = 100.0 + app.ASSIST_HOLD_SECONDS + 0.04
+        target._grab_timer.timeout.emit()      # painted by now: shown
         grab.shown.set.assert_called_once_with()
         self.assertEqual(grab.shown_at, self.clock)
         target.recorder.stop.assert_not_called()
@@ -1525,6 +1642,20 @@ class App(DikteTest):
         grab.cancel.assert_not_called()
         self.clock = grab.shown_at + app.ASSIST_PREVIEW_SECONDS
         target._grab_timer.timeout.emit()
+        target.recorder.stop.assert_called_once_with()
+
+    def test_a_note_never_drawn_is_given_up_on_at_the_cap(self):
+        target, grab = self.watched()
+        target.ask_overlay.state = "error"
+        grab.peek.return_value = selection.Selection("text", "primary")
+        target._grab_timer.timeout.emit()      # set, but not drawn
+        self.clock = 100.0 + app.ASSIST_HOLD_SECONDS - 0.01
+        target._grab_timer.timeout.emit()
+        target.recorder.stop.assert_not_called()
+        self.clock = 100.0 + app.ASSIST_HOLD_SECONDS
+        target._grab_timer.timeout.emit()
+        grab.shown.set.assert_not_called()
+        grab.cancel.assert_called_once_with()
         target.recorder.stop.assert_called_once_with()
 
     def test_a_read_landing_after_the_cap_is_never_shown(self):
@@ -1544,6 +1675,29 @@ class App(DikteTest):
         with mock.patch.object(type(target), "recording", True, create=True):
             app.Dikte._cancel(target)
         self.assertIsNone(target._stop_held_since)
+
+    def test_a_second_ask_wait_during_a_hold_waits_too(self):
+        target, _ = self.held(None)
+        target.toggle_ask = lambda: app.Dikte._toggle_ask(target)
+        first, second = [], []
+        app.Dikte._ask_request(target, {"wait": True}, first.append)
+        target.last_toggle.clear()
+        app.Dikte._ask_request(target, {"wait": True}, second.append)
+        self.assertEqual((first, second), ([], []))
+        self.assertEqual(len(target._waiters[app.ASK]), 2)
+
+    def test_a_dead_microphone_forgets_a_held_stop(self):
+        target, _ = self.held(None)
+        app.Dikte.stop_ask(target)
+        target._on_ask_error = mock.Mock()
+        app.Dikte._on_recorder_error(target, "gone")
+        self.assertIsNone(target._stop_held_since)
+        # So a later request that changes nothing is not counted as a stop.
+        target.ask_state = app.BUSY
+        target.toggle_ask = lambda: None
+        replies = []
+        app.Dikte._ask_request(target, {"wait": True}, replies.append)
+        self.assertFalse(replies[0]["ok"])
 
     def test_a_held_stop_counts_as_a_stop_for_ask_wait_and_paste(self):
         target, _ = self.held(None)
