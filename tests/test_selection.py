@@ -562,7 +562,7 @@ class CopyTiming(DikteTest):
         state = self.clipboard(events=[(3, "the selection"), (14, "again")],
                                unreadable=True)
         self.copy()
-        self.assertGreaterEqual(len(self.restores()), 2)
+        self.assertEqual(len(self.restores()), 3)
         self.assertEqual(state["text"], "what was there")
         self.calls.discard.assert_called_once_with(b"what was there")
 
@@ -571,7 +571,7 @@ class CopyTiming(DikteTest):
                                unreadable=True)
         self.copy()
         self.assertEqual(state["text"], "what was there")
-        self.assertGreaterEqual(len(self.restores()), 3)
+        self.assertEqual(len(self.restores()), 3)
 
     def test_an_unreadable_late_copy_never_restores_over_a_clear(self):
         state = self.clipboard(events=[(3, "the selection")], unreadable=True)

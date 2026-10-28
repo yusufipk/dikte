@@ -56,8 +56,9 @@ the user made, so it is left on the clipboard. The half second after the
 restore only catches the same late text coming back, and restores over that
 alone, never over other content (a copy of the user's own, or a password
 manager clearing the clipboard). A late copy that could not be read at all is
-restored over once more after a settle, whatever is there then, except a clear
-or a clipboard marked private.
+restored over after a settle, and once more if the clipboard changes in the
+half second after that, whatever is there then, except a clear or a clipboard
+marked private.
 """
 
 import collections
@@ -452,9 +453,10 @@ def restore_past_a_late_copy(saved):
     more. Anything else arriving then is left alone. A late copy whose text
     could not be read is the one exception: the program holding the
     clipboard is most likely the one still writing it, and its write may land
-    during the restore or swallow it, so the restore is made once more after
-    a settle, unless what is there by then is a clear (a password manager's)
-    or marked private.
+    during the restore or swallow it, so the restore is made again after a
+    settle, and once more if the clipboard changes in the half second after
+    that, unless what is there by then is a clear (a password manager's) or
+    marked private.
     """
     count = change_count()
     if count is None:
@@ -493,6 +495,11 @@ def _restore_over_unreadable(saved):
     late copy of a password; it is left for that manager to clear."""
     settle_clipboard()
     now = paste.read_text()
+    if now is None:
+        # Still held: a restore now would fail without a word, so once more
+        # after a moment.
+        time.sleep(POLL)
+        now = paste.read_text()
     if now != "" and not _win_clipboard_private():
         restore(saved, keep=True)
 
