@@ -1,5 +1,6 @@
 """Native workspace navigation, capture boundaries and persisted results."""
 
+import itertools
 from types import SimpleNamespace
 from unittest import mock
 
@@ -151,6 +152,9 @@ class Home(DikteTest):
         at a large one (Windows' UI font draws them nearly twice as wide)."""
         default = QApplication.font()
         self.addCleanup(QApplication.setFont, default)
+        # A font set in pixels has no point size, and the large pass would
+        # quietly run at the default one.
+        self.assertGreater(default.pointSizeF(), 0)
         for scale in (1, 1.8):
             for language in ("en", "tr"):
                 with self.subTest(scale=scale, language=language):
@@ -177,6 +181,15 @@ class Home(DikteTest):
                         corner = button.mapTo(page, button.rect().bottomRight())
                         self.assertLessEqual(corner.x(), page.viewport().width(),
                                              button.text())
+                        # A row the layout was given no height for is drawn
+                        # below its parent and cut off.
+                        host = button.parentWidget()
+                        bottom = button.mapTo(host, button.rect().bottomRight()).y()
+                        self.assertLessEqual(bottom, host.height(), button.text())
+                    for a, b in itertools.combinations(buttons, 2):
+                        self.assertFalse(a.geometry().intersects(b.geometry())
+                                         and a.parentWidget() is b.parentWidget(),
+                                         (a.text(), b.text()))
                     # Open selected text stays with the actions on the selection.
                     actions = settings.history_actions
                     self.assertEqual(
