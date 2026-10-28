@@ -662,10 +662,14 @@ def read_text():
     here = desktop()
     if here is WINDOWS:
         return _win_read_text()
-    if not shutil.which(here.read_command[0]):
+    # Asked for text by name: left to choose, wl-paste hands over the first
+    # type on offer, which need not be text at all.
+    argv = (here.read_command + ["--type", "text"] if here is WAYLAND
+            else here.read_command)
+    if not shutil.which(argv[0]):
         return None
     try:
-        res = subprocess.run(here.read_command, capture_output=True, timeout=5,
+        res = subprocess.run(argv, capture_output=True, timeout=5,
                              env=_clipboard_environment())
     except (subprocess.SubprocessError, OSError):
         return None

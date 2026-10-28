@@ -102,6 +102,9 @@ class Capture(DikteTest):
         self.patch_attr(selection, "_win_clipboard_empty", self.calls.win_empty)
         self.calls.win_empty.return_value = False
         self.patch_attr(selection, "_win_clipboard_private", lambda: False)
+        # No change counter, and no look at which application is in front.
+        self.patch_attr(selection, "change_count", lambda: None)
+        self.patch_attr(selection, "_mac_front_back", lambda focus: None)
         # Linux asks for the clipboard's types first; never the real one.
         self.patch_attr(selection, "_linux_clipboard_kind", lambda here: "text")
 
@@ -130,7 +133,7 @@ class Capture(DikteTest):
         got = self.capture(paste.WAYLAND, primary=None, ready=True)
         self.assertEqual(got, selection.Selection("the selection", "clipboard"))
         self.calls.press.assert_called_once_with("ctrl+insert",
-                                                 delay=selection.COPY_DELAY,
+                                                 delay=0,
                                                  focus=None)
 
     def test_linux_without_primary_or_keys_is_a_plain_question(self):
@@ -145,7 +148,7 @@ class Capture(DikteTest):
                                         "read_text", "copy_bytes"])
         self.calls.copy.assert_called_once_with("")
         self.calls.press.assert_called_once_with("cmd+c",
-                                                 delay=selection.COPY_DELAY,
+                                                 delay=0,
                                                  focus=4242)
         self.calls.copy_bytes.assert_called_once_with(b"what was there")
 
@@ -252,6 +255,192 @@ class Capture(DikteTest):
             grab = selection.Grab()
             self.assertEqual(grab.result(timeout=0.05), selection.NOTHING)
             release.set()
+
+    def test_a_grab_given_up_on_never_presses_the_copy_later(self):
+        """Stuck behind a dictation's paste, it must not wake up and press
+        the copy in whatever window has the focus by then."""
+        held = threading.Lock()
+        held.acquire()
+        with mock.patch.object(paste, "desktop", return_value=paste.MACOS), \
+                mock.patch.object(selection, "_paste_lock", return_value=held), \
+                contextlib.redirect_stderr(io.StringIO()):
+            grab = selection.Grab()
+            self.assertEqual(grab.result(timeout=0.05), selection.NOTHING)
+            self.assertTrue(grab._cancelled.is_set())
+            held.release()
+            grab._thread.join(2)
+        self.assertFalse(grab._thread.is_alive())
+        self.calls.press.assert_not_called()
+        self.calls.read_clipboard.assert_not_called()
+        self.calls.copy.assert_not_called()
+
+
+class CopyTiming(DikteTest):
+    """When the copy is pressed, how long its answer is waited for, and when
+    the clipboard goes back."""
+
+    def setUp(self):
+        super().setUp()
+        self.slept = []
+        self.patch_attr(selection.time, "sleep", self.slept.append)
+        self.calls = mock.Mock()
+        self.calls.read_clipboard.return_value = b"what was there"
+        self.calls.read_text.return_value = "the selection"
+        for name in ("read_clipboard", "read_text", "copy", "copy_bytes", "press"):
+            self.patch_attr(paste, name, getattr(self.calls, name))
+        self.patch_attr(selection, "_win_let_go_of_modifiers", lambda: None)
+        self.patch_attr(selection, "_win_clipboard_empty", lambda: False)
+        self.patch_attr(selection, "_win_clipboard_private", lambda: False)
+        self.patch_attr(selection, "_mac_front_back", self.calls.front)
+        self.counts = mock.Mock(return_value=None)
+        self.patch_attr(selection, "change_count", self.counts)
+
+    def copy(self, desktop=paste.WINDOWS, cancelled=None, focus=None):
+        with mock.patch.object(paste, "desktop", return_value=desktop):
+            return selection.copy_selection(focus, cancelled)
+
+    def names(self):
+        return [call[0] for call in self.calls.mock_calls]
+
+    def test_the_hand_gets_its_moment_before_the_press_not_inside_it(self):
+        self.calls.press.side_effect = lambda *a, **k: self.slept.append("press")
+        self.copy()
+        self.assertEqual(self.slept[:2], [selection.COPY_DELAY, "press"])
+        self.assertEqual(self.calls.press.call_args.kwargs["delay"], 0)
+
+    def test_the_clipboard_is_read_until_the_copy_lands(self):
+        self.calls.read_text.side_effect = ["", None, "", "slow app"]
+        self.assertEqual(self.copy(), "slow app")
+        self.assertEqual(self.calls.read_text.call_count, 4)
+        self.calls.copy_bytes.assert_called_once_with(b"what was there")
+
+    def test_a_copy_that_never_lands_is_given_up_on_after_a_second(self):
+        self.calls.read_text.return_value = ""
+        self.assertEqual(self.copy(), "")
+        self.assertEqual(self.calls.read_text.call_count,
+                         round(selection.SETTLE / selection.POLL))
+        self.calls.copy_bytes.assert_called_once_with(b"what was there")
+
+    def test_a_cancel_while_waiting_stops_reading_and_still_restores(self):
+        cancelled = threading.Event()
+
+        def read():
+            cancelled.set()
+            return ""
+
+        self.calls.read_text.side_effect = read
+        self.assertEqual(self.copy(cancelled=cancelled), "")
+        self.assertEqual(self.calls.read_text.call_count, 1)
+        self.calls.copy_bytes.assert_called_once_with(b"what was there")
+
+    def test_a_cancel_during_the_hands_moment_presses_nothing(self):
+        cancelled = threading.Event()
+        self.patch_attr(selection.time, "sleep", lambda seconds: cancelled.set())
+        self.assertEqual(self.copy(cancelled=cancelled), "")
+        self.calls.press.assert_not_called()
+        self.calls.copy_bytes.assert_called_once_with(b"what was there")
+
+    def test_the_restore_waits_for_a_copy_written_in_two_goes(self):
+        """The count still moving means the application is still writing."""
+        seen = []
+        self.counts.side_effect = lambda: seen.append("count") or [5, 6, 7, 7, 7][
+            len(seen) - 1]
+        self.calls.copy_bytes.side_effect = lambda data: seen.append("restore")
+        self.assertEqual(self.copy(), "the selection")
+        self.assertEqual(seen, ["count"] * 5 + ["restore"])
+
+    def test_a_count_that_never_settles_is_not_waited_on_forever(self):
+        counter = iter(range(100))
+        self.counts.side_effect = lambda: next(counter)
+        self.copy()
+        self.assertEqual(self.counts.call_count, selection.QUIET_MAX_POLLS + 1)
+        self.calls.copy_bytes.assert_called_once_with(b"what was there")
+
+    def test_nothing_read_means_nothing_to_wait_for(self):
+        self.calls.read_text.return_value = ""
+        self.counts.return_value = 5
+        self.copy()
+        self.counts.assert_not_called()
+
+    def test_macos_hands_the_front_back_before_pressing(self):
+        self.copy(paste.MACOS, focus=4242)
+        names = self.names()
+        self.assertLess(names.index("front"), names.index("press"))
+        self.calls.front.assert_called_once_with(4242)
+
+    def test_windows_needs_no_front_handed_back(self):
+        self.copy(paste.WINDOWS, focus=4242)
+        self.calls.front.assert_not_called()
+
+
+class MacFront(DikteTest):
+    """The Cmd+C waits for the front to be back with the selection's window."""
+
+    def setUp(self):
+        super().setUp()
+        self.patch_attr(selection.time, "sleep", lambda seconds: None)
+        from dikte import mac_window
+        self.window = mac_window
+
+    def front(self, answers, focus=4242):
+        with mock.patch.object(self.window, "is_frontmost",
+                               side_effect=answers) as frontmost, \
+                mock.patch.object(self.window, "activate") as activate:
+            selection._mac_front_back(focus)
+        return frontmost, activate
+
+    def test_dikte_in_front_hands_it_back_and_waits_for_it(self):
+        frontmost, activate = self.front([True, True, True, False])
+        activate.assert_called_once_with(4242)
+        self.assertEqual(frontmost.call_count, 4)
+
+    def test_someone_else_in_front_is_left_there(self):
+        frontmost, activate = self.front([False])
+        activate.assert_not_called()
+        self.assertEqual(frontmost.call_count, 1)
+
+    def test_a_front_that_never_comes_back_is_not_waited_on_forever(self):
+        frontmost, _ = self.front(lambda: True)
+        self.assertEqual(frontmost.call_count, selection.QUIET_MAX_POLLS + 1)
+
+    def test_no_application_remembered_asks_nothing(self):
+        frontmost, activate = self.front([], focus=None)
+        frontmost.assert_not_called()
+        activate.assert_not_called()
+
+
+class ChangeCount(DikteTest):
+    def test_windows_reads_the_sequence_number(self):
+        user32 = types.SimpleNamespace(GetClipboardSequenceNumber=lambda: 812)
+        with mock.patch.object(paste, "desktop", return_value=paste.WINDOWS), \
+                mock.patch.object(paste, "_win_api", return_value=(user32, None)):
+            self.assertEqual(selection.change_count(), 812)
+
+    def test_macos_asks_the_pasteboard(self):
+        with mock.patch.object(paste, "desktop", return_value=paste.MACOS), \
+                mock.patch.object(selection.shutil, "which", return_value="osascript"), \
+                mock.patch.object(selection.subprocess, "run",
+                                  return_value=subprocess.CompletedProcess(
+                                      [], 0, "57\n", "")) as run:
+            self.assertEqual(selection.change_count(), 57)
+        self.assertIn("changeCount", run.call_args.args[0][-1])
+
+    def test_linux_has_none(self):
+        for desktop in (paste.WAYLAND, paste.X11):
+            with self.subTest(desktop=desktop.clipboard), \
+                    mock.patch.object(paste, "desktop", return_value=desktop):
+                self.assertIsNone(selection.change_count())
+
+
+class WaylandText(DikteTest):
+    def test_the_fallback_asks_wl_paste_for_text_by_name(self):
+        with mock.patch.object(paste, "desktop", return_value=paste.WAYLAND), \
+                mock.patch.object(paste.shutil, "which", return_value="wl-paste"), \
+                mock.patch.object(paste.subprocess, "run",
+                                  return_value=completed(stdout=b"hi")) as run:
+            self.assertEqual(paste.read_text(), "hi")
+        self.assertEqual(run.call_args.args[0],
+                         ["wl-paste", "--no-newline", "--type", "text"])
 
 
 class LinuxClipboard(DikteTest):
@@ -501,6 +690,8 @@ class Apply(DikteTest):
         for name in ("read_clipboard", "copy", "copy_bytes", "press"):
             self.patch_attr(paste, name, getattr(self.calls, name))
         self.patch_attr(selection, "_linux_clipboard_kind", lambda here: "text")
+        self.patch_attr(selection, "change_count", lambda: None)
+        self.patch_attr(selection, "_mac_front_back", lambda focus: None)
 
     def test_apply_pastes_then_restores(self):
         selection.apply("New text.", self.conf, focus=9)

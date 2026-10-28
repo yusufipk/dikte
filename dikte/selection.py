@@ -53,9 +53,15 @@ from .i18n import t
 # The hotkey that started this may still be held when the copy is pressed, and
 # a Ctrl+Shift+C is not a copy everywhere. A moment for the hand to come up.
 COPY_DELAY = 0.25
-# How long the application gets to answer the copy before the clipboard is
-# read.
-SETTLE = 0.3
+# How long the application gets to answer the copy. The clipboard is read
+# every POLL seconds until then, and the first text to land ends the wait.
+SETTLE = 1.0
+POLL = 0.05
+# Once the selection is read, how many polls in a row the clipboard's change
+# count has to stand still before the old contents go back, and the most polls
+# spent waiting for that. See settle_clipboard.
+QUIET_POLLS = 2
+QUIET_MAX_POLLS = 10
 # How long Apply waits for the window it hid to hand focus back.
 APPLY_DELAY = 0.4
 # How many times a clipboard that could not be read is asked, 0.1 s apart.
@@ -303,28 +309,121 @@ def _win_let_go_of_modifiers(timeout=1.0):
     user32.SendInput(len(inputs), inputs, paste.ctypes.sizeof(paste._WinInput))
 
 
+def _called_off(cancelled):
+    return cancelled is not None and cancelled.is_set()
+
+
+_MAC_CHANGE_COUNT = ('ObjC.import("AppKit"); '
+                     '$.NSPasteboard.generalPasteboard.changeCount')
+
+
+def change_count():
+    """The number the system bumps on every change to the clipboard, or None.
+
+    Windows and macOS keep one; the Linux tools offer nothing like it.
+    """
+    here = paste.desktop()
+    if here is paste.WINDOWS:
+        try:
+            return paste._win_api()[0].GetClipboardSequenceNumber() or None
+        except (AttributeError, OSError):
+            return None
+    if here is paste.MACOS and shutil.which("osascript"):
+        try:
+            res = subprocess.run(["osascript", "-l", "JavaScript", "-e",
+                                  _MAC_CHANGE_COUNT],
+                                 capture_output=True, text=True, timeout=3)
+            return int(res.stdout.strip()) if res.returncode == 0 else None
+        except (subprocess.SubprocessError, OSError, ValueError):
+            return None
+    return None
+
+
+def settle_clipboard(cancelled=None):
+    """Wait for the clipboard's change count to stand still, where there is one.
+
+    Some applications write a copy in more than one go, text first and their
+    richer forms after. Restoring between the two would let the second land
+    over the restored clipboard, and what the user had copied would be gone.
+    """
+    last = change_count()
+    if last is None:
+        return
+    still = 0
+    for _ in range(QUIET_MAX_POLLS):
+        if still >= QUIET_POLLS or _called_off(cancelled):
+            return
+        time.sleep(POLL)
+        now = change_count()
+        still = still + 1 if now == last else 0
+        last = now
+
+
+def _wait_for_text(cancelled):
+    """The first text the copy puts on the emptied clipboard, or ''."""
+    for _ in range(round(SETTLE / POLL)):
+        time.sleep(POLL)
+        text = paste.read_text()
+        if text or _called_off(cancelled):
+            return text or ""
+    return ""
+
+
+def _mac_front_back(focus):
+    """See that the Cmd+C goes to the window the selection is in.
+
+    The recording's indicator, or ffmpeg opening the microphone, can take the
+    front while the copy waits for the hand to come up; the application's own
+    watch is handing it back meanwhile (app._give_the_front_back), and this
+    waits for that to land rather than pressing into Dikte. The press looks
+    once more itself right before it posts the keys.
+    """
+    if not focus:
+        return
+    # Imported here for the reason paste._macos_press gives.
+    from . import mac_window
+    if not mac_window.is_frontmost():
+        return
+    mac_window.activate(focus)
+    for _ in range(QUIET_MAX_POLLS):
+        time.sleep(POLL)
+        if not mac_window.is_frontmost():
+            return
+
+
 def copy_selection(focus=None, cancelled=None):
     """Press copy, read what landed, and put the clipboard back as it was.
 
     A clipboard that cannot be read back is not touched at all: the run then
-    goes ahead as if nothing were selected.
+    goes ahead as if nothing were selected. A run called off at any point
+    presses nothing more and stops waiting, but the clipboard it emptied is
+    always put back.
     """
+    if _called_off(cancelled):
+        return ""
     saved = snapshot_patiently(cancelled)
     if saved in UNREADABLE:
         return ""
+    text = ""
     try:
         paste.copy("")
-        if cancelled is not None and cancelled.is_set():
-            return ""
         if paste.desktop() is paste.WINDOWS:
             _win_let_go_of_modifiers()
-            # That can take a second, long enough for the run to be called off.
-            if cancelled is not None and cancelled.is_set():
+        # Waited here rather than inside the press, so that a run called off
+        # meanwhile presses nothing.
+        time.sleep(COPY_DELAY)
+        if _called_off(cancelled):
+            return ""
+        if paste.desktop() is paste.MACOS:
+            _mac_front_back(focus)
+            if _called_off(cancelled):
                 return ""
-        paste.press(copy_shortcut(), delay=COPY_DELAY, focus=focus)
-        time.sleep(SETTLE)
-        return paste.read_text() or ""
+        paste.press(copy_shortcut(), delay=0, focus=focus)
+        text = _wait_for_text(cancelled)
+        return text
     finally:
+        if text:
+            settle_clipboard(cancelled)
         restore(saved)
 
 
@@ -406,7 +505,12 @@ class Grab:
 
     def result(self, timeout=10):
         self._thread.join(timeout)
-        return NOTHING if self._thread.is_alive() else self._result
+        if self._thread.is_alive():
+            # Given up on: it must not go on to press the copy in whatever
+            # window has the focus by the time it gets the paste lock.
+            self._cancelled.set()
+            return NOTHING
+        return self._result
 
 
 # --- the prompt --------------------------------------------------------------
