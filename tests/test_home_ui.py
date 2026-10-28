@@ -179,13 +179,13 @@ class Home(DikteTest):
                         self.assertGreaterEqual(button.height(),
                                                 button.sizeHint().height(), button.text())
                         corner = button.mapTo(page, button.rect().bottomRight())
-                        self.assertLessEqual(corner.x(), page.viewport().width(),
-                                             button.text())
+                        self.assertLess(corner.x(), page.viewport().width(),
+                                        button.text())
                         # A row the layout was given no height for is drawn
                         # below its parent and cut off.
                         host = button.parentWidget()
                         bottom = button.mapTo(host, button.rect().bottomRight()).y()
-                        self.assertLessEqual(bottom, host.height(), button.text())
+                        self.assertLess(bottom, host.height(), button.text())
                     for a, b in itertools.combinations(buttons, 2):
                         self.assertFalse(a.geometry().intersects(b.geometry())
                                          and a.parentWidget() is b.parentWidget(),
