@@ -23,10 +23,10 @@ heap of its own, and ggml hands memory and FILE handles across those DLLs.
 The Universal CRT is part of Windows 10 and later and is not shipped.
 
 Reproducibility is weaker than on Linux. /Brepro removes the link timestamps,
-/d1trimfile the build directory, and the zip is written with fixed dates and
-order, so two runs on the same
-runner image give the same digest, but nothing pins the compiler: a runner
-image update that brings a new MSVC changes the bytes. The published archive
+/d1trimfile the source copy's directory from __FILE__, and the zip is written
+with fixed dates and order, so two runs on the same runner image give the same
+digest, but nothing pins the compiler: a runner image update that brings a new
+MSVC changes the bytes. The published archive
 is the artifact, not something that can be rebuilt on demand years later.
 """
 
@@ -193,7 +193,9 @@ def import_problems(root):
     Each file must be x64. Each import must be a file in the bundle, a part
     of Windows, or the Vulkan loader, and the loader only for ggml-vulkan.dll:
     whisper-server.exe has to start on a machine without one, which is what
-    GGML_BACKEND_DL arranges and what this holds it to.
+    GGML_BACKEND_DL arranges and what this holds it to. Nothing may import
+    ggml-vulkan.dll itself either, or the loader would come in through it;
+    checking every file's own imports covers any chain of them.
     """
     root = pathlib.Path(root)
     shipped = {path.name.lower() for path in root.iterdir() if path.is_file()}
@@ -219,6 +221,9 @@ def import_problems(root):
                 else:
                     problems.append(f"{path.name} {how} {name}: Vulkan is "
                                     "not plugin-only")
+            elif name == VULKAN_BACKEND:
+                problems.append(f"{path.name} {how} {name}: the Vulkan "
+                                "backend is not plugin-only")
             elif name in shipped:
                 continue
             elif name in CRT_DLLS:
@@ -464,16 +469,17 @@ def build(args):
         encoding="utf-8", newline="\n")
 
     sbom = root / f"{ASSET}.cdx.json"
-    with open(sbom, "w", encoding="utf-8", newline="\n") as stream:
-        subprocess.run(
-            [sys.executable, str(HERE / "make-sbom.py")],
-            env=environment | {
-                "ROOT": str(root), "SOURCE_DIR": str(copy),
-                "VERSION": version, "COMMIT": commit, "EPOCH": str(epoch),
-                "ASSET": ASSET, "CMAKE_VERSION": cmake_version,
-                "GLSLC_VERSION": glslc_version,
-            },
-            stdout=stream, check=True)
+    # Written by make-sbom.py itself: its stdout is a text stream that turns
+    # every newline into CRLF on Windows, whatever the parent opened.
+    subprocess.run(
+        [sys.executable, str(HERE / "make-sbom.py")],
+        env=environment | {
+            "ROOT": str(root), "SOURCE_DIR": str(copy),
+            "VERSION": version, "COMMIT": commit, "EPOCH": str(epoch),
+            "ASSET": ASSET, "CMAKE_VERSION": cmake_version,
+            "GLSLC_VERSION": glslc_version, "OUTPUT": str(sbom),
+        },
+        check=True)
     (root / "SHA256SUMS").write_text(_sums(root), encoding="utf-8", newline="\n")
 
     archive = out / f"{ASSET}.zip"

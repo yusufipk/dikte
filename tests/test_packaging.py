@@ -107,6 +107,11 @@ class WhisperVulkanPackaging(unittest.TestCase):
         trigger = workflow.split("workflow_dispatch:", 1)[0]
         self.assertIn("- packaging/whisper-vulkan/**", trigger)
         self.assertIn("- .github/workflows/whisper-vulkan.yml", trigger)
+        # GitHub applies the patterns in order, so the negation has to come
+        # after the directory it carves the README out of.
+        self.assertGreater(
+            trigger.find('- "!packaging/whisper-vulkan/README.md"'),
+            trigger.find("- packaging/whisper-vulkan/**"))
         for path in ("dikte/ggml.py", "tests/test_ggml.py",
                      "tests/test_packaging.py", "README.md", "README.tr.md"):
             self.assertNotIn(f"- {path}", trigger)
@@ -386,6 +391,23 @@ class WindowsVulkanPackaging(unittest.TestCase):
                                     and "not plugin-only" in problem
                                     for problem in problems), problems)
 
+    def test_nothing_may_import_the_vulkan_backend(self):
+        """A file that links ggml-vulkan.dll brings the loader in through
+        it, which the loader check alone would not see."""
+        for name in ("whisper-server.exe", "ggml.dll", "whisper.dll"):
+            for imports, delayed in (((windows_bundle.VULKAN_BACKEND,), ()),
+                                     ((), (windows_bundle.VULKAN_BACKEND,))):
+                with self.subTest(name=name, delayed=bool(delayed)), \
+                        tempfile.TemporaryDirectory() as temporary:
+                    files = dict(GOOD_BUNDLE)
+                    files[name] = (GOOD_BUNDLE[name][0] + imports, delayed)
+                    problems = windows_bundle.import_problems(
+                        self.bundle(temporary, files))
+                    self.assertTrue(any(
+                        problem.startswith(name) and "ggml-vulkan.dll: the "
+                        "Vulkan backend is not plugin-only" in problem
+                        for problem in problems), problems)
+
     def test_a_vulkan_backend_without_the_loader_is_not_the_vulkan_backend(self):
         with tempfile.TemporaryDirectory() as temporary:
             files = dict(GOOD_BUNDLE)
@@ -489,17 +511,23 @@ class WindowsVulkanPackaging(unittest.TestCase):
                 (root / "LICENSES" / name).write_text("MIT\n", encoding="utf-8")
             (root / "BUILD-INFO.json").write_text("{}\n", encoding="utf-8")
             sbom = root / f"{asset}.cdx.json"
-            with sbom.open("w", encoding="utf-8") as output:
-                subprocess.run(
-                    [sys.executable, PACKAGING / "make-sbom.py"],
-                    env=os.environ | {
-                        "ROOT": str(root), "SOURCE_DIR": str(source),
-                        "VERSION": "1.9.4", "ASSET": asset,
-                        "COMMIT": "927cfce34f31707e17f2bff35c349632fb9e2c3a",
-                        "EPOCH": "1787219223",
-                    },
-                    stdout=output, check=True)
-            document = json.loads(sbom.read_text(encoding="utf-8"))
+            # The way build runs it: make-sbom.py writes the file itself, so
+            # Windows' text-mode stdout cannot turn its newlines into CRLF.
+            environment = os.environ | {
+                "ROOT": str(root), "SOURCE_DIR": str(source),
+                "VERSION": "1.9.4", "ASSET": asset,
+                "COMMIT": "927cfce34f31707e17f2bff35c349632fb9e2c3a",
+                "EPOCH": "1787219223",
+            }
+            printed = subprocess.run(
+                [sys.executable, PACKAGING / "make-sbom.py"],
+                env=environment | {"OUTPUT": str(sbom)},
+                stdout=subprocess.PIPE, check=True).stdout
+            self.assertEqual(b"", printed)
+            written = sbom.read_bytes()
+            self.assertNotIn(b"\r", written)
+            self.assertTrue(written.endswith(b"}\n"))
+            document = json.loads(written)
             components = {component["name"]: component
                           for component in document["components"]}
             self.assertEqual("0.23.0", components["ggml"]["version"])
