@@ -237,6 +237,14 @@ class Learning(DikteTest):
             "auto", "Bugün Ahmet ile toplantı yaptık ve plan hazır."))
         self.assertTrue(dictionary.capitalises_nouns("de", "We met Ahmet."))
 
+    def test_a_dictation_with_nothing_new_leaves_the_file_alone(self):
+        conf = self.config()
+        text = "I pushed the fix to OpenFrame this morning."
+        self.learn(conf, text, 3)
+        with mock.patch.object(dictionary, "_write") as written:
+            self.assertEqual(self.learn(conf, text, 2), [])
+        written.assert_not_called()
+
     def test_a_term_already_in_the_dictionary_is_not_added_again(self):
         conf = self.config(transcribe_prompt="openframe")
         self.assertEqual(self.learn(conf, "It runs on OpenFrame now.", 3), [])

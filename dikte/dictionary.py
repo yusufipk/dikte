@@ -851,6 +851,8 @@ def learn(conf, raw, text, speech_language=""):
     heard = {_key(w) for w in _WORD.findall(raw)}
     found = [(term, starts) for term, starts in runs(text)
              if all(_key(w) in heard for w in term.split())]
+    # Before the lock: it reads only the two texts, and it is the slow part.
+    swaps = corrections(raw, text)
     with _locked():
         current, stored, _ = _state(conf, _read_for_write())
         stored = stored or _empty()
@@ -872,9 +874,12 @@ def learn(conf, raw, text, speech_language=""):
         # "Claude Code") is that name heard in part, not a term of its own.
         longer = [_joined(_tokens(hint_of(r))) for r in current
                   if len(_tokens(hint_of(r))) > 1]
-        fixed = [(before, after) for before, after in corrections(raw, text)
+        fixed = [(before, after) for before, after in swaps
                  if _key(before) not in known and _key(after) not in known
                  and not any(_joined(_tokens(after)) in name for name in longer)]
+        terms = [term for term in terms if _key(term) not in known]
+        # Every term and correction left changes a count, so with none left
+        # the file is not rewritten for nothing.
         if not terms and not fixed:
             return []
         added = []
