@@ -555,22 +555,26 @@ sechs sieben acht neun zehn elf zwölf gut gute guten gutes neue neuer neues
 neuen frohe frohes schönes schönen liebe lieber alles sehr nein hier
 """.split())
 # Also everyday words in Turkish (Nur, der, dem, "Excel den" written apart)
-# or in English text (MIT, I am, Red Hat, let it die, ins and outs): weaker
+# or in English text (MIT, I am, ins and outs, a gut feeling): weaker
 # evidence than the rest, so a name made of one can still be learned.
 _GERMAN_SHARED = frozenset(
-    "der dem den des mit im am nur die hat bis aus ins leg elf".split())
+    "der dem den des mit im am nur aus ins leg elf gut".split())
 # Letters Turkish writes and German never does.
 _TURKISH = set("ıİşŞğĞ")
 _APOSTROPHES = "'\u2019"
 
 
 def _after_number(text, start):
-    """Whether the word at start follows a number, spaces apart: a unit or a
-    time ("9 am"), not German."""
+    """Whether the word at start follows a number standing on its own, spaces
+    apart ("9 am", "9:30 am"), and not a word ending in one (MP3)."""
     i = start - 1
     while i >= 0 and text[i] == " ":
         i -= 1
-    return i >= 0 and text[i].isdigit()
+    if i < 0 or not text[i].isdigit():
+        return False
+    while i >= 0 and (text[i].isdigit() or text[i] in ":."):
+        i -= 1
+    return i < 0 or not text[i].isalpha()
 
 
 def capitalises_nouns(language, text):
@@ -594,14 +598,17 @@ def capitalises_nouns(language, text):
     text = unicodedata.normalize("NFC", text)
     # A Turkish suffix after an apostrophe (Excel'den, Mac'im) is not a word,
     # and ß is looked for before casefolding, which turns it into "ss".
-    words = [m.group() for m in _WORD.finditer(text)
-             if not (m.start() and text[m.start() - 1] in _APOSTROPHES)
-             and not _after_number(text, m.start())]
+    found = [m for m in _WORD.finditer(text)
+             if not (m.start() and text[m.start() - 1] in _APOSTROPHES)]
+    words = [m.group() for m in found]
     if any("ß" in w or "ä" in w.casefold() for w in words):
         return True
     folded = [w.casefold() for w in words]
     own = sum(f in _GERMAN and f not in _GERMAN_SHARED for f in folded)
-    shared = sum(f in _GERMAN_SHARED for f in folded)
+    # A shared word straight after a number is a time ("9 am"), not German;
+    # German's own words count wherever they stand ("um 9 Uhr").
+    shared = sum(f in _GERMAN_SHARED and not _after_number(text, m.start())
+                 for m, f in zip(found, folded))
     turkish = sum(bool(_TURKISH & set(w)) for w in words)
     if turkish >= 2 or turkish * 5 > len(words):
         return own >= 2
