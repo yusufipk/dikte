@@ -708,7 +708,11 @@ class OverlayNote(DikteTest):
         indicator.show_recording(asking=True)
         self.assertEqual(indicator.height(), overlay.HEIGHT)
         indicator.set_note("Selected (12 characters): hello there")
-        self.assertEqual(indicator.height(), overlay.HEIGHT + overlay.NOTE_HEIGHT)
+        # One line here, two where the font draws wider (Windows): the note
+        # wraps rather than being cut, and the indicator grows to fit it.
+        lines = len(indicator._note_lines())
+        self.assertIn(lines, (1, overlay.NOTE_LINES))
+        self.assertEqual(indicator.height(), overlay.HEIGHT + overlay.NOTE_HEIGHT * lines)
         indicator.show_busy("Transcribing…")
         self.assertEqual(indicator.height(), overlay.HEIGHT)
         indicator.show_recording(asking=True)
