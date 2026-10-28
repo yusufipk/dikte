@@ -449,10 +449,11 @@ def _managed_whisper(program, tag=""):
 def _reviewed(digest):
     """Whether a pinned digest is a real one rather than the placeholder.
 
-    The placeholder must never be compared with an asset's digest: a file
-    published without one has an empty digest too, and the two would match.
+    The placeholder, UNREVIEWED_DIGEST, is the empty string, and it must never
+    be compared with an asset's digest: a file published without one has an
+    empty digest too, and the two would match.
     """
-    return bool(digest) and digest != UNREVIEWED_DIGEST
+    return bool(digest)
 
 
 def _managed_bundle():
@@ -691,6 +692,12 @@ def managed_vulkan_devices(binary, devices=None):
         # Do not rewrite the user's loader environment. Auto/CPU can still
         # use it, but its backend ordering is outside our mapping contract.
         return ()
+    inventory = hardware.graphics_devices() if devices is None else devices
+    if not inventory:
+        # Nothing to match the backend's names against, as on every system
+        # but Linux, whose cards are the only ones listed: starting the
+        # server to initialise Vulkan would only be thrown away.
+        return ()
     # PyInstaller sets LD_LIBRARY_PATH for ordinary AppImages. Probe with the
     # same inherited environment as launch and verify the loaded backends below.
     try:
@@ -727,7 +734,6 @@ def managed_vulkan_devices(binary, devices=None):
             loaded.add(backend)
     if "Vulkan" not in loaded:
         return ()
-    inventory = hardware.graphics_devices() if devices is None else devices
     return hardware.match_backend_devices(
         inventory, _vulkan_backend_names(log)
     )

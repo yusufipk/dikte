@@ -29,6 +29,7 @@ from dikte import ipc
 from dikte import overlay as overlay_module
 from dikte import paste
 from dikte import settings_ui
+from dikte import theme
 from dikte import update
 from dikte.i18n import t
 from tests.support import DikteTest, only_these_tools
@@ -1901,6 +1902,21 @@ class LocalModels(DikteTest):
                 mock.patch.object(ggml, "accelerator", return_value="Vulkan"):
             self.assertEqual(box._suggested(), ggml.SUGGESTED_WHISPER)
 
+    def test_a_build_without_a_graphics_backend_is_not_recommended_it_either(self):
+        # Upstream's Windows BLAS build is not a fallback, so nothing records
+        # it as the processor build, but its directory has no graphics backend.
+        box = self.window(cfg.Config()).local_whisper
+        with mock.patch.object(ggml, "total_memory", return_value=32 << 30), \
+                mock.patch.object(ggml, "accelerator", return_value="Vulkan"), \
+                mock.patch.object(ggml, "vulkan_missing", return_value=False), \
+                mock.patch.object(ggml, "processor_only", return_value=True):
+            self.assertEqual(box._suggested(), ggml.SUGGESTED_WHISPER)
+        with mock.patch.object(ggml, "total_memory", return_value=32 << 30), \
+                mock.patch.object(ggml, "accelerator", return_value="Vulkan"), \
+                mock.patch.object(ggml, "vulkan_missing", return_value=False), \
+                mock.patch.object(ggml, "processor_only", return_value=False):
+            self.assertEqual(box._suggested(), ggml.ACCURATE_WHISPER)
+
     def test_a_publisher_with_nothing_to_offer_says_why(self):
         # Half of what ggml-org publishes is split across files or past the
         # size cap, and an empty box read as though the click had not landed.
@@ -2072,6 +2088,27 @@ class LocalModels(DikteTest):
         self.assertNotIn("no graphics card support",
                          window.local_whisper.machine_label.text())
         self.assertGreaterEqual(window.local_device.findData(identifier), 0)
+
+    def test_a_vulkan_fallback_says_it_runs_on_the_processor_once(self):
+        """The Program line already names the fallback, so the device box
+        is disabled without repeating it under This machine."""
+        window = self.window(self.config(local_device="auto"))
+        with mock.patch.object(ggml, "processor_only", return_value=True), \
+                mock.patch.object(ggml, "vulkan_missing", return_value=True):
+            window._set_processing_devices((), ())
+        self.assertFalse(window.local_device.isEnabled())
+        self.assertNotIn("no graphics card support",
+                         window.local_whisper.machine_label.text())
+
+    def test_disabled_inputs_look_disabled_in_every_theme(self):
+        for name, colors in theme.PALETTES.items():
+            style = theme.stylesheet(name)
+            rule = style.split("QComboBox:disabled", 1)[1].split("}", 1)[0]
+            with self.subTest(theme=name):
+                self.assertIn(colors["disabled_bg"], rule)
+                self.assertIn(colors["disabled_text"], rule)
+                for widget in ("QLineEdit:disabled", "QSpinBox:disabled"):
+                    self.assertIn(widget, style)
 
     def test_a_saved_card_on_a_processor_build_can_still_be_changed(self):
         """A card chosen on the Vulkan build fails to start on a processor

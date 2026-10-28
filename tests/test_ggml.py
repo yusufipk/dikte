@@ -1621,7 +1621,8 @@ ggml_vulkan: 0 = Intel UHD Graphics (Mesa Intel) | uma: 1\nggml_vulkan: 0 = NVID
                 mock.patch.object(ggml.subprocess, "Popen") as launch, \
                 mock.patch.object(server, "_remember"), \
                 mock.patch.object(server, "_wait_ready", return_value=("ready", True)):
-            ggml.managed_vulkan_devices(binary, ())
+            ggml.managed_vulkan_devices(binary, (hardware.GraphicsDevice(
+                "Intel Arc A770", 16 << 30, False, "vulkan:intel"),))
             server._launch(settings)
         expected = str(self.binary.resolve().parent)
         self.assertEqual(probe.call_args.kwargs.get("cwd"), expected)
@@ -1630,6 +1631,16 @@ ggml_vulkan: 0 = Intel UHD Graphics (Mesa Intel) | uma: 1\nggml_vulkan: 0 = NVID
         args = launch.call_args.args[0]
         self.assertEqual(args[0], str(self.binary.resolve()))
         self.assertEqual(args[args.index("-m") + 1], str(pathlib.Path(model).resolve()))
+
+    def test_no_listed_cards_starts_no_probe(self):
+        """Only Linux lists its cards, so on Windows there is nothing for the
+        probe's names to match, and starting the server would be wasted."""
+        with mock.patch.object(ggml, "managed_vulkan_in_use", return_value=True), \
+                mock.patch.object(hardware.sys, "platform", "win32"), \
+                mock.patch.object(ggml.subprocess, "run") as probe:
+            self.assertEqual(ggml.managed_vulkan_devices(str(self.binary)), ())
+            self.assertEqual(ggml.managed_vulkan_devices(str(self.binary), ()), ())
+        probe.assert_not_called()
 
     def test_additional_loaded_backends_invalidate_vulkan_local_ordinals(self):
         device = hardware.GraphicsDevice("Intel Arc A770", 16 << 30, False,
@@ -2058,6 +2069,7 @@ class ManagedWhisperOnWindows(Local):
         the upstream BLAS build lands, and nothing calls it a fallback."""
         self.assertEqual(ggml.UNREVIEWED_DIGEST,
                          ggml.MANAGED_WHISPER_WINDOWS_SHA256)
+        self.assertFalse(ggml._reviewed(ggml.UNREVIEWED_DIGEST))
         self.assertFalse(ggml._managed_whisper(ggml.WHISPER))
         upstream = self.release("v1.9.5", "whisper-blas-bin-x64.zip")
         with serving(upstream, self.archive) as calls:

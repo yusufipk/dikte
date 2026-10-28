@@ -693,11 +693,13 @@ class LocalModelBox(QGroupBox):
         if self.program is not ggml.WHISPER:
             return ""
         # A Vulkan loader on the machine is not a card in play when what was
-        # installed is the processor build: recommending the accurate model
-        # off the loader alone would put a 1 GB model on a processor and the
-        # wait for it in front of somebody who asked for a sentence.
-        return ggml.suggested_whisper(
-            graphics="" if ggml.vulkan_missing(self.program) else None)
+        # installed is the processor build, the Linux fallback or upstream's
+        # Windows BLAS one: recommending the accurate model off the loader
+        # alone would put a 1 GB model on a processor and the wait for it in
+        # front of somebody who asked for a sentence.
+        on_processor = (ggml.vulkan_missing(self.program)
+                        or ggml.processor_only(self.program, self._program_path()))
+        return ggml.suggested_whisper(graphics="" if on_processor else None)
 
     def _add_heading(self, text):
         """A row that names the group under it and cannot be chosen."""
@@ -3029,6 +3031,10 @@ class SettingsWindow(QDialog):
             not processor_only
             or (self.local_device.currentData() or "auto") not in ("auto", "cpu"))
         if processor_only:
+            # After a Vulkan download fell back, the Program line already says
+            # this build runs on the processor; once is enough.
+            if ggml.vulkan_missing(ggml.WHISPER):
+                return
             label = self.local_whisper.machine_label
             label.setText(label.text() + "\n" + t(
                 "This whisper.cpp build has no graphics card support, so it "
