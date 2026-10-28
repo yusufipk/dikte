@@ -58,7 +58,8 @@ alone, never over other content (a copy of the user's own, or a password
 manager clearing the clipboard). A late copy that could not be read at all is
 restored over after a settle, and once more if the clipboard changes in the
 half second after that, whatever is there then, except a clear or a clipboard
-marked private.
+marked private. Private is only read on Windows: on macOS a password manager's
+concealed copy landing in that second is restored over like any other text.
 """
 
 import collections
