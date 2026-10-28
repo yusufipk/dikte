@@ -726,7 +726,8 @@ def cmd_models(opts):
             models = api.custom_models(conf.custom_key(), conf["custom_base_url"],
                                        "Custom server", transcription=opts.transcription)
         elif opts.provider == "gemini":
-            # The same chat models transcribe there, so the list is one list.
+            # The chat models are the ones that transcribe there. The listing
+            # names no input types, so one that takes no audio cannot be left out.
             models = api.gemini_models(conf.gemini_key(), conf["gemini_base_url"])
         else:
             who = cfg.TRANSCRIBERS[opts.provider]

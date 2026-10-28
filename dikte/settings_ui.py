@@ -3077,11 +3077,19 @@ class SettingsWindow(QDialog):
             t("Empty: the server's default model") if provider == "custom" else "")
         if provider == "openrouter":
             self._fill_file_models(TRANSCRIBE_MODELS[provider])
-        # Said where the provider is picked, rather than after a meeting has
-        # been recorded for an hour with nothing able to write it up.
-        self.transcribe_status.setText(
-            "" if api.gives_times(provider)
-            else t("Gives no timestamps, so subtitles and meetings need another provider."))
+        self._say_transcribe("")
+
+    def _say_transcribe(self, line):
+        """`line` on the status row, under the warning the provider carries.
+
+        Said where the provider is picked, rather than after a meeting has been
+        recorded for an hour with nothing able to write it up, and kept there
+        through a fetch of the model list rather than replaced by its count.
+        """
+        warning = ("" if api.gives_times(self._shown_provider)
+                   else t("Gives no timestamps, so subtitles and meetings need "
+                          "another provider."))
+        self.transcribe_status.setText("\n".join(x for x in (line, warning) if x))
 
     def _fill_file_models(self, models):
         current = self.file_model.currentText()
@@ -3093,7 +3101,8 @@ class SettingsWindow(QDialog):
         """The model list of whichever provider is selected."""
         provider = self.transcribe_provider.currentData() or "openai"
         self.refresh_transcribe_models.setEnabled(False)
-        self.transcribe_status.setText(t("Fetching model list…"))
+        self._fetching_provider = provider
+        self._say_transcribe(t("Fetching model list…"))
         key, base = self._typed_key(provider)
         service = t(cfg.TRANSCRIBERS[provider].service)
 
@@ -3104,6 +3113,7 @@ class SettingsWindow(QDialog):
                 elif provider == "custom":
                     models = api.custom_models(key, base, service, transcription=True)
                 elif provider == "gemini":
+                    # Unfiltered for audio: the listing names no input types.
                     models = api.gemini_models(key, base)
                 else:
                     models = api.openai_models(key, base, service)
@@ -3115,8 +3125,12 @@ class SettingsWindow(QDialog):
 
     def _on_transcribe_models_loaded(self, models, error):
         self.refresh_transcribe_models.setEnabled(True)
+        # Another provider was picked while the list was on its way, and these
+        # are not its models.
+        if getattr(self, "_fetching_provider", self._shown_provider) != self._shown_provider:
+            return
         if error:
-            self.transcribe_status.setText(t("Could not fetch the list: {error}", error=error))
+            self._say_transcribe(t("Could not fetch the list: {error}", error=error))
             return
         current = self.transcribe_model.currentText()
         self.transcribe_model.clear()
@@ -3124,7 +3138,7 @@ class SettingsWindow(QDialog):
         self.transcribe_model.setCurrentText(current)
         if self._shown_provider == "openrouter":
             self._fill_file_models(models)
-        self.transcribe_status.setText(t("{count} models loaded.", count=len(models)))
+        self._say_transcribe(t("{count} models loaded.", count=len(models)))
 
     def _load_models(self):
         self.refresh_models.setEnabled(False)

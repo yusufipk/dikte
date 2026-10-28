@@ -274,6 +274,26 @@ class Chain(DikteTest):
                          ("uh, book it for Thursday", "Book it for Thursday.",
                           "", "en"))
 
+    def test_every_try_shares_what_was_already_heard(self):
+        """A dictation sent in pieces keeps the finished ones across the ladder."""
+        run = self.run_chain(transcribe_error=[
+            api.ApiError("rate limited", 429),
+            api.ApiError("rate limited", 429),
+            ("uh, book it for Thursday", "en")])
+        heards = [c.kwargs["heard"]
+                  for c in run["transcribe_detected"].call_args_list]
+        self.assertEqual(len(heards), 3)
+        self.assertIsInstance(heards[0], api.Heard)
+        self.assertTrue(all(h is heards[0] for h in heards))
+
+    def test_a_fixed_language_shares_it_too(self):
+        self.conf["language"] = "tr"
+        run = self.run_chain(transcribe_error=[
+            api.ApiError("rate limited", 429), "uh, book it for Thursday"])
+        first, second = run["transcribe"].call_args_list
+        self.assertIsInstance(first.kwargs["heard"], api.Heard)
+        self.assertIs(first.kwargs["heard"], second.kwargs["heard"])
+
     def test_the_retry_waits_grow_between_attempts(self):
         """The ladder starts short and grows, and the line the user is watching
         always names the failure and comes back to the stage afterwards."""

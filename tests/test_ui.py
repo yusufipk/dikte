@@ -40,6 +40,7 @@ REAL_LOAD_HOSTED_MODELS = settings_ui.SettingsWindow._load_hosted_models
 REAL_REFRESH_PROCESSING_DEVICES = (
     settings_ui.SettingsWindow._refresh_processing_devices
 )
+REAL_LOAD_TRANSCRIBE_MODELS = settings_ui.SettingsWindow._load_transcribe_models
 
 # One application for the whole run; Qt allows no second one.
 _app = QApplication.instance() or QApplication([])
@@ -840,6 +841,34 @@ class Settings(DikteTest):
         window.transcribe_provider.setCurrentIndex(
             window.transcribe_provider.findData("openai"))
         self.assertEqual(window.transcribe_status.text(), "")
+
+    def test_the_timestamp_warning_outlives_a_fetch_of_the_model_list(self):
+        window = self.window(cfg.Config())
+        window.transcribe_provider.setCurrentIndex(
+            window.transcribe_provider.findData("gemini"))
+        window._on_transcribe_models_loaded(["gemini-3.5-flash"], "")
+        self.assertIn("1 models loaded.", window.transcribe_status.text())
+        self.assertIn("timestamps", window.transcribe_status.text())
+        window._on_transcribe_models_loaded([], "denied")
+        self.assertIn("denied", window.transcribe_status.text())
+        self.assertIn("timestamps", window.transcribe_status.text())
+        window.transcribe_provider.setCurrentIndex(
+            window.transcribe_provider.findData("openai"))
+        window._on_transcribe_models_loaded(["whisper-1"], "")
+        self.assertEqual(window.transcribe_status.text(), "1 models loaded.")
+
+    def test_a_list_that_lands_after_the_provider_changed_is_dropped(self):
+        window = self.window(cfg.Config())
+        window.transcribe_provider.setCurrentIndex(
+            window.transcribe_provider.findData("gemini"))
+        with mock.patch.object(settings_ui.threading, "Thread"):
+            REAL_LOAD_TRANSCRIBE_MODELS(window)
+        window.transcribe_provider.setCurrentIndex(
+            window.transcribe_provider.findData("openai"))
+        window._on_transcribe_models_loaded(["gemini-3.5-flash"], "")
+        self.assertEqual(window.transcribe_status.text(), "")
+        self.assertEqual(window.transcribe_model.findText("gemini-3.5-flash"), -1)
+        self.assertTrue(window.refresh_transcribe_models.isEnabled())
 
     def test_the_gemini_key_is_one_field_for_both_jobs(self):
         self.write_config({"gemini_api_key": "AIza-mine"})

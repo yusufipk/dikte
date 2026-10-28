@@ -31,6 +31,7 @@ import io
 import json
 import mimetypes
 import os
+import re
 import secrets
 import socket
 import sys
@@ -744,7 +745,55 @@ def _wav_pieces(path, limit):
     return pieces
 
 
-def _gemini_request(target, audio, audio_format, language, prompt, timeout, aborter):
+class Heard:
+    """What a dictation cut into pieces has had written down so far.
+
+    The worker's retry ladder asks a failed transcription again from the top,
+    and on Google AI Studio the top is every piece, each one uploaded and
+    billed again. Handed the same one on every try, the pieces already heard
+    are kept and only the rest are sent. The ladder stays the one place that
+    waits, shows the wait and honours Stop; a second ladder per piece in here
+    would wait without saying so. Whether the model turned down "minimal"
+    thinking is kept too, so it is not asked of every piece.
+    """
+
+    def __init__(self):
+        self.texts = []
+        self.minimal = True
+
+
+# A line break of any kind, a tab with it, and whatever space surrounds it.
+_BREAK = re.compile(r"\s*[\t\n\v\f\r\x85\u2028\u2029]\s*")
+# Every control character left after that, C0 and C1 alike, and the bidi
+# controls that make a pasted line read differently from what it is.
+_CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+
+
+def _gemini_text(text):
+    """A Gemini reply made safe to paste into whatever window has the focus.
+
+    whisper can only write down what it heard; a chat model can be talked into
+    writing anything, and the paste lands in a terminal as readily as in a
+    text box. A line break there is an Enter and an escape sequence is a
+    command to the terminal, so the text is made one line, the way the local
+    server's is, and every other control character goes.
+    """
+    return _CONTROL.sub("", _BREAK.sub(" ", text)).strip()
+
+
+def _thinking_refused(exc):
+    """Whether a 400 is the model turning down the thinking level, not the audio.
+
+    Anything else that comes back as a 400 (a bad key, audio it cannot read, a
+    model that takes no audio at all) would be just as wrong without the field,
+    and asking again would upload the whole piece a second time for nothing.
+    """
+    return (exc.status == 400
+            and re.search(r"reasoning|thinking", str(exc), re.I) is not None)
+
+
+def _gemini_request(target, audio, audio_format, language, prompt, timeout, aborter,
+                    heard):
     """One piece of audio heard by a Gemini model, as text ('' for silence)."""
     payload = {
         "model": target.model,
@@ -761,10 +810,11 @@ def _gemini_request(target, audio, audio_format, language, prompt, timeout, abor
                 }},
             ]},
         ],
+    }
+    if heard.minimal:
         # Writing down what was said is not a job worth thinking about, and
         # the thinking is the seconds this provider is chosen to save.
-        "reasoning_effort": "minimal",
-    }
+        payload["reasoning_effort"] = "minimal"
     url = f"{target.base_url.rstrip('/')}/chat/completions"
     headers = _headers(target.provider, target.api_key, "application/json")
 
@@ -777,9 +827,11 @@ def _gemini_request(target, audio, audio_format, language, prompt, timeout, abor
             data = send()
         except ApiError as exc:
             # A model that cannot think this little refuses the whole request.
-            # A 400 is never billed, so it is asked once more as it is.
-            if exc.status != 400:
+            # A 400 is never billed, so it is asked once more as it is, and
+            # the rest of the dictation is sent that way from the start.
+            if not heard.minimal or not _thinking_refused(exc):
                 raise
+            heard.minimal = False
             del payload["reasoning_effort"]
             data = send()
     except ApiError as exc:
@@ -787,14 +839,28 @@ def _gemini_request(target, audio, audio_format, language, prompt, timeout, abor
     choices = data.get("choices") or []
     if not choices:
         raise ApiError(_extract_error(json.dumps(data)))
-    if choices[0].get("finish_reason") == "length":
+    message = choices[0].get("message") or {}
+    content = message.get("content")
+    content = _gemini_text(content if isinstance(content, str) else "")
+    reason = choices[0].get("finish_reason")
+    if not content and reason not in (None, "stop"):
+        # Nothing written and no clean stop is not silence, and saying the
+        # transcript came back empty would send the user looking at the mic.
+        if reason == "length" or message.get("reasoning_content") \
+                or message.get("reasoning"):
+            raise ApiError(t("{service} spent its whole reply on thinking and "
+                             "wrote no transcript.", service=target.service))
+        raise ApiError(t("{service} wrote no transcript ({reason}).",
+                         service=target.service, reason=reason))
+    if reason == "length":
         # A transcript that stops mid-sentence would be pasted as if it were
         # the whole dictation.
         raise ApiError(t("The model was cut off before it finished."))
-    return ((choices[0].get("message") or {}).get("content") or "").strip()
+    return content
 
 
-def _gemini_transcribe(target, audio_path, language, prompt, timeout, aborter):
+def _gemini_transcribe(target, audio_path, language, prompt, timeout, aborter,
+                       heard=None):
     if not target.api_key:
         raise ApiError(t("{service} API key is empty. Add it in Settings.",
                          service=target.service))
@@ -811,19 +877,24 @@ def _gemini_transcribe(target, audio_path, language, prompt, timeout, aborter):
         raise ApiError(t("{service} takes at most {size} MB of audio in one request.",
                          service=target.service,
                          size=GEMINI_AUDIO_LIMIT // (1000 * 1000)))
-    heard = []
-    for piece in pieces:
+    if heard is None:
+        heard = Heard()
+    # The same file cuts in the same places, so a piece's index is the same
+    # piece on every try.
+    for piece in pieces[len(heard.texts):]:
         if aborter is not None:
             aborter.check()
-        heard.append(_gemini_request(target, piece, audio_format, language, prompt,
-                                     timeout, aborter))
-    return " ".join(text for text in heard if text)
+        heard.texts.append(_gemini_request(target, piece, audio_format, language,
+                                           prompt, timeout, aborter, heard))
+    return " ".join(text for text in heard.texts if text)
 
 
-def transcribe(target, audio_path, language="", prompt="", timeout=300, aborter=None):
+def transcribe(target, audio_path, language="", prompt="", timeout=300, aborter=None,
+               heard=None):
+    """The words in the recording. `heard` is a Heard kept across retries."""
     if target.provider == "gemini":
         text = _gemini_transcribe(target, audio_path, language, prompt, timeout,
-                                  aborter)
+                                  aborter, heard)
     else:
         data = _transcribe_request(
             target, audio_path, language, prompt, "json", timeout=timeout,
@@ -850,7 +921,7 @@ _DETECTED_TO_CODE = {
 
 
 def transcribe_detected(target, audio_path, language="", prompt="", timeout=300,
-                        aborter=None):
+                        aborter=None, heard=None):
     """(text, code) with the language the model heard.
 
     The spoken language is only knowable when the transcription model reports
@@ -872,7 +943,7 @@ def transcribe_detected(target, audio_path, language="", prompt="", timeout=300,
             detected.strip().lower(), "") if isinstance(detected, str) else ""
         return text, code
     text = transcribe(target, audio_path, language=language, prompt=prompt,
-                      timeout=timeout, aborter=aborter)
+                      timeout=timeout, aborter=aborter, heard=heard)
     return text, ""
 
 

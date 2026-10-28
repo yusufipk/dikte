@@ -427,6 +427,10 @@ TR = {
         "Zaman damgası vermez, altyazı ve toplantılar için başka bir sağlayıcı gerekir.",
     "{service} takes at most {size} MB of audio in one request.":
         "{service} tek istekte en fazla {size} MB ses kabul ediyor.",
+    "{service} spent its whole reply on thinking and wrote no transcript.":
+        "{service} bütün yanıtını düşünmeye harcadı ve döküm yazmadı.",
+    "{service} wrote no transcript ({reason}).":
+        "{service} döküm yazmadı ({reason}).",
     "Prefixes every segment with [mm:ss]. Uses whisper-1 on whichever provider "
     "you picked, the only model that returns segment times.":
         "Her bölümün başına [dd:ss] koyar. Bölüm zamanı döndüren tek model olan "

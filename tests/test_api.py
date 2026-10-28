@@ -409,11 +409,49 @@ class GeminiTranscribe(DikteTest):
         self.assertNotIn("temperature", payload)
 
     def test_a_model_that_refuses_the_thinking_level_is_asked_again_without_it(self):
-        with fake_urlopen(http_error(400, '{"error": {"message": "bad effort"}}'),
-                          gemini_reply("hi")) as calls:
+        refusal = '{"error": {"message": "Thinking level minimal is not supported."}}'
+        with fake_urlopen(http_error(400, refusal), gemini_reply("hi")) as calls:
             self.assertEqual(api.transcribe(GEMINI, self.wav), "hi")
         self.assertEqual(len(calls), 2)
         self.assertNotIn("reasoning_effort", sent_json(calls[1]))
+
+    def test_any_other_400_is_not_uploaded_a_second_time(self):
+        """A bad key or unreadable audio is just as wrong without the field."""
+        refusal = '[{"error": {"message": "Audio input is not supported."}}]'
+        with fake_urlopen(http_error(400, refusal), gemini_reply("hi")) as calls, \
+                self.assertRaises(api.ApiError) as caught:
+            api.transcribe(GEMINI, self.wav)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("Audio input is not supported", str(caught.exception))
+        self.assertFalse(caught.exception.retryable)
+
+    def test_a_refused_thinking_level_is_not_asked_of_the_next_piece(self):
+        make_wav(self.wav, tone(4.0))
+        self.patch_attr(api, "GEMINI_AUDIO_LIMIT", 3 * 16000 * 2 + 1024)
+        refusal = '{"error": {"message": "reasoning_effort is not supported"}}'
+        with fake_urlopen(http_error(400, refusal), gemini_reply("one"),
+                          gemini_reply("two")) as calls:
+            self.assertEqual(api.transcribe(GEMINI, self.wav), "one two")
+        self.assertEqual(len(calls), 3)
+        self.assertIn("reasoning_effort", sent_json(calls[0]))
+        self.assertNotIn("reasoning_effort", sent_json(calls[1]))
+        self.assertNotIn("reasoning_effort", sent_json(calls[2]))
+
+    def test_a_retry_sends_only_the_pieces_not_yet_heard(self):
+        """The worker asks again from the top; what was billed once stays."""
+        make_wav(self.wav, tone(4.0))
+        self.patch_attr(api, "GEMINI_AUDIO_LIMIT", 3 * 16000 * 2 + 1024)
+        heard = api.Heard()
+        with fake_urlopen(gemini_reply("one"), http_error(503)) as calls, \
+                self.assertRaises(api.ApiError) as caught:
+            api.transcribe(GEMINI, self.wav, heard=heard)
+        self.assertTrue(caught.exception.retryable)
+        self.assertEqual(len(calls), 2)
+        second_piece = sent_audio(calls[1])
+        with fake_urlopen(gemini_reply("two")) as calls:
+            self.assertEqual(api.transcribe(GEMINI, self.wav, heard=heard), "one two")
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(sent_audio(calls[0]), second_piece)
 
     def test_the_language_is_named_and_auto_names_none(self):
         with fake_urlopen(gemini_reply("hi")) as calls:
@@ -457,6 +495,30 @@ class GeminiTranscribe(DikteTest):
                 self.assertRaises(api.ApiError) as caught:
             api.transcribe(GEMINI, self.wav)
         self.assertIn("cut off", str(caught.exception))
+
+    def test_a_blocked_reply_is_not_taken_for_silence(self):
+        for content in ("", None):
+            with self.subTest(content=content), \
+                    fake_urlopen(gemini_reply(content, "content_filter")), \
+                    self.assertRaises(api.ApiError) as caught:
+                api.transcribe(GEMINI, self.wav)
+            self.assertIn("content_filter", str(caught.exception))
+            self.assertNotIn("empty", str(caught.exception))
+
+    def test_a_reply_spent_on_thinking_says_so(self):
+        with fake_urlopen(gemini_reply(None, "length")), \
+                self.assertRaises(api.ApiError) as caught:
+            api.transcribe(GEMINI, self.wav)
+        self.assertIn("thinking", str(caught.exception))
+        self.assertIn("Google AI Studio", str(caught.exception))
+
+    def test_the_transcript_carries_no_control_characters_or_line_breaks(self):
+        """Pasted into a terminal, a newline is an Enter and ESC a command."""
+        reply = "ls -la\n\x1b[31mred\x1b[0m\r\n\n  rm\tit\x9b\x07 \u202edone"
+        with fake_urlopen(gemini_reply(reply)):
+            text = api.transcribe(GEMINI, self.wav)
+        self.assertEqual(text, "ls -la [31mred[0m rm it done")
+        self.assertFalse(any(ord(c) < 32 or 127 <= ord(c) < 160 for c in text))
 
     def test_auto_detection_transcribes_and_reports_no_language(self):
         with fake_urlopen(gemini_reply("hi")):
