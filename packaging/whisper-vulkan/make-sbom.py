@@ -163,9 +163,9 @@ sbom = {
                      + [item["bom-ref"] for item in files],
     }],
 }
-if os.environ.get("OUTPUT"):
+if os.environ.get("SBOM_OUTPUT"):
     # Windows' text-mode stdout would write CRLF line endings.
-    with open(os.environ["OUTPUT"], "w", encoding="utf-8", newline="\n") as stream:
+    with open(os.environ["SBOM_OUTPUT"], "w", encoding="utf-8", newline="\n") as stream:
         json.dump(sbom, fp=stream, indent=2, sort_keys=True)
         stream.write("\n")
 else:

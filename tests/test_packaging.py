@@ -521,7 +521,7 @@ class WindowsVulkanPackaging(unittest.TestCase):
             }
             printed = subprocess.run(
                 [sys.executable, PACKAGING / "make-sbom.py"],
-                env=environment | {"OUTPUT": str(sbom)},
+                env=environment | {"SBOM_OUTPUT": str(sbom)},
                 stdout=subprocess.PIPE, check=True).stdout
             self.assertEqual(b"", printed)
             written = sbom.read_bytes()

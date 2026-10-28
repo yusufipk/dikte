@@ -477,7 +477,7 @@ def build(args):
             "ROOT": str(root), "SOURCE_DIR": str(copy),
             "VERSION": version, "COMMIT": commit, "EPOCH": str(epoch),
             "ASSET": ASSET, "CMAKE_VERSION": cmake_version,
-            "GLSLC_VERSION": glslc_version, "OUTPUT": str(sbom),
+            "GLSLC_VERSION": glslc_version, "SBOM_OUTPUT": str(sbom),
         },
         check=True)
     (root / "SHA256SUMS").write_text(_sums(root), encoding="utf-8", newline="\n")

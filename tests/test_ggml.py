@@ -1636,6 +1636,7 @@ ggml_vulkan: 0 = Intel UHD Graphics (Mesa Intel) | uma: 1\nggml_vulkan: 0 = NVID
         """Only Linux lists its cards, so on Windows there is nothing for the
         probe's names to match, and starting the server would be wasted."""
         with mock.patch.object(ggml, "managed_vulkan_in_use", return_value=True), \
+                mock.patch.dict(os.environ, {}, clear=True), \
                 mock.patch.object(hardware.sys, "platform", "win32"), \
                 mock.patch.object(ggml.subprocess, "run") as probe:
             self.assertEqual(ggml.managed_vulkan_devices(str(self.binary)), ())
