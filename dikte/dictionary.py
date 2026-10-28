@@ -548,21 +548,30 @@ _GERMAN = frozenset("""
 und der die das ist nicht ich mit auf für wir ein eine einen einem dem den des
 sich auch wird werden sind noch nur oder aber wenn dass schon wie bei nach
 zu zum zur im vom beim mir mich dich uns du sie habe haben kann kannst
-bitte danke bis gestern heute morgen viele
+bitte danke bis gestern heute morgen viele hat aus ihn ihm jetzt dann kein
+keine uhr wegen hol gib ruf leg schreib schick
 """.split())
 # Also everyday words in Turkish (Nur, der, dem, "Excel den" written apart)
-# or in English text (MIT, im, the den): never evidence on their own.
+# or in English text (MIT, im, the den): weaker evidence than the rest.
 _GERMAN_SHARED = frozenset("der dem den des mit im nur".split())
+# Letters Turkish writes and German never does.
+_TURKISH = set("ıİşŞğĞ")
 _APOSTROPHES = "'\u2019"
 
 
 def capitalises_nouns(language, text):
     """Whether the dictation was in a language that capitalises every noun:
-    by its code when there is one, and otherwise by its words. German when a
-    word has ß or ä, which neither Turkish nor English writes; when one of
-    German's everyday words that the others do not share stands in a
-    dictation of six words or fewer; or when two of them do and German's
-    everyday words make up one word in ten, the shared ones counting half."""
+    by its code when there is one, and otherwise by its words.
+
+    Missing German costs more than seeing it where it is not: a German noun
+    taken for a name is learned after three dictations, while a dictation
+    wrongly read as German only teaches nothing. So German is a word with ß
+    or ä; or, in six words or fewer, one of German's own everyday words, or
+    two of those it shares with Turkish and English; or, in a longer text,
+    one of its own and two in all making up a tenth of the words. A Turkish
+    letter in the text halves what the shared words count for, since that is
+    a Turkish dictation with "der" or "Nur" in it far more often than a
+    German one with a Turkish name."""
     code = (language or "").lower()
     if code not in ("", "auto"):
         return code[:2] in _NOUN_CAPITALS
@@ -575,11 +584,13 @@ def capitalises_nouns(language, text):
     if any("ß" in w or "ä" in w.casefold() for w in words):
         return True
     folded = [w.casefold() for w in words]
-    shared = sum(f in _GERMAN_SHARED for f in folded)
     own = sum(f in _GERMAN and f not in _GERMAN_SHARED for f in folded)
+    shared = sum(f in _GERMAN_SHARED for f in folded)
+    if _TURKISH & set(text):
+        shared /= 2
     if len(words) <= 6:
-        return own >= 1
-    return own >= 2 and (own + shared / 2) * 10 >= len(words)
+        return own >= 1 or shared >= 2
+    return own >= 1 and own + shared >= 2 and (own + shared) * 10 >= len(words)
 
 
 def _titled(word):

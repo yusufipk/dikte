@@ -246,7 +246,15 @@ class Learning(DikteTest):
                          "Ich habe heute mit Barış über das neue Projekt gesprochen und die Termine",
                          "Termin mit Anna nächste Woche.",
                          "Grüße an Barış",
-                         unicodedata.normalize("NFD", "Termin mit Anna nächste Woche.")):
+                         unicodedata.normalize("NFD", "Termin mit Anna nächste Woche."),
+                         "Thomas hat den Bericht geschickt",
+                         "Hol den Wagen aus der Garage",
+                         "Ruf morgen den Kunden in Berlin an",
+                         "Schreib Anna eine Mail wegen der Rechnung",
+                         "Gib den Schlüssel Peter",
+                         "Termin mit der Kundin",
+                         "Erinnere Thomas an den Termin mit der Kundin am Montag um zehn Uhr",
+                         "Am Montag treffen wir den Kunden in der Zentrale von Siemens in Berlin"):
             with self.subTest(sentence=sentence):
                 self.assertTrue(dictionary.capitalises_nouns("auto", sentence))
         for sentence in ("I am going to push the fix to OpenFrame this morning.",
@@ -259,10 +267,10 @@ class Learning(DikteTest):
                          "Nur geliyor",
                          "Ahmet der ki tamam",
                          "Send it to Ali im Slack",
-                         "Ask Nur and the MIT team",
+                         "Ask Nur about the release",
                          "Excel den al",
                          "Meet me in the den",
-                         "Ask the MIT team if the old build will die",
+                         "Ask the MIT team if the old build can wait until Monday",
                          "Nur der dem Ahmet geliyor tamam mı"):
             with self.subTest(sentence=sentence):
                 self.assertFalse(dictionary.capitalises_nouns("auto", sentence))
