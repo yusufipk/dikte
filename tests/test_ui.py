@@ -75,6 +75,7 @@ CHANGED = {
     "groq_transcribe_model": "whisper-large-v3",
     "openrouter_transcribe_model": "openai/whisper-1",
     "requesty_transcribe_model": "openai/whisper-1",
+    "gemini_transcribe_model": "gemini-3.1-flash-lite",
     "cleanup_enabled": False,
     "cleanup_provider": "local",
     "cleanup_model": "some/other-model",
@@ -811,6 +812,44 @@ class Settings(DikteTest):
         self.assertTrue(stored["file_timestamps"])
         self.assertFalse(stored["file_cleanup"])
 
+    def test_timestamps_are_greyed_out_for_a_provider_that_has_none(self):
+        """Unticked on screen, and the stored choice kept for the next provider."""
+        self.write_config({"transcribe_provider": "gemini", "file_timestamps": True,
+                           "file_cleanup": True})
+        window = self.window(cfg.Config())
+        self.assertFalse(window.file_timestamps.isEnabled())
+        self.assertFalse(window.file_timestamps.isChecked())
+        self.assertIn("Google AI Studio", window.file_timestamps.toolTip())
+        window.file_cleanup.setChecked(False)
+        window._save()
+        self.assertTrue(self.read_config_file()["file_timestamps"])
+
+        self.write_config({"transcribe_provider": "openai", "file_timestamps": True})
+        window = self.window(cfg.Config())
+        self.assertTrue(window.file_timestamps.isEnabled())
+        self.assertTrue(window.file_timestamps.isChecked())
+
+    def test_picking_google_ai_studio_says_what_it_cannot_do(self):
+        window = self.window(cfg.Config())
+        window.transcribe_provider.setCurrentIndex(
+            window.transcribe_provider.findData("gemini"))
+        self.assertIn("timestamps", window.transcribe_status.text())
+        self.assertEqual(window.transcribe_model.currentText(),
+                         "gemini-3.5-flash-lite")
+        self.assertFalse(window.refresh_transcribe_models.isHidden())
+        window.transcribe_provider.setCurrentIndex(
+            window.transcribe_provider.findData("openai"))
+        self.assertEqual(window.transcribe_status.text(), "")
+
+    def test_the_gemini_key_is_one_field_for_both_jobs(self):
+        self.write_config({"gemini_api_key": "AIza-mine"})
+        window = self.window(cfg.Config())
+        self.assertIs(window._key_fields["gemini"], window.gemini_key)
+        self.assertEqual(window.gemini_key.text(), "AIza-mine")
+        window.gemini_key.setText("AIza-new")
+        window._save()
+        self.assertEqual(self.read_config_file()["gemini_api_key"], "AIza-new")
+
     def test_loading_the_audio_file_tab_is_not_taken_for_a_change(self):
         self.write_config({"file_timestamps": True, "file_cleanup": False})
         conf = cfg.Config()
@@ -1174,7 +1213,7 @@ class EveryRecordingProtectsTheFront(DikteTest):
         dikte._run_id = 0
         dikte.conf = {"mic_target": "", "max_seconds": 60,
                       "meeting_mic_target": "", "meeting_system_target": "",
-                      "meeting_max_seconds": 60}
+                      "meeting_max_seconds": 60, "transcribe_provider": "local"}
         dikte._the_front.side_effect = lambda: self.order.append("noted") or 4242
         dikte._give_the_front_back.side_effect = (
             lambda pid: self.order.append(f"watching {pid}"))
@@ -1211,6 +1250,17 @@ class EveryRecordingProtectsTheFront(DikteTest):
         dikte.meeting_recorder.active = False
         self.dikte.Dikte.start_meeting(dikte)
         self.assertEqual(self.order, ["noted", "microphone"])
+
+    def test_a_meeting_on_a_provider_with_no_timestamps_is_never_recorded(self):
+        """Said before the hour of recording, not after it."""
+        dikte = self.app(meeting_state=self.dikte.M_IDLE)
+        dikte.conf["transcribe_provider"] = "gemini"
+        self.dikte.Dikte.start_meeting(dikte)
+        self.assertEqual(self.order, [])
+        dikte.meeting_recorder.start.assert_not_called()
+        message = dikte._on_meeting_error.call_args.args[0]
+        self.assertIn("Google AI Studio", message)
+        self.assertIn("timestamps", message)
 
 class Overlay(DikteTest):
     def overlay(self, **kwargs):

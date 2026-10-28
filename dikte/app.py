@@ -41,6 +41,7 @@ from PyQt6.QtGui import QAction, QCursor, QDesktopServices, QIcon  # noqa: E402
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon  # noqa: E402
 
+from . import api  # noqa: E402
 from . import assistant  # noqa: E402
 from . import audio  # noqa: E402
 from . import cli  # noqa: E402
@@ -989,6 +990,13 @@ class Dikte:
 
     def start_meeting(self):
         if self.meeting_state != M_IDLE:
+            return
+        # A meeting transcript is built out of segment times. Said now rather
+        # than after an hour of recording that nothing can write up.
+        provider = self.conf["transcribe_provider"]
+        if not api.gives_times(provider):
+            self._on_meeting_error(str(api.no_times(
+                t(cfg.TRANSCRIBERS[provider].service))))
             return
         base = meeting.new_base()
         _, wav_path = cfg.meeting_paths(base)

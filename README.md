@@ -122,7 +122,7 @@ paste the raw transcript.
 
 | Task | Hosted providers | Other options |
 | --- | --- | --- |
-| Speech to text | OpenAI, Groq, OpenRouter, Requesty, any OpenAI-compatible server | Local model |
+| Speech to text | OpenAI, Groq, OpenRouter, Requesty, Google AI Studio, any OpenAI-compatible server | Local model |
 | Cleanup | OpenRouter, Requesty, Google AI Studio, DeepSeek, OpenCode Go, any OpenAI-compatible server | Local model; Claude Code, Codex or Antigravity CLI |
 
 Choose models and cleanup reasoning effort in Settings. API keys can be entered

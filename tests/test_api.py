@@ -9,13 +9,16 @@ is blocked on, and a faked urlopen has no socket to cut, so those tests talk to
 a server of their own on the loopback interface.
 """
 
+import base64
 import contextlib
 import http.server
+import io
 import json
 import os
 import threading
 import time
 import unittest
+import wave
 
 from dikte import api
 from dikte import ggml
@@ -23,9 +26,13 @@ from tests.support import (
     DikteTest,
     fake_urlopen,
     http_error,
+    make_wav,
     multipart_fields,
     raw_body,
     sent_json,
+    silence,
+    speech,
+    tone,
     url_error,
 )
 
@@ -35,6 +42,8 @@ OPENROUTER = api.Target("openrouter", "OpenRouter", "sk-or-test",
                         api.OPENROUTER_URL, "openai/gpt-4o-transcribe")
 REQUESTY = api.Target("requesty", "Requesty", "rqsty-test",
                       api.REQUESTY_URL, "openai/gpt-4o-transcribe")
+GEMINI = api.Target("gemini", "Google AI Studio", "AIza-test", api.GEMINI_URL,
+                    "gemini-3.5-flash-lite")
 
 
 class TimestampModel(unittest.TestCase):
@@ -69,6 +78,15 @@ class TimestampModel(unittest.TestCase):
     def test_openrouter_with_no_file_model_falls_back_to_whisper(self):
         self.assertEqual(api.timestamp_model("openrouter", "openai/gpt-4o-transcribe", ""),
                          "openai/whisper-1")
+
+    def test_google_ai_studio_has_no_whisper_to_switch_to(self):
+        """So the window names the model that is really asked, not whisper-1."""
+        self.assertEqual(api.timestamp_model("gemini", "gemini-3.5-flash-lite"),
+                         "gemini-3.5-flash-lite")
+        self.assertFalse(api.gives_times("gemini"))
+        for provider in ("openai", "groq", "openrouter", "requesty", "custom", "local"):
+            with self.subTest(provider=provider):
+                self.assertTrue(api.gives_times(provider))
 
 
 class Explain(DikteTest):
@@ -324,6 +342,181 @@ class Transcribe(DikteTest):
                 self.assertRaises(api.ApiError) as caught:
             api.transcribe(OPENAI, self.wav)
         self.assertIn("parse", str(caught.exception))
+
+
+def gemini_reply(text, finish="stop"):
+    return {"choices": [{"message": {"role": "assistant", "content": text},
+                         "finish_reason": finish}]}
+
+
+def sent_audio(request):
+    """(the audio bytes, its format) out of a recorded Gemini request."""
+    parts = sent_json(request)["messages"][1]["content"]
+    audio = next(p for p in parts if p["type"] == "input_audio")["input_audio"]
+    return base64.b64decode(audio["data"]), audio["format"]
+
+
+def sent_ask(request):
+    parts = sent_json(request)["messages"][1]["content"]
+    return next(p for p in parts if p["type"] == "text")["text"]
+
+
+class GeminiTranscribe(DikteTest):
+    """Google AI Studio hears the recording inside a chat request."""
+
+    def setUp(self):
+        super().setUp()
+        self.wav = make_wav(self.path("clip.wav"), speech(1.0))
+
+    def test_it_goes_to_chat_completions_with_the_key_as_a_bearer_token(self):
+        with fake_urlopen(gemini_reply("merhaba dünya")) as calls:
+            self.assertEqual(api.transcribe(GEMINI, self.wav), "merhaba dünya")
+        self.assertEqual(calls[0].full_url, f"{api.GEMINI_URL}/chat/completions")
+        self.assertEqual(calls[0].unredirected_hdrs["Authorization"],
+                         "Bearer AIza-test")
+        self.assertEqual(sent_json(calls[0])["model"], "gemini-3.5-flash-lite")
+
+    def test_the_recording_goes_in_whole_as_base64(self):
+        with open(self.wav, "rb") as fh:
+            original = fh.read()
+        with fake_urlopen(gemini_reply("hi")) as calls:
+            api.transcribe(GEMINI, self.wav)
+        self.assertEqual(sent_audio(calls[0]), (original, "wav"))
+
+    def test_an_mp3_is_labelled_as_one(self):
+        mp3 = self.path("clip.mp3")
+        mp3.write_bytes(b"ID3fake")
+        with fake_urlopen(gemini_reply("hi")) as calls:
+            api.transcribe(GEMINI, str(mp3))
+        self.assertEqual(sent_audio(calls[0]), (b"ID3fake", "mp3"))
+
+    def test_the_instruction_asks_for_the_words_and_nothing_else(self):
+        """A chat model would otherwise answer a question it heard, or translate."""
+        with fake_urlopen(gemini_reply("hi")) as calls:
+            api.transcribe(GEMINI, self.wav)
+        system = sent_json(calls[0])["messages"][0]
+        self.assertEqual(system["role"], "system")
+        for rule in ("verbatim", "Never translate", "Do not answer",
+                     "transcript alone"):
+            with self.subTest(rule=rule):
+                self.assertIn(rule, system["content"])
+
+    def test_thinking_is_turned_down_and_the_temperature_left_alone(self):
+        with fake_urlopen(gemini_reply("hi")) as calls:
+            api.transcribe(GEMINI, self.wav)
+        payload = sent_json(calls[0])
+        self.assertEqual(payload["reasoning_effort"], "minimal")
+        self.assertNotIn("temperature", payload)
+
+    def test_a_model_that_refuses_the_thinking_level_is_asked_again_without_it(self):
+        with fake_urlopen(http_error(400, '{"error": {"message": "bad effort"}}'),
+                          gemini_reply("hi")) as calls:
+            self.assertEqual(api.transcribe(GEMINI, self.wav), "hi")
+        self.assertEqual(len(calls), 2)
+        self.assertNotIn("reasoning_effort", sent_json(calls[1]))
+
+    def test_the_language_is_named_and_auto_names_none(self):
+        with fake_urlopen(gemini_reply("hi")) as calls:
+            api.transcribe(GEMINI, self.wav, language="tr")
+            api.transcribe(GEMINI, self.wav, language="auto")
+            api.transcribe(GEMINI, self.wav, language="nl")
+        self.assertIn("Turkish", sent_ask(calls[0]))
+        self.assertNotIn("spoken in", sent_ask(calls[1]))
+        self.assertIn("nl", sent_ask(calls[2]))
+
+    def test_the_glossary_goes_along_as_context(self):
+        with fake_urlopen(gemini_reply("hi")) as calls:
+            api.transcribe(GEMINI, self.wav, prompt="Paraşüt, OpenFrame")
+            api.transcribe(GEMINI, self.wav, prompt="  ")
+        self.assertIn("Paraşüt, OpenFrame", sent_ask(calls[0]))
+        self.assertIn("not part of the recording", sent_ask(calls[0]))
+        self.assertNotIn("Context", sent_ask(calls[1]))
+
+    def test_no_key_is_said_before_anything_is_sent(self):
+        with fake_urlopen(gemini_reply("hi")) as calls, \
+                self.assertRaises(api.ApiError) as caught:
+            api.transcribe(GEMINI._replace(api_key=""), self.wav)
+        self.assertEqual(calls, [])
+        self.assertIn("Google AI Studio", str(caught.exception))
+
+    def test_a_refused_key_is_explained_in_google_s_name(self):
+        with fake_urlopen(http_error(403, '[{"error": {"message": "denied"}}]')), \
+                self.assertRaises(api.ApiError) as caught:
+            api.transcribe(GEMINI, self.wav)
+        self.assertIn("Google AI Studio", str(caught.exception))
+        self.assertEqual(caught.exception.status, 403)
+
+    def test_silence_comes_back_as_an_empty_transcript(self):
+        with fake_urlopen(gemini_reply("  ")), \
+                self.assertRaises(api.ApiError) as caught:
+            api.transcribe(GEMINI, self.wav)
+        self.assertIn("empty", str(caught.exception))
+
+    def test_a_transcript_cut_off_at_the_ceiling_is_refused(self):
+        with fake_urlopen(gemini_reply("and then we", "length")), \
+                self.assertRaises(api.ApiError) as caught:
+            api.transcribe(GEMINI, self.wav)
+        self.assertIn("cut off", str(caught.exception))
+
+    def test_auto_detection_transcribes_and_reports_no_language(self):
+        with fake_urlopen(gemini_reply("hi")):
+            self.assertEqual(api.transcribe_detected(GEMINI, self.wav, language="auto"),
+                             ("hi", ""))
+
+    def test_a_recording_over_the_inline_limit_is_cut_into_pieces(self):
+        """Every piece a WAV of its own, under the limit, and nothing dropped."""
+        rate = 16000
+        audio = tone(2.0) + silence(0.4) + tone(5.6)
+        make_wav(self.wav, audio)
+        self.patch_attr(api, "GEMINI_AUDIO_LIMIT", 3 * rate * 2 + 1024)
+        with fake_urlopen(gemini_reply("one"), gemini_reply("two"),
+                          gemini_reply("three"), gemini_reply("four")) as calls:
+            text = api.transcribe(GEMINI, self.wav)
+        self.assertGreater(len(calls), 1)
+        frames = []
+        for request in calls:
+            data, audio_format = sent_audio(request)
+            self.assertEqual(audio_format, "wav")
+            self.assertLessEqual(len(data), api.GEMINI_AUDIO_LIMIT)
+            with contextlib.closing(wave.open(io.BytesIO(data))) as piece:
+                self.assertEqual(piece.getframerate(), rate)
+                frames.append(piece.getnframes())
+        self.assertEqual(sum(frames), len(audio) // 2)
+        self.assertEqual(text, " ".join(["one", "two", "three", "four"][:len(calls)]))
+        # The first cut is moved back into the pause rather than through a word.
+        self.assertGreater(frames[0], 2.0 * rate)
+        self.assertLess(frames[0], 2.4 * rate)
+
+    def test_a_silent_piece_does_not_empty_the_whole_transcript(self):
+        make_wav(self.wav, tone(4.0))
+        self.patch_attr(api, "GEMINI_AUDIO_LIMIT", 3 * 16000 * 2 + 1024)
+        with fake_urlopen(gemini_reply("words"), gemini_reply("")):
+            self.assertEqual(api.transcribe(GEMINI, self.wav), "words")
+
+    def test_an_mp3_over_the_limit_is_refused_rather_than_sent(self):
+        mp3 = self.path("long.mp3")
+        mp3.write_bytes(b"\x00" * 64)
+        self.patch_attr(api, "GEMINI_AUDIO_LIMIT", 32)
+        with fake_urlopen(gemini_reply("hi")) as calls, \
+                self.assertRaises(api.ApiError) as caught:
+            api.transcribe(GEMINI, str(mp3))
+        self.assertEqual(calls, [])
+        self.assertIn("MB", str(caught.exception))
+
+    def test_segment_times_are_refused_rather_than_made_up(self):
+        with fake_urlopen(gemini_reply("[00:00] hi")) as calls, \
+                self.assertRaises(api.ApiError) as caught:
+            api.transcribe_segments(GEMINI, self.wav)
+        self.assertEqual(calls, [])
+        self.assertIn("Google AI Studio", str(caught.exception))
+        self.assertIn("timestamps", str(caught.exception))
+
+    def test_speakers_are_refused_too(self):
+        self.assertEqual(api.diarize_model(GEMINI), "")
+        with fake_urlopen(gemini_reply("hi")) as calls, \
+                self.assertRaises(api.ApiError):
+            api.transcribe_speakers(GEMINI, self.wav)
+        self.assertEqual(calls, [])
 
 
 class TranscribeSegments(DikteTest):

@@ -118,7 +118,7 @@ Temizlemeyi kapatırsan ham transkript yapıştırılır.
 
 | İşlem | Bulut sağlayıcıları | Diğer seçenekler |
 | --- | --- | --- |
-| Sesi yazıya çevirme | OpenAI, Groq, OpenRouter, Requesty, OpenAI uyumlu herhangi bir sunucu | Yerel model |
+| Sesi yazıya çevirme | OpenAI, Groq, OpenRouter, Requesty, Google AI Studio, OpenAI uyumlu herhangi bir sunucu | Yerel model |
 | Temizleme | OpenRouter, Requesty, Google AI Studio, DeepSeek, OpenCode Go, OpenAI uyumlu herhangi bir sunucu | Yerel model; Claude Code, Codex veya Antigravity CLI |
 
 Modelleri ve temizleme için düşünme seviyesini Ayarlar'dan seçebilirsin. API

@@ -231,6 +231,11 @@ class ChunkSeconds(DikteTest):
     def test_a_file_short_enough_on_both_counts_is_not_cut(self):
         self.assertEqual(ft.chunk_seconds(self.file(1024), ft.MAX_CHUNK_SECONDS), 0.0)
 
+    def test_a_smaller_limit_cuts_sooner(self):
+        path = self.file(ft.UPLOAD_LIMIT)
+        self.assertEqual(ft.chunk_seconds(path, 600), 0.0)
+        self.assertLess(ft.chunk_seconds(path, 600, ft.UPLOAD_LIMIT // 2), 300)
+
     def test_a_file_with_no_length_is_left_whole(self):
         self.assertEqual(ft.chunk_seconds(self.file(ft.UPLOAD_LIMIT * 2), 0), 0.0)
 
@@ -302,6 +307,23 @@ class Chunks(DikteTest):
         for path, _ in chunks:
             self.assertTrue(path.endswith(".mp3"))
 
+    def test_google_ai_studio_is_cut_to_its_own_smaller_limit(self):
+        """What the others take in one upload is over Google's, base64 and all."""
+        wav = make_wav(self.path("long.wav"), silence(120))
+        between = (api.GEMINI_AUDIO_LIMIT + ft.UPLOAD_LIMIT) // 2
+
+        def encode(path, workdir, name, *args):
+            out = os.path.join(workdir, name)
+            with open(out, "wb") as fh:
+                fh.write(b"\x00" * (between if name == "audio.mp3" else 1024))
+            return out
+
+        with mock.patch.object(ft, "_to_mp3", side_effect=encode):
+            others = self.worker._chunks(wav, self.root, self.target("openai"), False)
+            google = self.worker._chunks(wav, self.root, self.target("gemini"), False)
+        self.assertEqual(len(others), 1)
+        self.assertGreater(len(google), 1)
+
 
 class Transcriber(DikteTest):
     """The chain, with ffmpeg and both API calls faked."""
@@ -357,6 +379,23 @@ class Transcriber(DikteTest):
         text, segments = done[0]
         self.assertEqual(text, "[00:00] one\n[00:02] two")
         self.assertEqual(len(segments), 2)
+
+    def test_timestamps_on_a_provider_without_them_are_refused_before_converting(self):
+        """Not a plain transcript passed off as the subtitles that were asked for."""
+        self.conf["transcribe_provider"] = "gemini"
+        self.conf["gemini_api_key"] = "AIza-test"
+        done, failures, progress, _ = self.run_chain(timestamps=True)
+        self.assertNotIn("Converting audio…", progress)
+        self.assertEqual(done, [])
+        self.assertIn("Google AI Studio", failures[0])
+        self.assertIn("timestamps", failures[0])
+
+    def test_a_provider_without_timestamps_still_transcribes_plain_text(self):
+        self.conf["transcribe_provider"] = "gemini"
+        self.conf["gemini_api_key"] = "AIza-test"
+        done, failures, _, _ = self.run_chain()
+        self.assertEqual(failures, [])
+        self.assertEqual(done[0][0], "raw text")
 
     def test_no_ffmpeg_installed(self):
         worker = ft.FileTranscriber(self.conf)

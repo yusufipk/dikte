@@ -418,6 +418,15 @@ TR = {
         "etiketlediği bilinen modellerde çıkar.",
     "Speaker {number}": "Konuşmacı {number}",
     "{model} cannot tell speakers apart.": "{model} konuşmacıları ayıramıyor.",
+    "{service} returns no timestamps.": "{service} zaman damgası döndürmüyor.",
+    "{service} returns no timestamps, so it cannot make subtitles or meeting "
+    "transcripts. Pick another speech to text provider in Settings.":
+        "{service} zaman damgası döndürmediği için altyazı ya da toplantı dökümü "
+        "çıkaramıyor. Ayarlar'dan başka bir yazıya çevirme sağlayıcısı seç.",
+    "Gives no timestamps, so subtitles and meetings need another provider.":
+        "Zaman damgası vermez, altyazı ve toplantılar için başka bir sağlayıcı gerekir.",
+    "{service} takes at most {size} MB of audio in one request.":
+        "{service} tek istekte en fazla {size} MB ses kabul ediyor.",
     "Prefixes every segment with [mm:ss]. Uses whisper-1 on whichever provider "
     "you picked, the only model that returns segment times.":
         "Her bölümün başına [dd:ss] koyar. Bölüm zamanı döndüren tek model olan "

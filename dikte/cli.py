@@ -310,9 +310,17 @@ def cmd_transcribe(opts):
     # This runs here rather than in the instance, so the local servers have to
     # be handed their settings here too; the GUI does this at startup.
     conf.apply_local()
-    timestamps = opts.srt or _pick(opts.timestamps, conf["file_timestamps"])
+    target = conf.transcribe_target()
+    if not api.gives_times(target.provider):
+        if opts.srt or opts.timestamps:
+            return fail(opts, api.no_times(target.service))
+        # The settings window greys the switch out for this provider and
+        # leaves the setting alone, so a stored one is not what was asked.
+        timestamps = False
+    else:
+        timestamps = opts.srt or _pick(opts.timestamps, conf["file_timestamps"])
     speakers = _pick(opts.speakers, conf["file_speakers"])
-    if opts.speakers and not api.diarize_model(conf.transcribe_target()):
+    if opts.speakers and not api.diarize_model(target):
         return fail(opts, "the selected transcription model is not known to "
                           "tell speakers apart")
     worker = filetranscribe.FileTranscriber(conf)
@@ -717,6 +725,9 @@ def cmd_models(opts):
         elif opts.provider == "custom":
             models = api.custom_models(conf.custom_key(), conf["custom_base_url"],
                                        "Custom server", transcription=opts.transcription)
+        elif opts.provider == "gemini":
+            # The same chat models transcribe there, so the list is one list.
+            models = api.gemini_models(conf.gemini_key(), conf["gemini_base_url"])
         else:
             who = cfg.TRANSCRIBERS[opts.provider]
             models = api.openai_models(conf.api_key(who.key), conf[who.url],
@@ -747,6 +758,10 @@ def cmd_test_key(opts):
                 count = len(api.custom_models(conf.custom_key(), conf[who.url],
                                               who.service))
                 message = f"connection works, {count} models visible"
+            elif name == "gemini":
+                count = len(api.gemini_models(conf.gemini_key(),
+                                              conf["gemini_base_url"]))
+                message = f"connection works, {count} models visible"
             else:
                 count = len(api.openai_models(conf.api_key(who.key), conf[who.url],
                                               who.service))
@@ -754,14 +769,6 @@ def cmd_test_key(opts):
             results[name] = {"ok": True, "message": message}
         except api.ApiError as exc:
             results[name] = {"ok": False, "message": str(exc)}
-    if opts.which in ("gemini", "all"):
-        try:
-            count = len(api.gemini_models(conf.gemini_key(),
-                                          conf["gemini_base_url"]))
-            message = f"connection works, {count} models visible"
-            results["gemini"] = {"ok": True, "message": message}
-        except api.ApiError as exc:
-            results["gemini"] = {"ok": False, "message": str(exc)}
     if opts.which in ("deepseek", "all"):
         try:
             count = len(api.openai_models(conf.deepseek_key(),
@@ -1320,7 +1327,7 @@ def build_parser():
     models.set_defaults(func=cmd_models)
     test = leaf(subs, "test-key", "check the API keys")
     test.add_argument("which", nargs="?", default="all",
-                      choices=("all", *cfg.TRANSCRIBERS, "gemini", "deepseek",
+                      choices=("all", *cfg.TRANSCRIBERS, "deepseek",
                                "opencode"))
     test.set_defaults(func=cmd_test_key)
     leaf(subs, "doctor", "keys, programs, and what is missing").set_defaults(func=cmd_doctor)

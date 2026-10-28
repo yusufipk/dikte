@@ -155,13 +155,17 @@ class FileTranscriber(QObject):
         try:
             if not shutil.which("ffmpeg"):
                 raise api.ApiError(t("ffmpeg not found. Install it to transcribe files."))
+            # Before the conversion, which on a film is a minute spent on a run
+            # that was never going to give back a timed line.
+            target = conf.transcribe_target()
+            if timestamps and not api.gives_times(target.provider):
+                raise api.no_times(target.service)
 
             workdir = tempfile.mkdtemp(prefix="dikte-file-", dir=paths.scratch_dir())
             self.progress.emit(t("Converting audio…"))
             wav_path = _to_wav(path, workdir, self._abort)
             self._check()
 
-            target = conf.transcribe_target()
             self._local = ggml.whisper if target.provider == "local" else None
             # Asked of a model nobody has seen label speakers, the switch is
             # not on offer, and a stale setting is not a reason to fail the run.
@@ -255,7 +259,9 @@ class FileTranscriber(QObject):
 
         whole = _to_mp3(wav_path, workdir, "audio.mp3", self._abort)
         duration = wav_seconds(wav_path)
-        seconds = chunk_seconds(whole, duration)
+        # Google takes the audio inside a JSON body as base64, and so takes less.
+        limit = api.GEMINI_AUDIO_LIMIT if target.provider == "gemini" else UPLOAD_LIMIT
+        seconds = chunk_seconds(whole, duration, limit)
         if speakers:
             seconds = min(seconds or duration, DIARIZE_CHUNK_SECONDS)
             if seconds >= duration:
@@ -499,7 +505,7 @@ def wav_seconds(wav_path):
         return src.getnframes() / (src.getframerate() or RATE)
 
 
-def chunk_seconds(path, duration):
+def chunk_seconds(path, duration, limit=UPLOAD_LIMIT):
     """How many seconds of this audio fit in one request, or 0 when all of it does.
 
     Whichever of the two limits bites first. How much fits under the upload
@@ -513,7 +519,7 @@ def chunk_seconds(path, duration):
     if duration <= 0:
         return 0.0
     size = os.path.getsize(path)
-    fits = duration * UPLOAD_LIMIT / size * 0.95 if size > UPLOAD_LIMIT else duration
+    fits = duration * limit / size * 0.95 if size > limit else duration
     seconds = max(60.0, min(fits, MAX_CHUNK_SECONDS))
     return 0.0 if seconds >= duration else seconds
 

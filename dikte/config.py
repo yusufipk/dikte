@@ -431,8 +431,8 @@ DEFAULTS = {
     # https://router.eu.requesty.ai/v1 keeps the requests in the EU.
     "requesty_base_url": "https://router.requesty.ai/v1",
     "gemini_api_key": "",
-    # Google's OpenAI-compatible endpoint. Cleanup only: there is no
-    # /audio/transcriptions behind it, so it is not one of the TRANSCRIBERS.
+    # Google's OpenAI-compatible endpoint. It has no /audio/transcriptions, so
+    # api.py sends dictation there as audio inside a chat request.
     "gemini_base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
     "deepseek_api_key": "",
     "deepseek_base_url": "https://api.deepseek.com",
@@ -452,6 +452,8 @@ DEFAULTS = {
     # there returns segment times. Empty -> openai/whisper-1.
     "openrouter_file_model": "",
     "requesty_transcribe_model": "openai/gpt-4o-transcribe",
+    # Google's fastest model that takes audio. No segment times come back.
+    "gemini_transcribe_model": "gemini-3.5-flash-lite",
     "custom_transcribe_model": "",  # empty -> whatever the server serves
     # A stored language overrides this default. Hosted providers receive no
     # language hint in auto mode; local whisper also reports the detected code.
@@ -627,6 +629,8 @@ TRANSCRIBERS = {
                               "openrouter_base_url", "openrouter_transcribe_model"),
     "requesty": Transcriber("Requesty", "requesty_api_key",
                             "requesty_base_url", "requesty_transcribe_model"),
+    "gemini": Transcriber("Google AI Studio", "gemini_api_key", "gemini_base_url",
+                          "gemini_transcribe_model"),
     "custom": Transcriber("Custom server", "custom_api_key", "custom_base_url",
                           "custom_transcribe_model"),
 }
