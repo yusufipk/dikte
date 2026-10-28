@@ -1191,21 +1191,19 @@ TR = {
         "pencerede açılır; Uygula'ya basmadan hiçbir şey yapıştırılmaz. Seçim "
         "ajana araçsız gönderilir; Codex ve Antigravity'ye hiç gönderilmez. "
         "Geçmişte seçim değil, talimatın ve cevap saklanır.",
-    "Selection not read: the clipboard was left alone":
-        "Seçim okunmadı: panoya dokunulmadı",
+    "The clipboard was left alone, so no selection was read.":
+        "Panoya dokunulmadı, bu yüzden seçim okunmadı.",
+    "The selection was not shown in time, so it was not sent.":
+        "Seçim zamanında gösterilemedi, bu yüzden gönderilmedi.",
+    "Nothing was pasted. Use Copy instead.":
+        "Hiçbir şey yapıştırılmadı. Bunun yerine kopyalamayı kullan.",
     "The clipboard holds an image, files or a password, which could not be "
-    "put back as they were, so nothing was pasted. Use Copy instead.":
+    "put back as they were.":
         "Panoda bir resim, dosya ya da parola var ve bunlar olduğu gibi geri "
-        "konamazdı, bu yüzden hiçbir şey yapıştırılmadı. Bunun yerine "
-        "kopyalamayı kullan.",
-    "{tool} is needed to check the clipboard, so nothing was pasted. Install "
-    "it, or use Copy.":
-        "Panoyu denetlemek için {tool} gerekiyor, bu yüzden hiçbir şey "
-        "yapıştırılmadı. Kur ya da kopyalamayı kullan.",
-    "The clipboard could not be read just now, so nothing was pasted. Try "
-    "again, or use Copy.":
-        "Pano şu an okunamadı, bu yüzden hiçbir şey yapıştırılmadı. Yeniden "
-        "dene ya da kopyalamayı kullan.",
+        "konamazdı.",
+    "{tool} is needed to check the clipboard.":
+        "Panoyu denetlemek için {tool} gerekiyor.",
+    "The clipboard could not be read just now.": "Pano şu an okunamadı.",
     "{name} cannot run without tools, so selected text is not sent to it. "
     "Use Claude Code or a chat provider.":
         "{name} araçsız çalıştırılamadığı için seçili metin ona gönderilmez. "

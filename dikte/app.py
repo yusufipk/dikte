@@ -629,10 +629,15 @@ class Dikte:
 
     def _ask_request(self, request, reply):
         before = self.ask_state
+        held = getattr(self, "_stop_held_since", None)
         self.toggle_ask()
-        if "paste" in request and self.ask_state != before:
+        # A stop held for the selection's preview is a stop that landed: the
+        # run it ends is on its way, and a waiter is told how it went.
+        moved = (self.ask_state != before
+                 or getattr(self, "_stop_held_since", None) is not held)
+        if "paste" in request and moved:
             self.paste_override[ASK] = request["paste"]
-        self._answer(ASK, before, self.ask_state, request, reply)
+        self._answer(ASK, before, self.ask_state, request, reply, moved)
 
     def _meeting_request(self, cmd, request, reply):
         before = self.meeting_state
@@ -644,11 +649,13 @@ class Dikte:
             self.stop_meeting()
         self._answer(MEETING, before, self.meeting_state, request, reply)
 
-    def _answer(self, kind, before, after, request, reply):
+    def _answer(self, kind, before, after, request, reply, moved=None):
         """Reply now, or once the run this request set going is over."""
+        if moved is None:
+            moved = after != before
         if not request.get("wait"):
             reply({"ok": True, "state": after})
-        elif after == before:
+        elif not moved:
             # Nothing moved: the microphone is held by the other one, or this
             # one is still working, or there was nothing to stop. Say so rather
             # than wait for a run that was never started.
@@ -871,38 +878,57 @@ class Dikte:
                     if read.text and grab.reads:
                         grab.shown_at = time.monotonic()
                         grab.shown.set()
-            # A stop held back for the preview goes through once it can.
+                    # Never stopped in the tick that put the note up: it has
+                    # not been painted yet.
+                    return
             if getattr(self, "_stop_held_since", None) is not None:
-                self.stop_ask()
+                self._release_held_stop(grab)
 
         timer.timeout.connect(look)
         timer.start()
         look()
 
-    def _hold_for_preview(self):
-        """Whether a stop has to wait for the selection's preview.
+    def _preview_pending(self):
+        """Whether the selection has yet to be on screen long enough to send.
 
-        Only a selection that has been on screen is sent (see Grab.result),
-        and a stop pressed before it has been up for ASSIST_PREVIEW_SECONDS
-        keeps recording that much longer, still open to a cancel. Held at
-        most ASSIST_HOLD_SECONDS: a read that has not finished by then is
-        not sent at all.
+        Only a selection that has been shown is sent (see Grab.result): one
+        still being read, or up for less than ASSIST_PREVIEW_SECONDS, keeps a
+        stop waiting.
         """
         grab = getattr(self, "assist_grab", None)
         if grab is None or not getattr(grab, "reads", False):
             return False
         read = grab.peek()
-        now = time.monotonic()
-        pending = read is None or bool(read.text) and (
-            grab.shown_at is None
-            or now - grab.shown_at < ASSIST_PREVIEW_SECONDS)
-        if not pending:
-            return False
-        held = getattr(self, "_stop_held_since", None)
-        if held is None:
-            self._stop_held_since = now
+        if read is None:
             return True
-        return now - held < ASSIST_HOLD_SECONDS
+        if not read.text:
+            return False
+        return (grab.shown_at is None
+                or time.monotonic() - grab.shown_at < ASSIST_PREVIEW_SECONDS)
+
+    def _hold_stop(self):
+        """A stop that waits for the preview: it sounds and the ribbon holds
+        at once, and what is said meanwhile is not recorded. A cancel still
+        throws the whole run away."""
+        self._stop_held_since = time.monotonic()
+        self.cues.play("stop")
+        self._set_paused(True)
+
+    def _release_held_stop(self, grab):
+        """Let a held stop through once the preview has been up long enough.
+
+        A read still unfinished after ASSIST_HOLD_SECONDS is given up on, and
+        never shown, so nothing it reads is sent. A read that finished before
+        then always gets its full ASSIST_PREVIEW_SECONDS on screen.
+        """
+        read = grab.peek()
+        if read is None:
+            if time.monotonic() - self._stop_held_since < ASSIST_HOLD_SECONDS:
+                return
+            grab.cancel()
+        elif self._preview_pending():
+            return
+        self._stop_ask_now(cue=False)
 
     def _drop_grab(self):
         """A question that will not run: stop its copy if it has not happened."""
@@ -913,6 +939,7 @@ class Dikte:
     def _begin_recording(self, owner):
         """One microphone, so one of the two holds it at a time."""
         self.recorder_owner = owner
+        self._stop_held_since = None
         self._run_id += 1
         self._clear_pause()
         self.elapsed.restart()
@@ -1006,10 +1033,19 @@ class Dikte:
         self.recorder.stop()
 
     def stop_ask(self):
-        if self.ask_state != RECORDING or self._hold_for_preview():
+        if self.ask_state != RECORDING:
             return
+        if getattr(self, "_stop_held_since", None) is not None:
+            return   # already stopping; see _release_held_stop
+        if self._preview_pending():
+            self._hold_stop()
+            return
+        self._stop_ask_now()
+
+    def _stop_ask_now(self, cue=True):
         self._stop_held_since = None
-        self.cues.play("stop")
+        if cue:
+            self.cues.play("stop")
         self.ticker.stop()
         self._clear_pause()
         self._set_ask_state(BUSY)
@@ -1026,7 +1062,15 @@ class Dikte:
         """
         if not self.recording or self._repeated("pause"):
             return
-        self.paused = not self.paused
+        # A stop held for the selection's preview stays paused until it ends.
+        if getattr(self, "_stop_held_since", None) is not None:
+            return
+        self._set_paused(not self.paused)
+
+    def _set_paused(self, paused):
+        if paused == self.paused:
+            return
+        self.paused = paused
         if self.paused:
             self._paused_at = self.elapsed.elapsed()
         else:
@@ -1053,6 +1097,7 @@ class Dikte:
         if not self.recording:
             return
         asking = self.ask_state == RECORDING
+        self._stop_held_since = None
         self.ticker.stop()
         self._clear_pause()
         self.recorder.cancel()
@@ -1413,6 +1458,8 @@ class Dikte:
         # leave the user wondering why the answer ignored it.
         note = ("" if payload.get("reads_selection", True)
                 else t("This agent does not read the selection."))
+        if payload.get("selection_dropped"):
+            note = t("The selection was not shown in time, so it was not sent.")
         window = AnswerWindow(
             payload.get("instruction", ""), payload.get("text", ""),
             selected=selected, can_apply=can_apply, agent=agent, note=note,
@@ -1768,7 +1815,7 @@ def _grab_note(grab, read):
     if not grab.reads:
         return t("This agent does not read the selection.")
     if read is selection.LEFT_ALONE:
-        return t("Selection not read: the clipboard was left alone")
+        return t("The clipboard was left alone, so no selection was read.")
     if not read.text:
         return t("Nothing selected")
     return t("Selected ({count} characters): {preview}", count=len(read.text),

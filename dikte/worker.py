@@ -357,6 +357,7 @@ class Pipeline(QObject):
                     "selection": selected.text, "warning": warning,
                     "focus": focus, "speech_language": speech_language,
                     "reads_selection": getattr(assist, "reads", True),
+                    "selection_dropped": bool(getattr(assist, "dropped", False)),
                 })
                 return
 
