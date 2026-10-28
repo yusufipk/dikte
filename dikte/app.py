@@ -1382,6 +1382,7 @@ class Dikte:
         window = AnswerWindow(
             payload.get("instruction", ""), payload.get("text", ""),
             selected=selected, can_apply=can_apply, agent=agent, note=note,
+            theme_name=self.conf["theme"],
             apply_fn=lambda text: selection.apply(text, self.conf, focus=focus),
             bridge=self.answer_bridge,
         )

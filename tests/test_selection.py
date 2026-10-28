@@ -971,6 +971,12 @@ class Window(DikteTest):
         self.assertTrue(window.selection.toolTip().startswith("<qt>"))
         self.assertEqual(window.instruction.textFormat(), Qt.TextFormat.PlainText)
 
+    def test_it_wears_the_theme_from_settings(self):
+        from dikte import theme
+        window, _ = self.make(theme_name="dracula")
+        self.assertEqual(window.palette().window().color().name(),
+                         theme.palette("dracula")["base"].lower())
+
     def test_it_never_takes_the_focus_when_it_opens(self):
         window, _ = self.make()
         self.assertTrue(window.testAttribute(

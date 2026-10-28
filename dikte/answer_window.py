@@ -17,6 +17,7 @@ from PyQt6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QPlainTextEdit,
 
 from . import paste
 from . import selection
+from . import theme
 from .i18n import t
 
 # How much of the selection the tooltip shows. The whole of it went to the
@@ -89,8 +90,10 @@ def _copy_in_background(bridge, token, text):
 
 class AnswerWindow(QDialog):
     def __init__(self, instruction, answer, selected="", can_apply=False,
-                 apply_fn=None, agent="", bridge=None, note="", parent=None):
+                 apply_fn=None, agent="", bridge=None, note="",
+                 theme_name=theme.DEFAULT, parent=None):
         super().__init__(parent)
+        theme.apply(self, theme_name)
         self._apply_fn = apply_fn
         self._thread = None
         self._copy_thread = None
