@@ -140,6 +140,14 @@ class AnswerWindow(QDialog):
         self.answer.setReadOnly(not can_apply)
         layout.addWidget(self.answer, 1)
 
+        # Why an Apply came back unpasted, in full: the indicator only has
+        # room for its first line.
+        self.problem = QLabel("")
+        self.problem.setTextFormat(Qt.TextFormat.PlainText)
+        self.problem.setWordWrap(True)
+        self.problem.setVisible(False)
+        layout.addWidget(self.problem)
+
         row = QHBoxLayout()
         row.addStretch(1)
         self.apply_button = QPushButton(t("Apply"))
@@ -154,10 +162,22 @@ class AnswerWindow(QDialog):
         self.cancel_button.setToolTip(t("Closes this and leaves the original text alone."))
         self.cancel_button.clicked.connect(self.reject)
         for button in (self.apply_button, self.copy_button, self.cancel_button):
+            # No default button, and none that Enter presses for having the
+            # focus: where the window is activated anyway (KWin on Wayland),
+            # an Enter meant for another window must not Copy over the
+            # clipboard or Apply.
+            button.setAutoDefault(False)
+            button.setDefault(False)
             row.addWidget(button)
         layout.addLayout(row)
-        (self.apply_button if self.apply_button.isVisibleTo(self)
-         else self.copy_button).setDefault(True)
+        # The window itself holds the focus when it opens, so stray typing
+        # reaches neither the rewrite nor a button. A click goes anywhere.
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.setFocus(Qt.FocusReason.OtherFocusReason)
 
     @property
     def can_apply(self):
@@ -193,6 +213,8 @@ class AnswerWindow(QDialog):
         # Nothing was pasted, so the answer comes back to be copied instead.
         # The error itself is reported by the application.
         if token == self.token and error:
+            self.problem.setText(error)
+            self.problem.setVisible(True)
             self.show()
             self.raise_()
 

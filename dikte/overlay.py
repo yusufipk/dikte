@@ -13,7 +13,8 @@ from . import theme
 
 BARS = 22
 HEIGHT = 48
-NOTE_HEIGHT = 18   # the line under a recording that says what came with it
+NOTE_HEIGHT = 18   # a line under a recording that says what came with it
+NOTE_LINES = 2     # how many of them a note may take before it is elided
 MIN_WIDTH = 210
 MAX_WIDTH = 460
 MARGIN = 28
@@ -295,9 +296,10 @@ class Overlay(QWidget):
             width = MIN_WIDTH + (24 if self.state == "meeting" else 0)
             if self.note:
                 metrics = QFontMetrics(self._note_font())
-                width = max(width, min(MAX_WIDTH,
-                                       metrics.horizontalAdvance(self.note) + 32))
-                height += NOTE_HEIGHT
+                lines = self._note_lines()
+                width = max(width, min(MAX_WIDTH, 32 + max(
+                    metrics.horizontalAdvance(line) for line in lines)))
+                height += NOTE_HEIGHT * len(lines)
         else:
             metrics = QFontMetrics(self._label_font())
             extra = 76 + (18 if self._can_dismiss else 0)
@@ -573,12 +575,31 @@ class Overlay(QWidget):
             box, int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft), text
         )
 
+    def _note_lines(self):
+        """The note broken at words to fit the widest indicator, NOTE_LINES at
+        most, the last one elided if it still runs over. A selection's preview
+        sits at the end, so it is the part that gives way, never the count."""
+        metrics = QFontMetrics(self._note_font())
+        room = MAX_WIDTH - 32
+        lines, words = [], self.note.split(" ")
+        while words and len(lines) < NOTE_LINES - 1:
+            line = words.pop(0)
+            while words and metrics.horizontalAdvance(f"{line} {words[0]}") <= room:
+                line += " " + words.pop(0)
+            if metrics.horizontalAdvance(line) > room:
+                words.insert(0, line)   # one word too long for a line alone
+                break
+            lines.append(line)
+        if words:
+            lines.append(metrics.elidedText(" ".join(words),
+                                            Qt.TextElideMode.ElideRight, room))
+        return lines
+
     def _draw_note(self, painter):
         painter.setFont(self._note_font())
         painter.setPen(self.colors["muted"])
-        box = QRectF(16, HEIGHT - 8, self.width() - 32, NOTE_HEIGHT)
-        metrics = QFontMetrics(self._note_font())
-        text = metrics.elidedText(self.note, Qt.TextElideMode.ElideRight, int(box.width()))
-        painter.drawText(
-            box, int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft), text
-        )
+        flags = int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+        for index, line in enumerate(self._note_lines()):
+            box = QRectF(16, HEIGHT - 8 + index * NOTE_HEIGHT,
+                         self.width() - 32, NOTE_HEIGHT)
+            painter.drawText(box, flags, line)
