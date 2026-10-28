@@ -550,36 +550,36 @@ sich auch wird werden sind noch nur oder aber wenn dass schon wie bei nach
 zu zum zur im vom beim mir mich dich uns du sie habe haben kann kannst
 bitte danke bis gestern heute morgen viele
 """.split())
-# Also everyday words in Turkish (Nur, der, dem) or in English text (MIT,
-# im): one of them alone says nothing about a short dictation.
-_GERMAN_SHARED = frozenset("der dem mit im nur".split())
-# Letters Turkish writes and German never does.
-_NOT_GERMAN = set("ıİşŞğĞ")
+# Also everyday words in Turkish (Nur, der, dem, "Excel den" written apart)
+# or in English text (MIT, im, the den): never evidence on their own.
+_GERMAN_SHARED = frozenset("der dem den des mit im nur".split())
 _APOSTROPHES = "'\u2019"
 
 
 def capitalises_nouns(language, text):
     """Whether the dictation was in a language that capitalises every noun:
-    by its code when there is one, and otherwise by its words, German when
-    two of them and one word in ten are German's everyday ones, or one of
-    them that only German uses in a dictation of six words or fewer. A
-    Turkish letter asks for three, for a German sentence with a Turkish name
-    in it."""
+    by its code when there is one, and otherwise by its words. German when a
+    word has ß or ä, which neither Turkish nor English writes; when one of
+    German's everyday words that the others do not share stands in a
+    dictation of six words or fewer; or when two of them do and German's
+    everyday words make up one word in ten, the shared ones counting half."""
     code = (language or "").lower()
     if code not in ("", "auto"):
         return code[:2] in _NOUN_CAPITALS
+    # Composed first, so an ä typed as a plus a combining mark is still ä.
+    text = unicodedata.normalize("NFC", text)
     # A Turkish suffix after an apostrophe (Excel'den, Mac'im) is not a word,
     # and ß is looked for before casefolding, which turns it into "ss".
     words = [m.group() for m in _WORD.finditer(text)
              if not (m.start() and text[m.start() - 1] in _APOSTROPHES)]
+    if any("ß" in w or "ä" in w.casefold() for w in words):
+        return True
     folded = [w.casefold() for w in words]
-    hits = sum(f in _GERMAN or "ß" in w or "ä" in f for w, f in zip(words, folded))
-    if _NOT_GERMAN & set(text):
-        return hits >= 3 and hits * 10 >= len(words)
+    shared = sum(f in _GERMAN_SHARED for f in folded)
+    own = sum(f in _GERMAN and f not in _GERMAN_SHARED for f in folded)
     if len(words) <= 6:
-        return any((f in _GERMAN and f not in _GERMAN_SHARED) or "ß" in w or "ä" in f
-                   for w, f in zip(words, folded))
-    return hits >= 2 and hits * 10 >= len(words)
+        return own >= 1
+    return own >= 2 and (own + shared / 2) * 10 >= len(words)
 
 
 def _titled(word):

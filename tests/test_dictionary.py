@@ -4,6 +4,7 @@ and what learning may add to them."""
 import json
 import os
 import tempfile
+import unicodedata
 from unittest import mock
 
 from PyQt6.QtCore import QLockFile
@@ -243,7 +244,9 @@ class Learning(DikteTest):
                          "Hallo Thomas, danke für die schnelle Antwort. Viele Grüße",
                          "Schick die Rechnung an Müller.",
                          "Ich habe heute mit Barış über das neue Projekt gesprochen und die Termine",
-                         "Termin mit Anna nächste Woche."):
+                         "Termin mit Anna nächste Woche.",
+                         "Grüße an Barış",
+                         unicodedata.normalize("NFD", "Termin mit Anna nächste Woche.")):
             with self.subTest(sentence=sentence):
                 self.assertTrue(dictionary.capitalises_nouns("auto", sentence))
         for sentence in ("I am going to push the fix to OpenFrame this morning.",
@@ -256,7 +259,11 @@ class Learning(DikteTest):
                          "Nur geliyor",
                          "Ahmet der ki tamam",
                          "Send it to Ali im Slack",
-                         "Ask Nur and the MIT team"):
+                         "Ask Nur and the MIT team",
+                         "Excel den al",
+                         "Meet me in the den",
+                         "Ask the MIT team if the old build will die",
+                         "Nur der dem Ahmet geliyor tamam mı"):
             with self.subTest(sentence=sentence):
                 self.assertFalse(dictionary.capitalises_nouns("auto", sentence))
         self.assertTrue(dictionary.capitalises_nouns("de", "We met Ahmet."))
