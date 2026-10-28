@@ -196,8 +196,7 @@ class DictionaryEditor(QWidget):
         self.learning = QCheckBox(t("Learn names and terms from my dictations"))
         self.learning.toggled.connect(lambda *_: self.changed.emit())
         layout.addWidget(self.learning)
-        layout.addWidget(_muted(t("Learns after three dictations; nothing leaves "
-                                  "your computer.")))
+        layout.addWidget(_muted(t("Learns after three dictations, on this computer.")))
         self.learning.setToolTip(t(
             "Only ordinary dictations are read, and only once they have been "
             "cleaned up and finished without a warning: never meetings, files, "
@@ -207,8 +206,9 @@ class DictionaryEditor(QWidget):
             "misheard word the cleanup puts right the same way three times "
             "(Klod Kod to Claude Code), with what it was heard as. Until then "
             "what is being counted is kept in the dictionary file. A learned "
-            "entry you delete is not learned again. Nothing is sent anywhere to "
-            "do this."))
+            "entry you delete is not learned again. The learning runs on this "
+            "computer; what it adds is sent to the models with the rest of the "
+            "dictionary."))
 
     # ---- the form ---------------------------------------------------------
 
@@ -528,7 +528,7 @@ class ProfilesEditor(QWidget):
             self.style_boxes[key] = box
             form.addRow(t(title), box)
         self.instruction = QLineEdit()
-        self.instruction.setPlaceholderText(t("e.g. Sign off with my first name"))
+        self.instruction.setPlaceholderText(t("e.g. Write numbers as digits"))
         self.instruction.textEdited.connect(self._edited)
         form.addRow(t("Also"), self.instruction)
         self.target = QComboBox()
