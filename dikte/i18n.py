@@ -1183,25 +1183,12 @@ TR = {
     "Selected text": "Seçili metin",
     "Ask about the selected text": "Seçili metin hakkında sor",
     "Select text, press the shortcut and say what to do with it. The answer "
-    "opens in a window with Copy, and Apply for edits; nothing is pasted until "
-    "you press Apply. On Linux the selection is read directly; on macOS and "
-    "Windows Dikte presses the copy shortcut and puts your clipboard back "
-    "afterwards. The selection goes to the agent as data, with no tools; "
-    "Codex and Antigravity are not sent it, and the key asks them a plain "
-    "question. The history keeps your instruction and the reply, which for "
-    "an edit is the rewritten text. On Linux the last highlighted text can be "
-    "sent even after the highlight is gone. On Windows a clipboard holding "
-    "only an image or files means no selection is read.":
-        "Metni seç, kısayola bas ve onunla ne yapılacağını söyle. Cevap, "
-        "kopyalama düğmesi ve düzenlemeler için Uygula düğmesi olan bir "
-        "pencerede açılır; Uygula'ya basmadan hiçbir şey yapıştırılmaz. "
-        "Linux'ta seçim doğrudan okunur; macOS ve Windows'ta Dikte kopyalama "
-        "kısayoluna basar ve panonu sonra eski haline getirir. Seçim ajana "
-        "veri olarak, araçsız gönderilir; Codex ve Antigravity'ye gönderilmez, "
-        "kısayol onlara düz bir soru sorar. Geçmişte talimatın ve cevap "
-        "saklanır; düzenlemelerde bu, yeniden yazılmış metindir. Linux'ta en "
-        "son vurgulanan metin, vurgu kalktıktan sonra da gönderilebilir. "
-        "Windows'ta panoda yalnızca bir resim ya da dosya varsa seçim okunmaz.",
+    "opens in a window; nothing is pasted until you press Apply. The "
+    "selection goes to the agent with no tools, and Codex and Antigravity are "
+    "not sent it.":
+        "Metni seç, kısayola bas ve onunla ne yapılacağını söyle. Cevap bir "
+        "pencerede açılır; Uygula'ya basmadan hiçbir şey yapıştırılmaz. Seçim "
+        "ajana araçsız gönderilir; Codex ve Antigravity'ye hiç gönderilmez.",
     "The clipboard holds an image, files or a password, which could not be "
     "put back as they were, so nothing was pasted. Use Copy instead.":
         "Panoda bir resim, dosya ya da parola var ve bunlar olduğu gibi geri "

@@ -206,6 +206,18 @@ class Settings(DikteTest):
                     else Qt.WindowType.Window)
         self.assertEqual(window.windowType(), expected)
 
+    def test_the_selection_key_is_greyed_out_while_the_feature_is_off(self):
+        window = self.window(cfg.Config())
+        box = window._shortcut_rows["assist"][0]
+        self.assertFalse(box.isEnabled())
+        window.selection_assist.setChecked(True)
+        self.assertTrue(box.isEnabled())
+        window.selection_assist.setChecked(False)
+        self.assertFalse(box.isEnabled())
+        conf = cfg.Config()
+        conf["selection_assist"] = True
+        self.assertTrue(self.window(conf)._shortcut_rows["assist"][0].isEnabled())
+
     def test_settings_keeps_configuration_and_exposes_separate_task_pages(self):
         window = self.window(cfg.Config())
         tabs = window.findChildren(settings_ui.QTabWidget)[0]

@@ -2044,21 +2044,19 @@ class SettingsWindow(QDialog):
         self.selection_assist = QCheckBox(t("Ask about the selected text"))
         self.selection_assist.setToolTip(t(
             "Select text, press the shortcut and say what to do with it. The "
-            "answer opens in a window with Copy, and Apply for edits; nothing "
-            "is pasted until you press Apply. On Linux the selection is read "
-            "directly; on macOS and Windows Dikte presses the copy shortcut and "
-            "puts your clipboard back afterwards. The selection goes to the "
-            "agent as data, with no tools; Codex and Antigravity are not sent "
-            "it, and the key asks them a plain question. The history keeps "
-            "your instruction and the reply, which for an edit is the "
-            "rewritten text. On Linux the last highlighted text can be sent "
-            "even after the highlight is gone. On Windows a clipboard holding "
-            "only an image or files means no selection is read."))
+            "answer opens in a window; nothing is pasted until you press "
+            "Apply. The selection goes to the agent with no tools, and Codex "
+            "and Antigravity are not sent it."))
         selected_form.addRow("", self.selection_assist)
-        self._shortcut_row(
+        box = self._shortcut_row(
             selected_form, "assist", t("Shortcut"),
             t("No global shortcut installed."),
         )
+        # The key does nothing while the feature is off, so it is greyed out.
+        row = box.parentWidget()
+        self._assist_shortcut = (row, selected_form.labelForField(row))
+        self.selection_assist.toggled.connect(self._enable_assist_shortcut)
+        self._enable_assist_shortcut(False)
         layout.addWidget(selected)
 
         prompt_label = QLabel(t(
@@ -2546,6 +2544,11 @@ class SettingsWindow(QDialog):
         self._shortcut_rows[which] = (box, status, missing)
         return box
 
+    def _enable_assist_shortcut(self, on):
+        for widget in self._assist_shortcut:
+            if widget is not None:
+                widget.setEnabled(on)
+
     @staticmethod
     def _install_buttons(install_handler, remove_handler):
         """Install and Remove, where this system has somewhere to install into.
@@ -2704,6 +2707,7 @@ class SettingsWindow(QDialog):
         self.assistant_paste.setChecked(conf["assistant_paste"])
         self.assistant_cleanup.setChecked(conf["assistant_cleanup"])
         self.selection_assist.setChecked(conf["selection_assist"])
+        self._enable_assist_shortcut(conf["selection_assist"])
         self.assistant_prompt.setPlainText(
             conf["assistant_prompt"] or self._loaded_defaults["assistant"]
         )

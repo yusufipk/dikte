@@ -206,8 +206,9 @@ olmasını ister.
   veremiyor, sormadan ne yapabileceğini kendi allow-rule'ları belirliyor.
   OpenRouter, OpenCode Go ya da Requesty ise hiçbiri kurulu olmayan bir
   makinede düz soru
-  cevap için duruyor. Sağlayıcı, model, izinler ve çalışma dizini Ayarlar → Ajan
-  sekmesinde; arka arkaya verilen komutlar tek bir konuşmada kalır.
+  cevap için duruyor. Sağlayıcı, model, izinler ve çalışma dizini, seçili metin
+  hakkında soran isteğe bağlı kısayolla birlikte Ayarlar → Ajan sekmesinde; arka
+  arkaya verilen komutlar tek bir konuşmada kalır.
 - **Toplantılar** mikrofonla hoparlör çıkışından aynı anda kaydedilir; kimin ne
   dediği tahmin edilmez, sesin hangi kanaldan geldiğiyle belli olur. İki taraf
   ayrı ayrı yazıya çevrilip tek bir zaman damgalı transkriptte birleştirilir,
