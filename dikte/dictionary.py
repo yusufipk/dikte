@@ -549,11 +549,13 @@ und der die das ist nicht ich mit auf für wir ein eine einen einem dem den des
 sich auch wird werden sind noch nur oder aber wenn dass schon wie bei nach
 zu zum zur im vom beim mir mich dich uns du sie habe haben kann kannst
 bitte danke bis gestern heute morgen viele hat aus ihn ihm jetzt dann kein
-keine uhr wegen hol gib ruf leg schreib schick
+keine uhr wegen hol gib ruf leg schreib schick von mein meine dein unser
+unsere wurde ins sein muss soll herr herrn frau eins zwei drei vier fünf
+sechs sieben acht neun zehn elf zwölf
 """.split())
 # Also everyday words in Turkish (Nur, der, dem, "Excel den" written apart)
-# or in English text (MIT, im, the den): weaker evidence than the rest.
-_GERMAN_SHARED = frozenset("der dem den des mit im nur".split())
+# or in English text (MIT, im, I am, the den): weaker evidence than the rest.
+_GERMAN_SHARED = frozenset("der dem den des mit im am nur".split())
 # Letters Turkish writes and German never does.
 _TURKISH = set("ıİşŞğĞ")
 _APOSTROPHES = "'\u2019"
@@ -566,12 +568,13 @@ def capitalises_nouns(language, text):
     Missing German costs more than seeing it where it is not: a German noun
     taken for a name is learned after three dictations, while a dictation
     wrongly read as German only teaches nothing. So German is a word with ß
-    or ä; or, in six words or fewer, one of German's own everyday words, or
-    two of those it shares with Turkish and English; or, in a longer text,
-    one of its own and two in all making up a tenth of the words. A Turkish
-    letter in the text halves what the shared words count for, since that is
-    a Turkish dictation with "der" or "Nur" in it far more often than a
-    German one with a Turkish name."""
+    or ä, one of German's own everyday words, or two of those it shares with
+    Turkish and English. A Turkish dictation, told by Turkish letters in two
+    words or in a fifth of them (one Turkish name in a German sentence is not
+    enough), needs two of German's own words instead. What still gets past
+    is a short German command whose only everyday word is one article
+    ("Öffne den Kalender"), which has to happen three times with the same
+    noun before anything is learned."""
     code = (language or "").lower()
     if code not in ("", "auto"):
         return code[:2] in _NOUN_CAPITALS
@@ -586,11 +589,10 @@ def capitalises_nouns(language, text):
     folded = [w.casefold() for w in words]
     own = sum(f in _GERMAN and f not in _GERMAN_SHARED for f in folded)
     shared = sum(f in _GERMAN_SHARED for f in folded)
-    if _TURKISH & set(text):
-        shared /= 2
-    if len(words) <= 6:
-        return own >= 1 or shared >= 2
-    return own >= 1 and own + shared >= 2 and (own + shared) * 10 >= len(words)
+    turkish = sum(bool(_TURKISH & set(w)) for w in words)
+    if turkish >= 2 or turkish * 5 > len(words):
+        return own >= 2
+    return own >= 1 or shared >= 2
 
 
 def _titled(word):

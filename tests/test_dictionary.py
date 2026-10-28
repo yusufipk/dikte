@@ -254,7 +254,16 @@ class Learning(DikteTest):
                          "Gib den Schlüssel Peter",
                          "Termin mit der Kundin",
                          "Erinnere Thomas an den Termin mit der Kundin am Montag um zehn Uhr",
-                         "Am Montag treffen wir den Kunden in der Zentrale von Siemens in Berlin"):
+                         "Am Montag treffen wir den Kunden in der Zentrale von Siemens in Berlin",
+                         "Der Bericht muss bis Freitag fertig sein, sagt Ayşe",
+                         "Termin mit Şükrü am Montag",
+                         "Treffen mit Herrn Yıldız im Büro",
+                         "Der Vertrag liegt im Ordner von Gökhan",
+                         "Mail an Herrn Doğan schreiben",
+                         "Der Termin mit dem Kunden im Büro",
+                         "Unser Team trifft sich am Donnerstag in Raum fünf",
+                         "Mein Bruder wohnt in Berlin",
+                         "Erinnerung Zahnarzt um vier"):
             with self.subTest(sentence=sentence):
                 self.assertTrue(dictionary.capitalises_nouns("auto", sentence))
         for sentence in ("I am going to push the fix to OpenFrame this morning.",
@@ -271,7 +280,8 @@ class Learning(DikteTest):
                          "Excel den al",
                          "Meet me in the den",
                          "Ask the MIT team if the old build can wait until Monday",
-                         "Nur der dem Ahmet geliyor tamam mı"):
+                         "Nur Hanım der ki toplantı yarın",
+                         "Sie Ahmet ile konuşsun, toplantı yarın"):
             with self.subTest(sentence=sentence):
                 self.assertFalse(dictionary.capitalises_nouns("auto", sentence))
         self.assertTrue(dictionary.capitalises_nouns("de", "We met Ahmet."))
