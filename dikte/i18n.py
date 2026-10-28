@@ -1221,7 +1221,11 @@ TR = {
         "Claude Code'u ya da bir sohbet sağlayıcısını kullan.",
     "Dikte: {name}": "Dikte: {name}",
     "You said: {text}": "Söylediğin: {text}",
-    "About the selection ({count} characters)": "Seçim hakkında ({count} karakter)",
+    "About the selection ({count} characters): {preview}":
+        "Seçim hakkında ({count} karakter): {preview}",
+    "Selected ({count} characters): {preview}": "Seçili ({count} karakter): {preview}",
+    "Nothing selected": "Seçili metin yok",
+    "This agent does not read the selection.": "Bu ajan seçili metni okumaz.",
     "Apply": "Uygula",
     "Replaces the selected text in the window it came from. Nothing is pasted "
     "until you press this.":

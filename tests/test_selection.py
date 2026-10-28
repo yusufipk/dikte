@@ -443,6 +443,23 @@ class WaylandText(DikteTest):
                          ["wl-paste", "--no-newline", "--type", "text"])
 
 
+class OverlayNote(DikteTest):
+    def test_a_note_grows_the_recording_and_goes_with_it(self):
+        from dikte import overlay
+        indicator = overlay.Overlay()
+        self.addCleanup(indicator.deleteLater)
+        indicator.show_recording(asking=True)
+        self.assertEqual(indicator.height(), overlay.HEIGHT)
+        indicator.set_note("Selected (12 characters): hello there")
+        self.assertEqual(indicator.height(), overlay.HEIGHT + overlay.NOTE_HEIGHT)
+        indicator.show_busy("Transcribing…")
+        self.assertEqual(indicator.height(), overlay.HEIGHT)
+        indicator.show_recording(asking=True)
+        self.assertEqual(indicator.note, "")
+        self.assertEqual(indicator.height(), overlay.HEIGHT)
+        indicator.dismiss()
+
+
 class LinuxClipboard(DikteTest):
     """Empty, text, or something that must be left alone."""
 
@@ -928,6 +945,20 @@ class Window(DikteTest):
         window, _ = self.make(selected="", can_apply=False)
         self.assertFalse(window.selection.isVisibleTo(window))
 
+    def test_the_selection_line_shows_how_it_begins(self):
+        window, _ = self.make(selected="first line\n" + "word " * 40)
+        text = window.selection.text()
+        self.assertTrue(text.startswith(
+            "About the selection (211 characters): first line word"))
+        self.assertNotIn("\n", text)
+        self.assertTrue(text.endswith("…"))
+
+    def test_the_selection_line_in_turkish(self):
+        from dikte import i18n
+        i18n.set_language("tr")
+        window, _ = self.make(selected="kısa")
+        self.assertEqual(window.selection.text(), "Seçim hakkında (4 karakter): kısa")
+
 
 class Chain(DikteTest):
     """The worker with a Grab handed in, against the same run without one."""
@@ -998,6 +1029,11 @@ class Chain(DikteTest):
         self.assertEqual(row["text"], "Short.")
         self.assertEqual(row["assist"], selection.EDIT)
         self.assertNotIn("PRIVATE SELECTION", cfg.HISTORY_FILE.read_text("utf-8"))
+
+    def test_the_answer_says_whether_the_selection_was_read_at_all(self):
+        self.assertTrue(self.run_chain(self.grab("x")).answered[0]["reads_selection"])
+        run = self.run_chain(selection.NoGrab(), reply="Hi.")
+        self.assertFalse(run.answered[0]["reads_selection"])
 
     def test_without_a_grab_the_command_runs_exactly_as_before(self):
         """The feature-off pin for the worker: the agent is asked with the bare
@@ -1086,6 +1122,70 @@ class App(DikteTest):
         self.assertIs(target.ask_pipeline.run.call_args.kwargs["assist"],
                       grab.return_value)
         self.assertIsNone(target.assist_grab)
+
+    def assist_with(self, read, enabled_provider="claude"):
+        target = self.controller(True)
+        target.conf["assistant_provider"] = enabled_provider
+        grab = mock.Mock(reads=True)
+        grab.peek.return_value = read
+        with mock.patch.object(selection, "Grab", return_value=grab):
+            app.Dikte._toggle_assist(target)
+        self.addCleanup(target._grab_timer.stop)
+        return target, grab
+
+    def test_what_was_read_shows_under_the_ribbon_before_anything_is_sent(self):
+        target, _ = self.assist_with(selection.Selection("hunter2 is my password", "primary"))
+        target.ask_overlay.set_note.assert_called_once_with(
+            "Selected (22 characters): hunter2 is my password")
+        target.ask_pipeline.run.assert_not_called()
+
+    def test_the_note_waits_for_the_read_to_finish(self):
+        target, grab = self.assist_with(None)
+        target.ask_overlay.set_note.assert_not_called()
+        self.assertTrue(target._grab_timer.isActive())
+        grab.peek.return_value = selection.Selection("x" * 300, "clipboard")
+        target._grab_timer.timeout.emit()
+        note = target.ask_overlay.set_note.call_args.args[0]
+        self.assertTrue(note.startswith("Selected (300 characters): xxx"))
+        self.assertLess(len(note), 80)
+        self.assertFalse(target._grab_timer.isActive())
+
+    def test_a_read_finishing_after_the_recording_is_not_shown(self):
+        target, grab = self.assist_with(None)
+        target.ask_state = app.BUSY
+        grab.peek.return_value = selection.Selection("late", "primary")
+        target._grab_timer.timeout.emit()
+        target.ask_overlay.set_note.assert_not_called()
+        self.assertFalse(target._grab_timer.isActive())
+
+    def test_nothing_selected_says_so(self):
+        target, _ = self.assist_with(selection.NOTHING)
+        target.ask_overlay.set_note.assert_called_once_with("Nothing selected")
+
+    def test_an_agent_that_reads_no_selection_says_so_while_recording(self):
+        from dikte import i18n
+        for language, expected in (("en", "This agent does not read the selection."),
+                                   ("tr", "Bu ajan seçili metni okumaz.")):
+            with self.subTest(language=language):
+                target = self.controller(True)
+                target.conf["assistant_provider"] = "codex"
+                i18n.set_language(language)
+                app.Dikte._toggle_assist(target)
+                self.addCleanup(target._grab_timer.stop)
+                target.ask_overlay.set_note.assert_called_once_with(expected)
+
+    def test_an_agent_that_reads_no_selection_says_so_in_the_answer(self):
+        target = self.controller(True)
+        payload = {"instruction": "q", "text": "a", "kind": selection.ANSWER,
+                   "selection": "", "warning": "", "focus": None,
+                   "reads_selection": False}
+        with mock.patch.object(app, "_present"):
+            app.Dikte._show_answer(target, payload, "Codex")
+        window = target.answer_window
+        self.addCleanup(window.deleteLater)
+        self.assertTrue(window.selection.isVisibleTo(window))
+        self.assertEqual(window.selection.text(),
+                         "This agent does not read the selection.")
 
     def answer(self, kind, ready=True, selected="Some text."):
         target = self.controller(True)

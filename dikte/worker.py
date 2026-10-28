@@ -347,6 +347,7 @@ class Pipeline(QObject):
                     "instruction": question, "text": text, "kind": kind,
                     "selection": selected.text, "warning": warning,
                     "focus": focus, "speech_language": speech_language,
+                    "reads_selection": getattr(assist, "reads", True),
                 })
                 return
 

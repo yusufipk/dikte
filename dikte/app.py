@@ -841,6 +841,35 @@ class Dikte:
             return
         self._set_ask_state(RECORDING)
         self.cues.play("start")
+        self._watch_grab(self.assist_grab)
+
+    def _watch_grab(self, grab):
+        """Say under the ribbon what was read, as soon as it has been.
+
+        The read is over in half a second, long before the instruction is,
+        so a selection that was not meant (an old PRIMARY, the current line
+        an editor copies when nothing is selected) can still be cancelled
+        before anything is sent.
+        """
+        timer = getattr(self, "_grab_timer", None)
+        if timer is not None:
+            timer.stop()
+        timer = self._grab_timer = QTimer()
+        timer.setInterval(50)
+
+        def look():
+            if self.assist_grab is not grab or self.ask_state != RECORDING:
+                timer.stop()
+                return
+            read = grab.peek()
+            if read is None:
+                return
+            timer.stop()
+            self.ask_overlay.set_note(_grab_note(grab, read))
+
+        timer.timeout.connect(look)
+        timer.start()
+        look()
 
     def _drop_grab(self):
         """A question that will not run: stop its copy if it has not happened."""
@@ -1346,9 +1375,13 @@ class Dikte:
         can_apply = (payload.get("kind") == selection.EDIT and bool(selected)
                      and len(selected) <= selection.MAX_CHARS
                      and paste.paste_ready())
+        # A provider that is never sent a selection says so, rather than
+        # leave the user wondering why the answer ignored it.
+        note = ("" if payload.get("reads_selection", True)
+                else t("This agent does not read the selection."))
         window = AnswerWindow(
             payload.get("instruction", ""), payload.get("text", ""),
-            selected=selected, can_apply=can_apply, agent=agent,
+            selected=selected, can_apply=can_apply, agent=agent, note=note,
             apply_fn=lambda text: selection.apply(text, self.conf, focus=focus),
             bridge=self.answer_bridge,
         )
@@ -1687,6 +1720,16 @@ class Dikte:
         # reaching atexit and would otherwise leave the models in memory.
         ggml.stop_all()
         self.tray.hide()
+
+
+def _grab_note(grab, read):
+    """The line under a selection question's ribbon: what goes with it."""
+    if not grab.reads:
+        return t("This agent does not read the selection.")
+    if not read.text:
+        return t("Nothing selected")
+    return t("Selected ({count} characters): {preview}", count=len(read.text),
+             preview=answer_window.one_line(read.text, 40))
 
 
 def _preview(text):

@@ -31,7 +31,7 @@ def _tip(text):
             + "</div></qt>")
 
 
-def _one_line(text, limit=90):
+def one_line(text, limit=90):
     text = " ".join(str(text).split())
     return text if len(text) <= limit else text[:limit - 1] + "…"
 
@@ -89,7 +89,7 @@ def _copy_in_background(bridge, token, text):
 
 class AnswerWindow(QDialog):
     def __init__(self, instruction, answer, selected="", can_apply=False,
-                 apply_fn=None, agent="", bridge=None, parent=None):
+                 apply_fn=None, agent="", bridge=None, note="", parent=None):
         super().__init__(parent)
         self._apply_fn = apply_fn
         self._thread = None
@@ -105,7 +105,7 @@ class AnswerWindow(QDialog):
         self.resize(520, 360)
 
         layout = QVBoxLayout(self)
-        self.instruction = QLabel(t("You said: {text}", text=_one_line(instruction)))
+        self.instruction = QLabel(t("You said: {text}", text=one_line(instruction)))
         # Plain text, always: a transcript or a selection that happens to look
         # like markup must not be rendered as such.
         self.instruction.setTextFormat(Qt.TextFormat.PlainText)
@@ -113,12 +113,18 @@ class AnswerWindow(QDialog):
         self.instruction.setToolTip(_tip(instruction))
         layout.addWidget(self.instruction)
 
-        self.selection = QLabel(t("About the selection ({count} characters)",
-                                  count=len(selected)))
+        # Which text went along, at a glance: a selection left over from
+        # earlier is easier to spot here than in a tooltip.
+        self.selection = QLabel(t("About the selection ({count} characters): {preview}",
+                                  count=len(selected), preview=one_line(selected, 60)))
         self.selection.setTextFormat(Qt.TextFormat.PlainText)
+        self.selection.setWordWrap(True)
         preview = selected[:PREVIEW_CHARS] + ("…" if len(selected) > PREVIEW_CHARS else "")
         self.selection.setToolTip(_tip(preview))
-        self.selection.setVisible(bool(selected))
+        if note:
+            self.selection.setText(note)
+            self.selection.setToolTip("")
+        self.selection.setVisible(bool(selected or note))
         layout.addWidget(self.selection)
 
         self.answer = QPlainTextEdit()

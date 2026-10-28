@@ -13,6 +13,7 @@ from . import theme
 
 BARS = 22
 HEIGHT = 48
+NOTE_HEIGHT = 18   # the line under a recording that says what came with it
 MIN_WIDTH = 210
 MAX_WIDTH = 460
 MARGIN = 28
@@ -108,6 +109,7 @@ class Overlay(QWidget):
         self.paused = False
         self.state = "idle"
         self.message = ""
+        self.note = ""   # a line under a recording; see set_note
         self.levels = [0.0] * BARS
         self.levels2 = [0.0] * BARS   # the other side, while a meeting records
         self.seconds = 0.0
@@ -162,12 +164,25 @@ class Overlay(QWidget):
         recorded is a command for Claude rather than something to paste."""
         self.state = "asking" if asking else "recording"
         self.message = ""
+        self.note = ""
         self.seconds = 0.0
         self.levels = [0.0] * BARS
         self.paused = False
         self.muted = False   # a new run starts visible, whatever the last one did
         self._hide_timer.stop()
         self._appear()
+
+    def set_note(self, note):
+        """A short line under the recording's ribbon, gone with the recording.
+
+        A question about the selection says here what was read, while there
+        is still time to cancel before anything is sent.
+        """
+        self.note = note
+        if self.state in LIVE and not self._concealed:
+            self._resize_to_content()
+            self._reposition()
+        self.update()
 
     def show_meeting(self):
         """Both channels at once: your voice up, the other side down."""
@@ -274,15 +289,21 @@ class Overlay(QWidget):
         self.hide()
 
     def _resize_to_content(self):
+        height = HEIGHT
         if self.state in LIVE:
             # A meeting runs long enough to need an hours field.
             width = MIN_WIDTH + (24 if self.state == "meeting" else 0)
+            if self.note:
+                metrics = QFontMetrics(self._note_font())
+                width = max(width, min(MAX_WIDTH,
+                                       metrics.horizontalAdvance(self.note) + 32))
+                height += NOTE_HEIGHT
         else:
             metrics = QFontMetrics(self._label_font())
             extra = 76 + (18 if self._can_dismiss else 0)
             width = max(MIN_WIDTH,
                         min(MAX_WIDTH, metrics.horizontalAdvance(self.message) + extra))
-        self.resize(width, HEIGHT)
+        self.resize(width, height)
 
     def _screen(self):
         """The screen this indicator belongs on right now.
@@ -360,6 +381,11 @@ class Overlay(QWidget):
         font.setPointSizeF(10.5)
         return font
 
+    def _note_font(self):
+        font = QFont(self.font())
+        font.setPointSizeF(9.0)
+        return font
+
     # ---- painting --------------------------------------------------
 
     def set_theme(self, name):
@@ -393,6 +419,8 @@ class Overlay(QWidget):
         if self.state in LIVE:
             self._draw_waveform(painter, accent)
             self._draw_time(painter)
+            if self.note:
+                self._draw_note(painter)
         else:
             self._draw_message(painter)
             if self._can_dismiss:
@@ -404,7 +432,7 @@ class Overlay(QWidget):
         return self.paused and self.state in LIVE
 
     def _draw_indicator(self, painter, accent):
-        cx, cy = 26.0, self.height() / 2
+        cx, cy = 26.0, HEIGHT / 2
         painter.setPen(Qt.PenStyle.NoPen)
         if self._held:
             # The two bars everything that plays sound uses, and no glow: a
@@ -474,7 +502,7 @@ class Overlay(QWidget):
             self._draw_dual_waveform(painter)
             return
         left, bar_w, step = self._bars()
-        mid = self.height() / 2
+        mid = HEIGHT / 2
         painter.setPen(Qt.PenStyle.NoPen)
         for i, level in enumerate(self.levels):
             shaped = min(1.0, level ** 0.55)
@@ -491,7 +519,7 @@ class Overlay(QWidget):
         properly: one silent half means that side is not reaching the recording.
         """
         left, bar_w, step = self._bars()
-        mid = self.height() / 2
+        mid = HEIGHT / 2
         painter.setPen(Qt.PenStyle.NoPen)
         for i, (mine, theirs) in enumerate(zip(self.levels, self.levels2)):
             x = left + i * step
@@ -513,7 +541,7 @@ class Overlay(QWidget):
         text = f"{hours}:{mins:02d}:{secs:02d}" if hours else f"{mins}:{secs:02d}"
         width = 62 if hours else 44
         painter.drawText(
-            QRectF(self.width() - width - 12, 0, width, self.height()),
+            QRectF(self.width() - width - 12, 0, width, HEIGHT),
             int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight),
             text,
         )
@@ -525,7 +553,7 @@ class Overlay(QWidget):
     def _draw_dismiss(self, painter):
         """A faint cross on the right: without it there is nothing to say the
         box can be clicked away, and a feature nobody can see is not one."""
-        cx, cy = self.width() - 18.0, self.height() / 2
+        cx, cy = self.width() - 18.0, HEIGHT / 2
         pen = QPen(QColor(self.colors["muted"]), 1.6)
         pen.setCapStyle(Qt.PenCapStyle.RoundCap)
         painter.setPen(pen)
@@ -538,9 +566,19 @@ class Overlay(QWidget):
         painter.setPen({"error": self.colors["err"], "warning": self.colors["warn"]}.get(self.state, self.colors["text"]))
         # Leave the cross its corner rather than running the text under it.
         box = QRectF(46, 0, self.width() - 60 - (18 if self._can_dismiss else 0),
-                     self.height())
+                     HEIGHT)
         metrics = QFontMetrics(self._label_font())
         text = metrics.elidedText(self.message, Qt.TextElideMode.ElideRight, int(box.width()))
+        painter.drawText(
+            box, int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft), text
+        )
+
+    def _draw_note(self, painter):
+        painter.setFont(self._note_font())
+        painter.setPen(self.colors["muted"])
+        box = QRectF(16, HEIGHT - 8, self.width() - 32, NOTE_HEIGHT)
+        metrics = QFontMetrics(self._note_font())
+        text = metrics.elidedText(self.note, Qt.TextElideMode.ElideRight, int(box.width()))
         painter.drawText(
             box, int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft), text
         )

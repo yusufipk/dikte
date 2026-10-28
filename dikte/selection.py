@@ -28,8 +28,12 @@ at all (see assistant.ask), and Codex and Antigravity, which cannot be made
 tool-free, are not sent one.
 
 Known limits. PRIMARY outlives the highlight on most desktops, so text
-highlighted earlier can go along with a question meant to stand alone; the
-answer window shows its length and a preview. Where the copy shortcut is
+highlighted earlier can go along with a question meant to stand alone. The
+indicator shows its length and how it begins while the instruction is still
+being recorded, so it can be cancelled before anything is sent, and the answer
+window shows both again. How old a selection is cannot be told: X11's
+TIMESTAMP target counts in the X server's clock, which reading takes a window
+of our own, and Wayland offers no such target at all. Where the copy shortcut is
 pressed (macOS, Windows, and Linux without a readable PRIMARY), it goes to the
 focused window. Off the Mac that is Ctrl+Insert, which terminals do not take
 as an interrupt, but an editor that copies the current line when nothing is
@@ -472,6 +476,10 @@ class NoGrab:
     """
 
     focus = None
+    reads = False
+
+    def peek(self):
+        return NOTHING
 
     def result(self, timeout=10):
         return NOTHING
@@ -489,6 +497,8 @@ class Grab:
     transcribed, by which time it has long been there.
     """
 
+    reads = True
+
     def __init__(self, focus=None):
         self.focus = focus
         self._result = NOTHING
@@ -502,6 +512,10 @@ class Grab:
     def cancel(self):
         """The run is off: press nothing that has not been pressed yet."""
         self._cancelled.set()
+
+    def peek(self):
+        """The Selection once it has been read, None while it is still being."""
+        return None if self._thread.is_alive() else self._result
 
     def result(self, timeout=10):
         self._thread.join(timeout)
