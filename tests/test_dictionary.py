@@ -418,6 +418,21 @@ class Files(DikteTest):
         stored = dictionary._read_for_write()
         self.assertIn("kesit", stored["pending"])
 
+    def test_a_good_file_held_again_is_not_written_over(self):
+        dictionary._write([dictionary.entry("Dikte")], {"Kesit": 2}, "Dikte")
+        dictionary._cache["entry"] = (None, None)
+        real, calls = open, []
+
+        def flaky(*args, **kwargs):
+            calls.append(args[0])
+            if len(calls) != 2:
+                raise PermissionError("held by a scanner")
+            return real(*args, **kwargs)
+
+        with mock.patch("builtins.open", side_effect=flaky):
+            with self.assertRaises(OSError):
+                dictionary._read_for_write()
+
     def test_a_temporary_file_left_by_a_crash_is_cleared(self):
         cfg.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         (cfg.CONFIG_DIR / "dictionary.abc123.json.tmp").write_text("{}", encoding="utf-8")

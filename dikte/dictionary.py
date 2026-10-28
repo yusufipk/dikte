@@ -360,7 +360,12 @@ def _read_for_write():
     except ValueError:
         parsed = False
     if parsed:
-        return _read_file()  # it arrived since the first look
+        # It arrived since the first look, or was held for a moment then. A
+        # file known to be good is never handed on as no file at all.
+        stored = _read_file()
+        if stored is None:
+            raise OSError(f"{path()} could not be read just now")
+        return stored
     broken = path().with_suffix(".json.broken")
     try:
         path().replace(broken)
