@@ -1185,10 +1185,14 @@ TR = {
     "Select text, press the shortcut and say what to do with it. The answer "
     "opens in a window; nothing is pasted until you press Apply. The "
     "selection goes to the agent with no tools, and Codex and Antigravity are "
-    "not sent it.":
+    "not sent it. The history keeps your instruction and the reply, not the "
+    "selection.":
         "Metni seç, kısayola bas ve onunla ne yapılacağını söyle. Cevap bir "
         "pencerede açılır; Uygula'ya basmadan hiçbir şey yapıştırılmaz. Seçim "
-        "ajana araçsız gönderilir; Codex ve Antigravity'ye hiç gönderilmez.",
+        "ajana araçsız gönderilir; Codex ve Antigravity'ye hiç gönderilmez. "
+        "Geçmişte seçim değil, talimatın ve cevap saklanır.",
+    "Selection not read: the clipboard was left alone":
+        "Seçim okunmadı: panoya dokunulmadı",
     "The clipboard holds an image, files or a password, which could not be "
     "put back as they were, so nothing was pasted. Use Copy instead.":
         "Panoda bir resim, dosya ya da parola var ve bunlar olduğu gibi geri "

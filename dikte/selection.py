@@ -78,6 +78,10 @@ MAX_CHARS = 20000
 
 Selection = collections.namedtuple("Selection", "text source")
 NOTHING = Selection("", "")
+# No copy was pressed, because the clipboard holds something that could not be
+# put back (a password, an image, files) or could not be read: not the same as
+# nothing selected, and the indicator says which.
+LEFT_ALONE = Selection("", "left alone")
 
 WAYLAND_PRIMARY = ["wl-paste", "--primary", "--no-newline", "--type", "text"]
 X11_PRIMARY = (["xclip", "-selection", "primary", "-out"],
@@ -156,9 +160,12 @@ _BLOCKING = {"application/x-qt-image", "application/x-kde4-urilist",
              "x-kde-passwordManagerHint"}
 # What Windows password managers register beside a copied password, asking
 # clipboard histories and monitors to leave it alone. Restoring writes text
-# only, which would drop the request, so such a clipboard is not touched.
+# only, which would drop the request, so such a clipboard is not touched. The
+# first two mean it by being there at all; the history one is a DWORD, and
+# only a 0 in it says no.
 WIN_PRIVATE_FORMATS = ("ExcludeClipboardContentFromMonitorProcessing",
-                       "CanIncludeInClipboardHistory", "Clipboard Viewer Ignore")
+                       "Clipboard Viewer Ignore")
+WIN_HISTORY_FORMAT = "CanIncludeInClipboardHistory"
 WAYLAND_TYPES = ["wl-paste", "--list-types"]
 X11_TARGETS = ["xclip", "-selection", "clipboard", "-out", "-target", "TARGETS"]
 
@@ -267,11 +274,34 @@ def _win_clipboard_private():
     with the program that put the password there.
     """
     try:
-        user32 = paste._win_api()[0]
-        return any(user32.IsClipboardFormatAvailable(
-            user32.RegisterClipboardFormatW(name)) for name in WIN_PRIVATE_FORMATS)
+        user32, kernel32 = paste._win_api()
+        if any(user32.IsClipboardFormatAvailable(user32.RegisterClipboardFormatW(name))
+               for name in WIN_PRIVATE_FORMATS):
+            return True
+        history = user32.RegisterClipboardFormatW(WIN_HISTORY_FORMAT)
+        if not user32.IsClipboardFormatAvailable(history):
+            return False
+        return _win_dword(user32, kernel32, history) != 1
     except (AttributeError, OSError):
         return False
+
+
+def _win_dword(user32, kernel32, fmt):
+    """A DWORD clipboard format's value, or None when it cannot be read,
+    which the caller takes as a no."""
+    if not paste._win_open_clipboard(user32):
+        return None
+    try:
+        handle = user32.GetClipboardData(fmt)
+        pointer = kernel32.GlobalLock(handle) if handle else None
+        if not pointer:
+            return None
+        try:
+            return paste.ctypes.c_uint32.from_address(pointer).value
+        finally:
+            kernel32.GlobalUnlock(handle)
+    finally:
+        user32.CloseClipboard()
 
 
 def _win_clipboard_empty():
@@ -324,10 +354,6 @@ def _called_off(cancelled):
     return cancelled is not None and cancelled.is_set()
 
 
-_MAC_CHANGE_COUNT = ('ObjC.import("AppKit"); '
-                     '$.NSPasteboard.generalPasteboard.changeCount')
-
-
 def change_count():
     """The number the system bumps on every change to the clipboard, or None.
 
@@ -339,13 +365,18 @@ def change_count():
             return paste._win_api()[0].GetClipboardSequenceNumber() or None
         except (AttributeError, OSError):
             return None
-    if here is paste.MACOS and shutil.which("osascript"):
+    if here is paste.MACOS:
+        # Straight through the Objective-C runtime: it is asked every 50 ms
+        # while the paste lock is held, which an osascript per poll is too
+        # slow for.
         try:
-            res = subprocess.run(["osascript", "-l", "JavaScript", "-e",
-                                  _MAC_CHANGE_COUNT],
-                                 capture_output=True, text=True, timeout=3)
-            return int(res.stdout.strip()) if res.returncode == 0 else None
-        except (subprocess.SubprocessError, OSError, ValueError):
+            from . import mac_window
+            api = mac_window._appkit()
+            board = api.shared(b"NSPasteboard", b"generalPasteboard")
+            if not board.value:
+                return None
+            return int(api.ask_unsigned(board, api.selector(b"changeCount")))
+        except (AttributeError, OSError, TypeError, ValueError):
             return None
     return None
 
@@ -406,7 +437,7 @@ def copy_selection(focus=None, cancelled=None):
     """Press copy, read what landed, and put the clipboard back as it was.
 
     A clipboard that cannot be read back is not touched at all: the run then
-    goes ahead as if nothing were selected. A run called off at any point
+    goes ahead as if nothing were selected, and None says so. A run called off at any point
     presses nothing more and stops waiting, but the clipboard it emptied is
     always put back.
     """
@@ -414,7 +445,7 @@ def copy_selection(focus=None, cancelled=None):
         return ""
     saved = snapshot_patiently(cancelled)
     if saved in UNREADABLE:
-        return ""
+        return None
     text = ""
     try:
         paste.copy("")
@@ -465,7 +496,8 @@ def capture(focus=None, cancelled=None):
         if cancelled is not None and cancelled.is_set():
             return NOTHING
         with _paste_lock():
-            return _selected(copy_selection(focus, cancelled), "clipboard")
+            text = copy_selection(focus, cancelled)
+        return LEFT_ALONE if text is None else _selected(text, "clipboard")
     except (paste.PasteError, OSError, subprocess.SubprocessError) as exc:
         print(f"dikte: could not read the selection: {exc}", file=sys.stderr)
         return NOTHING
@@ -649,8 +681,11 @@ def parse_reply(reply, selected):
     body = reply[match.end():].strip()
     if match.group(1).lower() == "replace" and selected and selected.strip():
         fenced = _FENCED.match(body)
-        if fenced and "```" not in fenced.group(1):
-            body = fenced.group(1).strip("\r\n")
+        # Unless the selection was a fenced block itself, whose rewrite keeps
+        # its fence.
+        if (fenced and "```" not in fenced.group(1)
+                and not selected.lstrip().startswith("```")):
+            body = fenced.group(1).strip()
         lead = selected[:len(selected) - len(selected.lstrip())]
         trail = selected[len(selected.rstrip()):]
         trail = trail.split("\n")[0].rstrip("\r")
@@ -685,7 +720,11 @@ def apply(text, conf, focus=None):
             raise paste.PasteError(t(
                 "The clipboard could not be read just now, so nothing was "
                 "pasted. Try again, or use Copy."))
-        paste.copy(text)
+        try:
+            paste.copy(text)
+        except paste.PasteError:
+            discard(saved)
+            raise
         try:
             paste.press(conf["paste_shortcut"], delay=APPLY_DELAY, focus=focus)
         except paste.PasteError as exc:

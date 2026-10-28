@@ -2046,15 +2046,19 @@ class SettingsWindow(QDialog):
             "Select text, press the shortcut and say what to do with it. The "
             "answer opens in a window; nothing is pasted until you press "
             "Apply. The selection goes to the agent with no tools, and Codex "
-            "and Antigravity are not sent it."))
+            "and Antigravity are not sent it. The history keeps your "
+            "instruction and the reply, not the selection."))
         selected_form.addRow("", self.selection_assist)
         box = self._shortcut_row(
             selected_form, "assist", t("Shortcut"),
             t("No global shortcut installed."),
         )
-        # The key does nothing while the feature is off, so it is greyed out.
+        # The key does nothing while the feature is off, so it is greyed out,
+        # all but Remove: a key installed earlier can still be taken back.
         row = box.parentWidget()
-        self._assist_shortcut = (row, selected_form.labelForField(row))
+        self._assist_shortcut = [box, selected_form.labelForField(row)] + [
+            button for button in row.findChildren(QPushButton)
+            if button.text() != t("Remove")]
         self.selection_assist.toggled.connect(self._enable_assist_shortcut)
         self._enable_assist_shortcut(False)
         layout.addWidget(selected)

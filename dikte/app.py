@@ -1767,6 +1767,8 @@ def _grab_note(grab, read):
     """The line under a selection question's ribbon: what goes with it."""
     if not grab.reads:
         return t("This agent does not read the selection.")
+    if read is selection.LEFT_ALONE:
+        return t("Selection not read: the clipboard was left alone")
     if not read.text:
         return t("Nothing selected")
     return t("Selected ({count} characters): {preview}", count=len(read.text),

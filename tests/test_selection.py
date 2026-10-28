@@ -186,7 +186,7 @@ class Capture(DikteTest):
         self.calls.read_clipboard.return_value = b""
         self.calls.win_empty.return_value = False
         got = self.capture(paste.WINDOWS)
-        self.assertEqual(got, selection.NOTHING)
+        self.assertEqual(got, selection.LEFT_ALONE)
         self.calls.copy.assert_not_called()
         self.calls.press.assert_not_called()
         self.calls.copy_bytes.assert_not_called()
@@ -194,7 +194,7 @@ class Capture(DikteTest):
     def test_a_linux_clipboard_that_cannot_be_read_is_never_wiped(self):
         self.calls.read_clipboard.return_value = None
         got = self.capture(paste.X11, primary=None, ready=True)
-        self.assertEqual(got, selection.NOTHING)
+        self.assertEqual(got, selection.LEFT_ALONE)
         self.calls.copy.assert_not_called()
         self.calls.press.assert_not_called()
 
@@ -222,7 +222,7 @@ class Capture(DikteTest):
         """None there means another program holds it, not that it is empty."""
         self.calls.read_clipboard.return_value = None
         got = self.capture(paste.WINDOWS)
-        self.assertEqual(got, selection.NOTHING)
+        self.assertEqual(got, selection.LEFT_ALONE)
         self.calls.copy.assert_not_called()
         self.calls.press.assert_not_called()
 
@@ -427,14 +427,27 @@ class ChangeCount(DikteTest):
                 mock.patch.object(paste, "_win_api", return_value=(user32, None)):
             self.assertEqual(selection.change_count(), 812)
 
-    def test_macos_asks_the_pasteboard(self):
+    def test_macos_asks_the_pasteboard_without_a_subprocess(self):
+        from dikte import mac_window
+        api = mock.Mock()
+        api.shared.return_value = types.SimpleNamespace(value=0x1234)
+        api.selector.side_effect = lambda name: name
+        api.ask_unsigned.return_value = 57
         with mock.patch.object(paste, "desktop", return_value=paste.MACOS), \
-                mock.patch.object(selection.shutil, "which", return_value="osascript"), \
-                mock.patch.object(selection.subprocess, "run",
-                                  return_value=subprocess.CompletedProcess(
-                                      [], 0, "57\n", "")) as run:
+                mock.patch.object(mac_window, "_appkit", return_value=api), \
+                mock.patch.object(selection.subprocess, "run") as run:
             self.assertEqual(selection.change_count(), 57)
-        self.assertIn("changeCount", run.call_args.args[0][-1])
+        api.shared.assert_called_once_with(b"NSPasteboard", b"generalPasteboard")
+        self.assertEqual(api.ask_unsigned.call_args.args[1], b"changeCount")
+        run.assert_not_called()
+
+    def test_macos_without_a_pasteboard_has_none(self):
+        from dikte import mac_window
+        api = mock.Mock()
+        api.shared.return_value = types.SimpleNamespace(value=None)
+        with mock.patch.object(paste, "desktop", return_value=paste.MACOS), \
+                mock.patch.object(mac_window, "_appkit", return_value=api):
+            self.assertIsNone(selection.change_count())
 
     def test_linux_has_none(self):
         for desktop in (paste.WAYLAND, paste.X11):
@@ -593,8 +606,8 @@ class PasswordManagers(DikteTest):
     """A copied password is left exactly where it is, marks and all."""
 
     def user32(self, present=()):
-        ids = {name: 0xC000 + index
-               for index, name in enumerate(selection.WIN_PRIVATE_FORMATS)}
+        names = selection.WIN_PRIVATE_FORMATS + (selection.WIN_HISTORY_FORMAT,)
+        ids = {name: 0xC000 + index for index, name in enumerate(names)}
         available = {ids[name] for name in present}
         return types.SimpleNamespace(
             RegisterClipboardFormatW=lambda name: ids[name],
@@ -615,6 +628,13 @@ class PasswordManagers(DikteTest):
                 self.assertIs(saved, selection.NOT_TEXT)
                 read.assert_not_called()
 
+    def test_a_history_opt_out_is_private_and_an_opt_in_is_not(self):
+        for value, private in ((0, True), (None, True), (1, False)):
+            with self.subTest(value=value), \
+                    mock.patch.object(selection, "_win_dword", return_value=value):
+                saved, _ = self.snap([selection.WIN_HISTORY_FORMAT])
+                self.assertEqual(saved is selection.NOT_TEXT, private)
+
     def test_ordinary_windows_text_is_read_as_before(self):
         saved, read = self.snap([])
         self.assertEqual(saved, b"hunter2")
@@ -630,7 +650,7 @@ class PasswordManagers(DikteTest):
                                     copy_bytes=calls.copy_bytes), \
                 contextlib.redirect_stderr(io.StringIO()):
             got = selection.capture()
-        self.assertEqual(got, selection.NOTHING)
+        self.assertEqual(got, selection.LEFT_ALONE)
         self.assertEqual(calls.mock_calls, [])
 
     def test_apply_refuses_over_a_kde_password_and_points_to_copy(self):
@@ -704,6 +724,17 @@ class Reply(unittest.TestCase):
             selection.parse_reply("[[replace]]\n```python\nx = 2\ny = 3\n```",
                                   "x = 1"),
             (selection.EDIT, "x = 2\ny = 3"))
+
+    def test_a_fenced_rewrite_of_indented_code_is_indented_once(self):
+        self.assertEqual(
+            selection.parse_reply("[[replace]]\n```python\n    x = 2\n```",
+                                  "    x = 1"),
+            (selection.EDIT, "    x = 2"))
+
+    def test_a_fenced_selection_keeps_its_fence(self):
+        reply = "[[replace]]\n```bash\nbun i\n```"
+        self.assertEqual(selection.parse_reply(reply, "```bash\nnpm i\n```")[1],
+                         "```bash\nbun i\n```")
 
     def test_fences_inside_the_rewrite_stay(self):
         reply = "[[replace]]\n```\na\n```\ntext\n```\nb\n```"
@@ -800,7 +831,7 @@ class Apply(DikteTest):
         cancelled = threading.Event()
         with mock.patch.object(selection, "snapshot_patiently",
                                return_value=selection.UNAVAILABLE) as patient:
-            self.assertEqual(selection.copy_selection(None, cancelled), "")
+            self.assertIsNone(selection.copy_selection(None, cancelled))
         patient.assert_called_once_with(cancelled)
         self.calls.press.assert_not_called()
 
@@ -816,6 +847,17 @@ class Apply(DikteTest):
         with self.assertRaises(paste.PasteError):
             selection.apply("New text.", self.conf)
         self.calls.copy_bytes.assert_not_called()
+
+    def test_a_failed_copy_on_macos_leaves_no_snapshot_files(self):
+        directory = self.path("dikte-clipboard-y")
+        directory.mkdir()
+        saved = paste._MAC_SNAPSHOT(str(directory), "[]")
+        self.calls.copy.side_effect = paste.PasteError("pbcopy failed")
+        with mock.patch.object(selection, "snapshot", return_value=saved):
+            with self.assertRaises(paste.PasteError):
+                selection.apply("New text.", self.conf)
+        self.assertFalse(directory.exists())
+        self.calls.press.assert_not_called()
 
     def test_a_failed_paste_on_macos_leaves_no_snapshot_files(self):
         directory = self.path("dikte-clipboard-x")
@@ -1287,6 +1329,11 @@ class App(DikteTest):
             target._grab_timer.timeout.emit()
         target.recorder.stop.assert_called_once_with()
         self.assertEqual(target.ask_state, app.BUSY)
+
+    def test_a_clipboard_left_alone_is_not_called_nothing_selected(self):
+        target, _ = self.assist_with(selection.LEFT_ALONE)
+        target.ask_overlay.set_note.assert_called_once_with(
+            "Selection not read: the clipboard was left alone")
 
     def test_nothing_selected_says_so(self):
         target, _ = self.assist_with(selection.NOTHING)
