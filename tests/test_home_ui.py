@@ -1,7 +1,7 @@
 """Native workspace navigation, capture boundaries and persisted results."""
 
 import itertools
-import sys
+import os
 from types import SimpleNamespace
 from unittest import mock
 
@@ -160,7 +160,8 @@ class Home(DikteTest):
         # so its default pass is the large one; 1.8 times that is a size no
         # Windows setting reaches, and there the column does not widen to fit
         # (not reproduced off Windows, left as a known limit).
-        scales = (1,) if sys.platform == "win32" else (1, 1.8)
+        # os.name, not sys.platform, which the settings fixture stands in for.
+        scales = (1,) if os.name == "nt" else (1, 1.8)
         for scale in scales:
             for language in ("en", "tr"):
                 with self.subTest(scale=scale, language=language):
