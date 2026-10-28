@@ -187,7 +187,7 @@ running.
 - **Misheard words are repaired.** Speech models fail phonetically on proper
   nouns, so the cleanup model is asked to fix those from context, and to leave
   the word alone when the context does not make the intended one clear. The names
-  you list under Cleanup rules go to the transcription model as a hint and to the
+  you list in the Dictionary tab go to the transcription model as a hint and to the
   cleanup model as a glossary, which is what lets it recognise "kuber netis"
   (the writing profiles, which set a tone per program or translate, share it):
 

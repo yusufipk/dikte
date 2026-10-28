@@ -181,7 +181,7 @@ olmasını ister.
   ölçtüğü seviyeyi yazar, eşiği ona bakarak ayarlarsın.
 - **Yanlış duyulan kelimeler düzeltilir.** Konuşma modelleri özel isimlerde sesçe
   benzer bir şeye kayıyor; temizleme modelinden bunları bağlamdan onarması,
-  bağlam netleştirmiyorsa dokunmaması isteniyor. Temizleme kuralları sekmesine
+  bağlam netleştirmiyorsa dokunmaması isteniyor. Sözlük sekmesine
   yazdığın isimler transkripsiyon modeline ipucu, temizleme modeline sözlük
   olarak gidiyor; "kuber netis"i tanımasını sağlayan da bu (programa göre üslup
   seçen ya da çeviri yapan yazım profilleri de aynı sözlüğü kullanıyor):
