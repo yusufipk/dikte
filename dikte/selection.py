@@ -51,11 +51,11 @@ no default button, so Enter, Space or typing meant for another window do
 nothing in it. Escape still closes it, as Cancel, which touches nothing.
 
 A copy that was pressed but read nothing is watched for a late answer for half
-a second before the restore and half a second after it. One later than that is
-not told apart from a copy the user made, so it is left on the clipboard; and
-after the restore, only a change bringing back the text the late copy already
-delivered is restored over, never other content (a copy of the user's own, or
-a password manager clearing the clipboard).
+a second before the restore. One later than that is not told apart from a copy
+the user made, so it is left on the clipboard. The half second after the
+restore only catches the same late text coming back, and restores over that
+alone, never over other content (a copy of the user's own, or a password
+manager clearing the clipboard).
 """
 
 import collections

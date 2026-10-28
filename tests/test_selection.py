@@ -1699,6 +1699,27 @@ class App(DikteTest):
         app.Dikte._ask_request(target, {"wait": True}, replies.append)
         self.assertFalse(replies[0]["ok"])
 
+    def test_a_dying_microphone_sends_no_selection_shown_too_briefly(self):
+        read = selection.Selection("hunter2", "primary")
+        target, grab = self.held(read, shown_at=99.9)
+        grab.shown = threading.Event()
+        grab.shown.set()
+        target._stop_ask_now = mock.Mock()
+        target.tray = mock.Mock()
+        app.Dikte._on_recorder_died(target)
+        self.assertFalse(grab.shown.is_set())
+        target._stop_ask_now.assert_called_once_with()
+
+    def test_a_dying_microphone_sends_a_selection_shown_long_enough(self):
+        read = selection.Selection("hunter2", "primary")
+        target, grab = self.held(read, shown_at=98.0)
+        grab.shown = threading.Event()
+        grab.shown.set()
+        target._stop_ask_now = mock.Mock()
+        target.tray = mock.Mock()
+        app.Dikte._on_recorder_died(target)
+        self.assertTrue(grab.shown.is_set())
+
     def test_a_held_stop_counts_as_a_stop_for_ask_wait_and_paste(self):
         target, _ = self.held(None)
         target.toggle_ask = lambda: app.Dikte._toggle_ask(target)

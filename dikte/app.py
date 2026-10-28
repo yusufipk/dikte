@@ -1538,8 +1538,12 @@ class Dikte:
             QSystemTrayIcon.MessageIcon.Warning, 8000,
         )
         if owner == ASK and self.ask_state == RECORDING:
-            # Nothing is being recorded to hold for a preview; a selection
-            # not yet shown is simply not sent.
+            # Nothing is being recorded to hold for a preview, so a selection
+            # not yet up for its full time is not sent, the same as one never
+            # shown: the user had no time to cancel it.
+            grab = getattr(self, "assist_grab", None)
+            if grab is not None and self._preview_pending():
+                grab.shown.clear()
             self._stop_ask_now()
         elif self.state == RECORDING:
             self.stop()
