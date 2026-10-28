@@ -555,10 +555,10 @@ sechs sieben acht neun zehn elf zwölf gut gute guten gutes neue neuer neues
 neuen frohe frohes schönes schönen liebe lieber alles sehr nein hier
 """.split())
 # Also everyday words in Turkish (Nur, der, dem, "Excel den" written apart)
-# or in English text (MIT, I am, ins and outs, a gut feeling): weaker
-# evidence than the rest, so a name made of one can still be learned.
+# or in English text (MIT, I am, ins and outs): weaker evidence than the
+# rest, so a name made of one can still be learned.
 _GERMAN_SHARED = frozenset(
-    "der dem den des mit im am nur aus ins leg elf gut".split())
+    "der dem den des mit im am nur aus ins leg elf".split())
 # Letters Turkish writes and German never does.
 _TURKISH = set("ıİşŞğĞ")
 _APOSTROPHES = "'\u2019"
