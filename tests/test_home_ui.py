@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QApplication, QMessageBox, QPushButton
 
 from dikte import config as cfg, home_ui, i18n
@@ -145,26 +146,42 @@ class Home(DikteTest):
         self.assertTrue(self.window.original_button.isHidden())
 
     def test_every_history_button_fits_at_the_default_width(self):
-        """Seven actions in English and in Turkish, in a column the window's
-        default width leaves them: none may be clipped."""
-        for language in ("en", "tr"):
-            with self.subTest(language=language):
-                i18n.set_language(language)
-                settings = self.fixture.window(self.conf)
-                window = home_ui.HomeWindow(self.controller, settings)
-                self.addCleanup(window.deleteLater)
-                self.addCleanup(window.close)
-                window.show()
-                window.show_mode("history")
-                QApplication.processEvents()
-                page = window.mode_pages["history"]
-                buttons = [b for b in page.findChildren(QPushButton) if b.isVisible()]
-                self.assertGreaterEqual(len(buttons), 7)
-                for button in buttons:
-                    self.assertGreaterEqual(button.width(), button.sizeHint().width(),
-                                            button.text())
-                    right = button.mapTo(page, button.rect().topRight()).x()
-                    self.assertLessEqual(right, page.viewport().width(), button.text())
+        """Seven actions in English and in Turkish, in the column the window's
+        default width leaves them: none may be clipped, at the default font or
+        at a large one (Windows' UI font draws them nearly twice as wide)."""
+        default = QApplication.font()
+        self.addCleanup(QApplication.setFont, default)
+        for scale in (1, 1.8):
+            for language in ("en", "tr"):
+                with self.subTest(scale=scale, language=language):
+                    font = QFont(default)
+                    font.setPointSizeF(default.pointSizeF() * scale)
+                    QApplication.setFont(font)
+                    i18n.set_language(language)
+                    settings = self.fixture.window(self.conf)
+                    window = home_ui.HomeWindow(self.controller, settings)
+                    self.addCleanup(window.deleteLater)
+                    self.addCleanup(window.close)
+                    window.show()
+                    window.show_mode("history")
+                    QApplication.processEvents()
+                    page = window.mode_pages["history"]
+                    buttons = [b for b in page.findChildren(QPushButton)
+                               if b.isVisible()]
+                    self.assertGreaterEqual(len(buttons), 7)
+                    for button in buttons:
+                        self.assertGreaterEqual(button.width(),
+                                                button.sizeHint().width(), button.text())
+                        self.assertGreaterEqual(button.height(),
+                                                button.sizeHint().height(), button.text())
+                        corner = button.mapTo(page, button.rect().bottomRight())
+                        self.assertLessEqual(corner.x(), page.viewport().width(),
+                                             button.text())
+                    # Open selected text stays with the actions on the selection.
+                    actions = settings.history_actions
+                    self.assertEqual(
+                        actions.itemAt(actions.indexOf(settings.history_original) + 1)
+                        .widget().text(), i18n.t("Open selected text"))
 
     def test_clearing_history_removes_the_latest_preview(self):
         cfg.append_history({"text": "Remove this preview"})

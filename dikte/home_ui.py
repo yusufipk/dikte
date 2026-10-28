@@ -323,7 +323,9 @@ class HomeWindow(QWidget):
         layout.addWidget(self.settings.task_pages["history"], 1)
         self.settings.task_pages["history"].show()
         actions = self.settings.history_actions
-        actions.insertWidget(actions.count() - 1, _button(t("Open selected text"), self._open_selected))
+        # Beside the other actions on the selected rows, before Delete.
+        actions.insertWidget(actions.indexOf(self.settings.history_original) + 1,
+                             _button(t("Open selected text"), self._open_selected))
         self.settings.history.itemDoubleClicked.connect(self._open_selected)
         return page
 

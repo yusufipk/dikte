@@ -7,14 +7,14 @@ import shutil
 import sys
 import threading
 
-from PyQt6.QtCore import QEvent, QObject, QRect, Qt, QTimer, QUrl, QSignalBlocker, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, QRect, QSize, Qt, QTimer, QUrl, QSignalBlocker, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QGuiApplication, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractItemView, QAbstractSpinBox, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
-    QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit,
+    QLayout, QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit,
     QPushButton, QScrollArea, QSizePolicy, QSpinBox, QTabWidget, QToolButton,
-    QVBoxLayout, QWidget,
+    QVBoxLayout, QWidget, QWidgetItem,
 )
 
 from . import __version__
@@ -967,6 +967,80 @@ class LocalModelBox(QGroupBox):
                                   "model, or another publisher.", name=name))
         else:
             self.status.setText(t("{name} has not been downloaded yet.", name=name))
+
+
+class FlowLayout(QLayout):
+    """Widgets side by side that move on to the next line when the width runs
+    out, so a large font or a long translation wraps a row of buttons rather
+    than cutting their labels short."""
+
+    def __init__(self, parent=None, spacing=6):
+        super().__init__(parent)
+        self._items = []
+        self._gap = spacing
+        self.setContentsMargins(0, 0, 0, 0)
+
+    def addItem(self, item):
+        self._items.append(item)
+
+    def insertWidget(self, index, widget):
+        """As QBoxLayout's, for callers that add a button of their own."""
+        self.addChildWidget(widget)
+        self._items.insert(max(0, min(index, len(self._items))), QWidgetItem(widget))
+        self.invalidate()
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, index):
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index):
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def expandingDirections(self):
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self._arrange(QRect(0, 0, width, 0), move=False)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._arrange(rect, move=True)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def minimumSize(self):
+        # As wide as the widest button: narrower than that, one would be cut.
+        size = QSize()
+        for item in self._items:
+            if not item.isEmpty():
+                size = size.expandedTo(item.sizeHint())
+        margins = self.contentsMargins()
+        return size + QSize(margins.left() + margins.right(),
+                            margins.top() + margins.bottom())
+
+    def _arrange(self, rect, move):
+        """Lay the items out in `rect`, or only measure; the height used."""
+        margins = self.contentsMargins()
+        area = rect.adjusted(margins.left(), margins.top(),
+                             -margins.right(), -margins.bottom())
+        x, y, line = area.x(), area.y(), 0
+        for item in self._items:
+            if item.isEmpty():
+                continue  # a hidden button takes no room
+            size = item.sizeHint()
+            if x > area.x() and x + size.width() > area.right() + 1:
+                x, y, line = area.x(), y + line + self._gap, 0
+            if move:
+                item.setGeometry(QRect(x, y, size.width(), size.height()))
+            x += size.width() + self._gap
+            line = max(line, size.height())
+        return y + line - rect.y() + margins.bottom()
 
 
 def history_marks(row):
@@ -2494,19 +2568,12 @@ class SettingsWindow(QDialog):
         clear.clicked.connect(self._clear_history)
         reload_ = QPushButton(t("Reload"))
         reload_.clicked.connect(self._load_history)
-        # Two rows, what acts on the selection above what acts on the list:
-        # in one, the labels no longer fit the home window's column.
-        self.history_actions = row = QHBoxLayout()
-        row.addWidget(self.history_retry)
-        row.addWidget(copy)
-        row.addWidget(self.history_original)
-        row.addStretch()
-        layout.addLayout(row)
-        row = QHBoxLayout()
-        row.addWidget(delete)
-        row.addWidget(clear)
-        row.addWidget(reload_)
-        row.addStretch()
+        # Wrapped onto as many lines as the font and the language need: in one
+        # fixed row the labels no longer fit the home window's column.
+        self.history_actions = row = FlowLayout()
+        for button in (self.history_retry, copy, self.history_original,
+                       delete, clear, reload_):
+            row.addWidget(button)
         layout.addLayout(row)
         return page
 
