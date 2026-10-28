@@ -1203,7 +1203,8 @@ TR = {
         "konamazdı.",
     "{tool} is needed to check the clipboard.":
         "Panoyu denetlemek için {tool} gerekiyor.",
-    "The clipboard could not be read just now.": "Pano şu an okunamadı.",
+    "The clipboard could not be read just now. Try again in a moment.":
+        "Pano şu an okunamadı. Birazdan yeniden dene.",
     "{name} cannot run without tools, so selected text is not sent to it. "
     "Use Claude Code or a chat provider.":
         "{name} araçsız çalıştırılamadığı için seçili metin ona gönderilmez. "

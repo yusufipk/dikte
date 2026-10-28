@@ -47,7 +47,15 @@ Apply pastes into whatever window has the focus once the answer window is
 hidden; only macOS hands the front back to the original application. The
 answer window is shown without taking the focus, except on KWin's Wayland
 session, which activates it anyway; there it starts with no widget focused and
-no default button, so a key meant for another window does nothing in it.
+no default button, so Enter, Space or typing meant for another window do
+nothing in it. Escape still closes it, as Cancel, which touches nothing.
+
+A copy that was pressed but read nothing is watched for a late answer for half
+a second before the restore and half a second after it. One later than that is
+not told apart from a copy the user made, so it is left on the clipboard; and
+after the restore, only a change bringing back the text the late copy already
+delivered is restored over, never other content (a copy of the user's own, or
+a password manager clearing the clipboard).
 """
 
 import collections
@@ -436,22 +444,45 @@ def restore_past_a_late_copy(saved):
     A slow application may still answer it, and a copy landing after the
     restore would leave the selection, perhaps a password, on the clipboard
     in place of what was there. Where the system counts clipboard changes, a
-    late answer is waited for (briefly) before restoring, and the restore is
-    done again if one lands right after it.
+    late answer is waited for (briefly) before restoring. If one came, its
+    text is remembered, and should that text land again right after the
+    restore (an application that writes twice), it is restored over once
+    more. Anything else arriving then is left alone.
     """
     count = change_count()
     if count is None:
         restore(saved)
         return
-    if _moved(count):
-        settle_clipboard()
-    restore(saved, keep=True)
     try:
-        if _moved(change_count()):
+        late = ""
+        if _moved(count):
+            settle_clipboard()
+            late = paste.read_text() or ""
+        # Taken before the restore, so that a late copy landing while it runs
+        # is not mistaken for the restore's own write.
+        before = change_count()
+        restore(saved, keep=True)
+        if late and _lands_again(before, late):
             settle_clipboard()
             restore(saved, keep=True)
     finally:
         discard(saved)
+
+
+def _lands_again(since, late):
+    """Whether `late` comes back onto the clipboard within LATE_POLLS.
+
+    The count moves for the restore's own write as well, so it only says when
+    to look; what is there decides.
+    """
+    for _ in range(LATE_POLLS):
+        time.sleep(POLL)
+        now = change_count()
+        if now != since:
+            since = now
+            if paste.read_text() == late:
+                return True
+    return False
 
 
 def _wait_for_text(cancelled):
@@ -486,13 +517,16 @@ def _mac_front_back(focus):
             return
 
 
-def copy_selection(focus=None, cancelled=None):
+def copy_selection(focus=None, cancelled=None, publish=None):
     """Press copy, read what landed, and put the clipboard back as it was.
 
     A clipboard that cannot be read back is not touched at all: the run then
-    goes ahead as if nothing were selected, and None says so. A run called off at any point
-    presses nothing more and stops waiting, but the clipboard it emptied is
-    always put back.
+    goes ahead as if nothing were selected, and None says so. A run called
+    off at any point presses nothing more and stops waiting, but the
+    clipboard it emptied is always put back.
+
+    `publish` is handed the text read as soon as it is known, before the
+    clipboard is settled and put back, which can take another second.
     """
     if _called_off(cancelled):
         return ""
@@ -519,6 +553,8 @@ def copy_selection(focus=None, cancelled=None):
         text = _wait_for_text(cancelled)
         return text
     finally:
+        if publish is not None:
+            publish(text)
         if text:
             settle_clipboard(cancelled)
             restore(saved)
@@ -536,11 +572,13 @@ def _paste_lock():
     return lock
 
 
-def capture(focus=None, cancelled=None):
+def capture(focus=None, cancelled=None, publish=None):
     """What is selected right now, as a Selection; NOTHING when nothing is.
 
     `cancelled` is an Event checked just before the copy is pressed, so a run
     that ended before it began presses nothing in the user's window.
+    `publish`, when given, is handed the Selection read by the copy before
+    the clipboard has been put back.
     """
     try:
         here = paste.desktop()
@@ -554,8 +592,12 @@ def capture(focus=None, cancelled=None):
                 return NOTHING
         if cancelled is not None and cancelled.is_set():
             return NOTHING
+        early = None
+        if publish is not None:
+            def early(text):
+                publish(_selected(text, "clipboard"))
         with _paste_lock():
-            text = copy_selection(focus, cancelled)
+            text = copy_selection(focus, cancelled, early)
         return LEFT_ALONE if text is None else _selected(text, "clipboard")
     except (paste.PasteError, OSError, subprocess.SubprocessError) as exc:
         print(f"dikte: could not read the selection: {exc}", file=sys.stderr)
@@ -606,6 +648,7 @@ class Grab:
         # result(). `shown_at` is when, by time.monotonic().
         self.shown = threading.Event()
         self.shown_at = None
+        self._read = threading.Event()   # set once _result is known
         # True once result() has held back a selection that was read but
         # never shown, so the answer can say why it ignored it.
         self.dropped = False
@@ -613,7 +656,17 @@ class Grab:
         self._thread.start()
 
     def _run(self):
-        self._result = capture(self.focus, self._cancelled)
+        try:
+            self._result = capture(self.focus, self._cancelled,
+                                   publish=self._publish)
+        finally:
+            self._read.set()
+
+    def _publish(self, read):
+        # The read is known; restoring the clipboard goes on in this thread,
+        # under the paste lock, without holding up the preview.
+        self._result = read
+        self._read.set()
 
     def cancel(self):
         """The run is off: press nothing that has not been pressed yet."""
@@ -621,11 +674,10 @@ class Grab:
 
     def peek(self):
         """The Selection once it has been read, None while it is still being."""
-        return None if self._thread.is_alive() else self._result
+        return self._result if self._read.is_set() else None
 
     def result(self, timeout=10):
-        self._thread.join(timeout)
-        if self._thread.is_alive():
+        if not self._read.wait(timeout):
             # Given up on: it must not go on to press the copy in whatever
             # window has the focus by the time it gets the paste lock.
             self._cancelled.set()
@@ -787,7 +839,8 @@ def apply(text, conf, focus=None):
                 "could not be put back as they were.")))
         if saved is UNAVAILABLE:
             raise paste.PasteError(_refusal(t(
-                "The clipboard could not be read just now.")))
+                "The clipboard could not be read just now. Try again in a "
+                "moment.")))
         try:
             paste.copy(text)
         except paste.PasteError:

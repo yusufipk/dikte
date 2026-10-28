@@ -171,7 +171,8 @@ class AnswerWindow(QDialog):
             row.addWidget(button)
         layout.addLayout(row)
         # The window itself holds the focus when it opens, so stray typing
-        # reaches neither the rewrite nor a button. A click goes anywhere.
+        # reaches neither the rewrite nor a button. A click goes anywhere,
+        # and Escape still cancels, which leaves everything as it was.
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setFocus(Qt.FocusReason.OtherFocusReason)
 
