@@ -415,6 +415,26 @@ class Files(DikteTest):
         self.assertEqual(broken.read_text(encoding="utf-8"), "{not json")
         self.assertIn("openframe", dictionary._read_file()["pending"])
 
+    def test_a_file_that_cannot_be_opened_is_not_written_over(self):
+        """Held by a virus scanner for a moment, say: an error, not an empty
+        dictionary to write the learning into."""
+        conf = self.config()
+        dictionary.learn(conf, "It runs on OpenFrame now.", "It runs on OpenFrame now.")
+        before = dictionary.path().read_text(encoding="utf-8")
+        real = open
+
+        def held(file, *args, **kwargs):
+            if str(file) == str(dictionary.path()):
+                raise PermissionError(13, "held", str(file))
+            return real(file, *args, **kwargs)
+
+        with mock.patch("builtins.open", side_effect=held), \
+                self.assertRaises(OSError):
+            dictionary.learn(conf, "We asked Grafana about it.",
+                             "We asked Grafana about it.")
+        self.assertEqual(dictionary.path().read_text(encoding="utf-8"), before)
+        self.assertFalse((cfg.CONFIG_DIR / "dictionary.json.broken").exists())
+
     def test_a_file_held_by_another_process_is_waited_for(self):
         """`dikte history delete` in a terminal while the application learns:
         each takes the file's lock, so neither writes over the other."""

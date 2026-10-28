@@ -345,22 +345,25 @@ def _read_for_write():
     stored = _read_file()
     if stored is not None:
         return stored
+    # Any other OSError goes to the caller: a file that is there but held or
+    # locked away for the moment is not to be written over as if it were not.
     try:
         with open(path(), encoding="utf-8") as fh:
-            unreadable = not isinstance(json.load(fh), dict)
-    except OSError:
-        return None  # not there, or not ours to read: nothing to set aside
+            parsed = isinstance(json.load(fh), dict)
+    except FileNotFoundError:
+        return None
     except ValueError:
-        unreadable = True
-    if unreadable:
-        broken = path().with_suffix(".json.broken")
-        try:
-            path().replace(broken)
-        except OSError:
-            pass
-        else:
-            print(f"dikte: could not read the dictionary; the unreadable file "
-                  f"was kept as {broken}")
+        parsed = False
+    if parsed:
+        return _read_file()  # it arrived since the first look
+    broken = path().with_suffix(".json.broken")
+    try:
+        path().replace(broken)
+    except OSError:
+        pass
+    else:
+        print(f"dikte: could not read the dictionary; the unreadable file "
+              f"was kept as {broken}")
     return None
 
 
