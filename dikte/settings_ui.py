@@ -1210,7 +1210,7 @@ class SettingsWindow(QDialog):
     def _form_values(self):
         values = []
         # The editors report their own contents, below.
-        for box in getattr(self, "_form_boxes", None) or self._boxes():
+        for box in self._form_boxes:
             if isinstance(box, QPlainTextEdit):
                 if not box.isReadOnly():
                     values.append(box.toPlainText())

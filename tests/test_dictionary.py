@@ -235,6 +235,19 @@ class Learning(DikteTest):
         self.assertEqual([r["term"] for r in added], ["OpenFrame"])
         self.assertFalse(dictionary.capitalises_nouns(
             "auto", "Bugün Ahmet ile toplantı yaptık ve plan hazır."))
+        for sentence in ("Schick mir die Rechnung bis Freitag.",
+                         "Ich habe die Datei gestern hochgeladen.",
+                         "Die Besprechung ist morgen um zehn.",
+                         "Wir treffen uns am Montag im Büro.",
+                         "Kannst du mir bitte die Unterlagen zum Termin schicken?",
+                         "Hallo Thomas, danke für die schnelle Antwort. Viele Grüße"):
+            with self.subTest(sentence=sentence):
+                self.assertTrue(dictionary.capitalises_nouns("auto", sentence))
+        for sentence in ("I am going to push the fix to OpenFrame this morning.",
+                         "Can you send the invoice to Thomas by Friday?",
+                         "Yarın Paraşüt faturalarını Thomas ile konuşacağız."):
+            with self.subTest(sentence=sentence):
+                self.assertFalse(dictionary.capitalises_nouns("auto", sentence))
         self.assertTrue(dictionary.capitalises_nouns("de", "We met Ahmet."))
 
     def test_a_dictation_with_nothing_new_leaves_the_file_alone(self):
@@ -382,6 +395,12 @@ class Files(DikteTest):
         with mock.patch.object(dictionary.tempfile, "mkstemp", side_effect=mkstemp):
             dictionary._write([dictionary.entry("Dikte")], {}, "Dikte")
         self.assertEqual(made[0]["dir"], cfg.CONFIG_DIR)
+        self.assertEqual([p.name for p in cfg.CONFIG_DIR.iterdir()], ["dictionary.json"])
+
+    def test_a_temporary_file_left_by_a_crash_is_cleared(self):
+        cfg.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        (cfg.CONFIG_DIR / "dictionary.abc123.json.tmp").write_text("{}", encoding="utf-8")
+        dictionary._write([dictionary.entry("Dikte")], {}, "Dikte")
         self.assertEqual([p.name for p in cfg.CONFIG_DIR.iterdir()], ["dictionary.json"])
 
     @posix_only

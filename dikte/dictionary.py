@@ -373,6 +373,11 @@ def _write(entries, pending, synced, rejected=(), clock=0):
     _cache["entry"] = (None, None)
     cfg.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     target = path()
+    # Every writer holds _locked(), so a temporary file still here was left
+    # by a process that died mid-write, and it holds the words too.
+    for stale in cfg.CONFIG_DIR.glob("dictionary.*.json.tmp"):
+        with contextlib.suppress(OSError):
+            stale.unlink()
     # A name of its own, made readable to the user alone from the start rather
     # than chmodded after the words are already in it.
     handle, tmp = tempfile.mkstemp(prefix="dictionary.", suffix=".json.tmp",
@@ -530,8 +535,10 @@ _SENTENCE_END = set(".!?:;\n\"“”‘«»(-*•")
 # how a dictation is told to be German when the language was left on auto and
 # the transcriber did not say what it heard, which a hosted one never does.
 _GERMAN = frozenset("""
-und der das ist nicht ich mit auf für wir ein eine einen einem dem den des
+und der die das ist nicht ich mit auf für wir ein eine einen einem dem den des
 sich auch wird werden sind noch nur oder aber wenn dass schon wie bei nach
+zu zum zur im vom beim mir mich dir dich uns du sie habe haben kann kannst
+bitte danke bis gestern heute morgen viele
 """.split())
 
 
@@ -542,8 +549,9 @@ def capitalises_nouns(language, text):
     code = (language or "").lower()
     if code not in ("", "auto"):
         return code[:2] in _NOUN_CAPITALS
-    words = [w.casefold() for w in _WORD.findall(text)]
-    hits = sum(w in _GERMAN or "ß" in w for w in words)
+    # ß before casefolding, which turns it into "ss".
+    words = _WORD.findall(text)
+    hits = sum(w.casefold() in _GERMAN or "ß" in w for w in words)
     return hits >= 2 and hits * 10 >= len(words)
 
 
