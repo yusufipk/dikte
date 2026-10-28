@@ -1,9 +1,12 @@
 """Native workspace navigation, capture boundaries and persisted results."""
 
+import itertools
+import sys
 from types import SimpleNamespace
 from unittest import mock
 
 from PyQt6.QtCore import Qt
+from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QApplication, QMessageBox, QPushButton
 
 from dikte import config as cfg, home_ui, i18n
@@ -45,7 +48,7 @@ class Home(DikteTest):
         self.assertTrue(self.settings.minutes_view.isVisible())
         self.window.show_mode("history")
         self.assertTrue(self.settings.history.isVisible())
-        self.assertEqual(self.settings.tabs.count(), 7)
+        self.assertEqual(self.settings.tabs.count(), 8)
         self.assertFalse(self.settings.tabs.tabBar().isVisible())
 
     def test_native_chrome_and_capture_geometry(self):
@@ -124,6 +127,89 @@ class Home(DikteTest):
         self.assertEqual(self.window.latest_text.toPlainText(), "")
         self.assertFalse(self.window.copy_button.isEnabled())
         self.assertFalse(self.window.open_button.isEnabled())
+
+    def test_a_translation_says_so_and_offers_the_original(self):
+        cfg.append_history({"ts": "2026-10-17 10:00:00", "raw": "book it for Thursday",
+                            "text": "Buch es für Donnerstag.", "profile": "Email",
+                            "translate_to": "de", "translated": True})
+        self.window.refresh_results()
+        self.assertIn("profile: Email", self.window.latest_time.text())
+        self.assertIn("translated into German", self.window.latest_time.text())
+        self.assertFalse(self.window.original_button.isHidden())
+        self.window.original_button.click()
+        self.assertEqual(QApplication.clipboard().text(), "book it for Thursday")
+        self.window.show_mode("history")
+        self.settings.history.item(0).setSelected(True)
+        self.assertTrue(self.settings.history_original.isEnabled())
+
+    def test_an_ordinary_result_has_no_original_button(self):
+        cfg.append_history({"raw": "uh, hi", "text": "Hi."})
+        self.window.refresh_results()
+        self.assertTrue(self.window.original_button.isHidden())
+
+    def test_every_history_button_fits_at_the_default_width(self):
+        """Seven actions in English and in Turkish, in the column the window's
+        default width leaves them: none may be clipped, at the default font or
+        at a large one (Windows' UI font draws them nearly twice as wide)."""
+        default = QApplication.font()
+        self.addCleanup(QApplication.setFont, default)
+        # A font set in pixels has no point size, and the large pass would
+        # quietly run at the default one.
+        self.assertGreater(default.pointSizeF(), 0)
+        # Windows already draws this font about twice as wide as Linux does,
+        # so its default pass is the large one; 1.8 times that is a size no
+        # Windows setting reaches, and there the column does not widen to fit
+        # (not reproduced off Windows, left as a known limit).
+        scales = (1,) if sys.platform == "win32" else (1, 1.8)
+        for scale in scales:
+            for language in ("en", "tr"):
+                with self.subTest(scale=scale, language=language):
+                    font = QFont(default)
+                    font.setPointSizeF(default.pointSizeF() * scale)
+                    QApplication.setFont(font)
+                    i18n.set_language(language)
+                    settings = self.fixture.window(self.conf)
+                    window = home_ui.HomeWindow(self.controller, settings)
+                    self.addCleanup(window.deleteLater)
+                    self.addCleanup(window.close)
+                    window.show()
+                    window.show_mode("history")
+                    QApplication.processEvents()
+                    page = window.mode_pages["history"]
+                    buttons = [b for b in page.findChildren(QPushButton)
+                               if b.isVisible()]
+                    self.assertGreaterEqual(len(buttons), 7)
+                    for button in buttons:
+                        self.assertGreaterEqual(button.width(),
+                                                button.sizeHint().width(), button.text())
+                        self.assertGreaterEqual(button.height(),
+                                                button.sizeHint().height(), button.text())
+                        # At the default font everything is in view; at a
+                        # very large one a button wider than the column may
+                        # scroll sideways, but it is never cut off.
+                        if scale == 1:
+                            corner = button.mapTo(page, button.rect().bottomRight())
+                            right = page.viewport().width()
+                        else:
+                            corner = button.mapTo(page.widget(), button.rect().bottomRight())
+                            right = page.widget().width()
+                        self.assertLess(corner.x(), right, button.text())
+                        # A row the layout was given no height for is drawn
+                        # below its parent and cut off.
+                        host = button.parentWidget()
+                        bottom = button.mapTo(host, button.rect().bottomRight()).y()
+                        self.assertLess(bottom, host.height(), button.text())
+                        right_in_host = button.mapTo(host, button.rect().bottomRight()).x()
+                        self.assertLess(right_in_host, host.width(), button.text())
+                    for a, b in itertools.combinations(buttons, 2):
+                        self.assertFalse(a.geometry().intersects(b.geometry())
+                                         and a.parentWidget() is b.parentWidget(),
+                                         (a.text(), b.text()))
+                    # Open selected text stays with the actions on the selection.
+                    actions = settings.history_actions
+                    self.assertEqual(
+                        actions.itemAt(actions.indexOf(settings.history_original) + 1)
+                        .widget().text(), i18n.t("Open selected text"))
 
     def test_clearing_history_removes_the_latest_preview(self):
         cfg.append_history({"text": "Remove this preview"})

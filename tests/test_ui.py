@@ -100,6 +100,17 @@ CHANGED = {
     "cleanup_prompt": "Only fix the punctuation.",
     "file_cleanup_prompt": "Keep the stamps where they are.",
     "transcribe_prompt": "Paraşüt, OpenFrame",
+    "dictionary_learning": True,
+    "profile_style": False,
+    "profile_by_app": False,
+    "translation_enabled": False,
+    "style_learning": True,
+    "profile_override": "Email",
+    "profile_default": {"style": {"brevity": "concise"}, "learned": {},
+                        "instruction": "Keep it short.", "translate_to": ""},
+    "profiles": [{"style": {"formality": "formal"}, "learned": {},
+                  "instruction": "", "translate_to": "de", "name": "Email",
+                  "apps": ["thunderbird"]}],
     "assistant_provider": "codex",
     "assistant_model": "opus",
     "assistant_permission_mode": "manual",
@@ -228,7 +239,7 @@ class Settings(DikteTest):
     def test_settings_keeps_configuration_and_exposes_separate_task_pages(self):
         window = self.window(cfg.Config())
         tabs = window.findChildren(settings_ui.QTabWidget)[0]
-        self.assertEqual(tabs.count(), 7)
+        self.assertEqual(tabs.count(), 8)
         self.assertEqual(set(window.task_pages), {"file", "minutes", "history"})
         self.assertEqual(window.windowTitle(), "Dikte Settings")
 
@@ -387,6 +398,51 @@ class Settings(DikteTest):
         for key, value in self.changed.items():
             with self.subTest(key=key):
                 self.assertEqual(stored[key], value)
+
+    def test_the_dictionary_and_the_profiles_save_through_the_window(self):
+        from dikte import dictionary
+        conf = cfg.Config()
+        window = self.window(conf)
+        # From the settled form, as the device tests below do: the snapshot the
+        # constructor takes is not what this harness compares against.
+        window._saved_form = window._form_values()
+        window.dictionary_editor.search.setText("anything")
+        window._show_dirty()
+        self.assertEqual(window.dirty_label.text(), "")
+        window.dictionary_editor.add_entry("kube control", "kubectl")
+        self.assertEqual(window.dirty_label.text(), t("Unsaved changes"))
+        window.profiles_editor.add_profile("Chat")
+        window._save()
+        stored = self.read_config_file()
+        self.assertEqual(stored["transcribe_prompt"], "kubectl")
+        self.assertEqual(stored["profiles"][0]["name"], "Chat")
+        self.assertEqual([(r["term"], r["spelling"])
+                          for r in dictionary.records(cfg.Config())],
+                         [("kube control", "kubectl")])
+        self.assertEqual(window.dirty_label.text(), "")
+
+    def test_looking_around_a_fresh_window_is_not_an_edit(self):
+        """Showing a tab raises its page among its siblings, which reorders
+        what findChildren returns; the boxes are compared one to one all the
+        same. Searching the dictionary and picking a profile edit nothing."""
+        conf = self.config(profiles=[{"name": "Chat", "apps": ["slack"]}])
+        window = self.window(conf)
+        tabs = window.tabs
+        for index in range(tabs.count()):
+            tabs.setCurrentIndex(index)
+        tabs.setCurrentWidget(window.profiles_editor.parentWidget().parentWidget())
+        window.profiles_editor.select(1)
+        self.assertEqual(window.dirty_label.text(), "")
+        tabs.setCurrentIndex(tabs.indexOf(tabs.currentWidget()) - 1)
+        inner = window.dictionary_editor.parentWidget().parentWidget()
+        inner.setCurrentWidget(window.dictionary_editor)
+        window.dictionary_editor.search.setText("kube")
+        self.assertEqual(window.dirty_label.text(), "")
+        # An edit still is one, and taking it back again is not.
+        window.auto_paste.toggle()
+        self.assertEqual(window.dirty_label.text(), t("Unsaved changes"))
+        window.auto_paste.toggle()
+        self.assertEqual(window.dirty_label.text(), "")
 
     def test_only_a_save_that_changed_the_language_says_so(self):
         # The owner answers language_changed by replacing the window, so a

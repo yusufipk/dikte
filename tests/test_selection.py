@@ -1399,7 +1399,7 @@ class Chain(DikteTest):
                 mock.patch.object(paste, "press") as press, \
                 mock.patch.object(paste, "read_clipboard", return_value=b"old") as read, \
                 mock.patch.object(worker.time, "sleep", lambda seconds: None):
-            pipeline._work(self.wav, 2.0, self.rms, True, None, 77, None, assist)
+            pipeline._work(self.wav, 2.0, self.rms, True, None, 77, None, assist=assist)
         return types.SimpleNamespace(answered=answered, finished=finished,
                                      failures=failures, ask=ask, copy=copy,
                                      copy_bytes=copy_bytes, press=press, read=read)
