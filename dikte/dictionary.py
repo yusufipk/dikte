@@ -455,6 +455,26 @@ _WORD = re.compile(r"[^\W\d_][\w]*(?:[-.][\w]+)*", re.UNICODE)
 # What can stand before the first word of a sentence, a line or a list item.
 _SENTENCE_END = set(".!?:;\n\"“”‘«»(-*•")
 
+# Words German uses in nearly every sentence and English and Turkish do not:
+# how a dictation is told to be German when the language was left on auto and
+# the transcriber did not say what it heard, which a hosted one never does.
+_GERMAN = frozenset("""
+und der das ist nicht ich mit auf für wir ein eine einen einem dem den des
+sich auch wird werden sind noch nur oder aber wenn dass schon wie bei nach
+""".split())
+
+
+def capitalises_nouns(language, text):
+    """Whether the dictation was in a language that capitalises every noun:
+    by its code when there is one, and otherwise by its words, German when
+    two of them and one word in ten are German's everyday ones."""
+    code = (language or "").lower()
+    if code not in ("", "auto"):
+        return code[:2] in _NOUN_CAPITALS
+    words = [w.casefold() for w in _WORD.findall(text)]
+    hits = sum(w in _GERMAN or "ß" in w for w in words)
+    return hits >= 2 and hits * 10 >= len(words)
+
 
 def _titled(word):
     """Title case or camel case, with at least one lower case letter: a name.
@@ -758,7 +778,7 @@ def learn(conf, raw, text, speech_language=""):
     dictation. A run at the start of a sentence counts only once the same run
     has been seen in the middle of one, here or in an earlier dictation. The
     caller decides which dictations are eligible at all."""
-    if (speech_language or "").lower()[:2] in _NOUN_CAPITALS:
+    if capitalises_nouns(speech_language, raw):
         return []
     heard = {_key(w) for w in _WORD.findall(raw)}
     found = [(term, starts) for term, starts in runs(text)

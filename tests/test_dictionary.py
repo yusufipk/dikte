@@ -194,6 +194,22 @@ class Learning(DikteTest):
         self.assertEqual(self.learn(conf, "Ich habe den Hund gesehen.", 3,
                                     language="de"), [])
 
+    def test_german_is_told_by_its_words_when_the_language_is_auto(self):
+        """A hosted transcriber on auto never says what it heard, so the
+        language arrives as "auto", and the German has to be read."""
+        conf = self.config()
+        for language in ("auto", ""):
+            with self.subTest(language=language):
+                self.assertEqual(self.learn(
+                    conf, "Wir haben das mit dem Kunden und der Abteilung besprochen.",
+                    3, language=language), [])
+        added = self.learn(conf, "I pushed the fix to OpenFrame this morning.", 3,
+                           language="auto")
+        self.assertEqual([r["term"] for r in added], ["OpenFrame"])
+        self.assertFalse(dictionary.capitalises_nouns(
+            "auto", "Bugün Ahmet ile toplantı yaptık ve plan hazır."))
+        self.assertTrue(dictionary.capitalises_nouns("de", "We met Ahmet."))
+
     def test_a_term_already_in_the_dictionary_is_not_added_again(self):
         conf = self.config(transcribe_prompt="openframe")
         self.assertEqual(self.learn(conf, "It runs on OpenFrame now.", 3), [])
