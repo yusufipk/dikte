@@ -240,12 +240,17 @@ class Learning(DikteTest):
                          "Die Besprechung ist morgen um zehn.",
                          "Wir treffen uns am Montag im Büro.",
                          "Kannst du mir bitte die Unterlagen zum Termin schicken?",
-                         "Hallo Thomas, danke für die schnelle Antwort. Viele Grüße"):
+                         "Hallo Thomas, danke für die schnelle Antwort. Viele Grüße",
+                         "Schick die Rechnung an Müller."):
             with self.subTest(sentence=sentence):
                 self.assertTrue(dictionary.capitalises_nouns("auto", sentence))
         for sentence in ("I am going to push the fix to OpenFrame this morning.",
                          "Can you send the invoice to Thomas by Friday?",
-                         "Yarın Paraşüt faturalarını Thomas ile konuşacağız."):
+                         "Yarın Paraşüt faturalarını Thomas ile konuşacağız.",
+                         "Raporu Excel’den alıp Notion’a koy, sonra Mac’im üzerinden Slack’e at.",
+                         "Nur Hanım’a Excel'den raporu gönder.",
+                         "Excel'den rapor gelsin, Mac'im de olsun.",
+                         "Make a temp dir and let the old process finish before we ship it."):
             with self.subTest(sentence=sentence):
                 self.assertFalse(dictionary.capitalises_nouns("auto", sentence))
         self.assertTrue(dictionary.capitalises_nouns("de", "We met Ahmet."))
@@ -396,6 +401,22 @@ class Files(DikteTest):
             dictionary._write([dictionary.entry("Dikte")], {}, "Dikte")
         self.assertEqual(made[0]["dir"], cfg.CONFIG_DIR)
         self.assertEqual([p.name for p in cfg.CONFIG_DIR.iterdir()], ["dictionary.json"])
+
+    def test_a_file_held_for_a_moment_is_read_again_before_a_write(self):
+        dictionary._write([dictionary.entry("Dikte")], {"Kesit": 2}, "Dikte")
+        dictionary._cache["entry"] = (None, None)
+        real, calls = open, []
+
+        def flaky(*args, **kwargs):
+            calls.append(args[0])
+            if len(calls) == 1:
+                raise PermissionError("held by a scanner")
+            return real(*args, **kwargs)
+
+        with mock.patch("builtins.open", side_effect=flaky):
+            self.assertIsNone(dictionary._read_file())
+        stored = dictionary._read_for_write()
+        self.assertIn("kesit", stored["pending"])
 
     def test_a_temporary_file_left_by_a_crash_is_cleared(self):
         cfg.CONFIG_DIR.mkdir(parents=True, exist_ok=True)

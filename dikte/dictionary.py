@@ -255,7 +255,12 @@ def _read_file():
         try:
             with open(path(), encoding="utf-8") as fh:
                 data = json.load(fh)
-        except (OSError, ValueError):
+        except OSError:
+            # Held for the moment, by a scanner or a sync client: not cached,
+            # or a later read under _locked() would find None and write over
+            # a file that is perfectly good.
+            return None
+        except ValueError:
             data = None
         if isinstance(data, dict):
             synced = data.get("synced")
@@ -537,21 +542,31 @@ _SENTENCE_END = set(".!?:;\n\"“”‘«»(-*•")
 _GERMAN = frozenset("""
 und der die das ist nicht ich mit auf für wir ein eine einen einem dem den des
 sich auch wird werden sind noch nur oder aber wenn dass schon wie bei nach
-zu zum zur im vom beim mir mich dir dich uns du sie habe haben kann kannst
+zu zum zur im vom beim mir mich dich uns du sie habe haben kann kannst
 bitte danke bis gestern heute morgen viele
 """.split())
+# Letters Turkish writes and German never does.
+_NOT_GERMAN = set("ıİşŞğĞ")
+_APOSTROPHES = "'\u2019"
 
 
 def capitalises_nouns(language, text):
     """Whether the dictation was in a language that capitalises every noun:
     by its code when there is one, and otherwise by its words, German when
-    two of them and one word in ten are German's everyday ones."""
+    two of them and one word in ten are German's everyday ones, or one of
+    them in a dictation of six words or fewer."""
     code = (language or "").lower()
     if code not in ("", "auto"):
         return code[:2] in _NOUN_CAPITALS
-    # ß before casefolding, which turns it into "ss".
-    words = _WORD.findall(text)
+    if _NOT_GERMAN & set(text):
+        return False
+    # A Turkish suffix after an apostrophe (Excel'den, Mac'im) is not a word,
+    # and ß is looked for before casefolding, which turns it into "ss".
+    words = [m.group() for m in _WORD.finditer(text)
+             if not (m.start() and text[m.start() - 1] in _APOSTROPHES)]
     hits = sum(w.casefold() in _GERMAN or "ß" in w for w in words)
+    if len(words) <= 6:
+        return hits >= 1
     return hits >= 2 and hits * 10 >= len(words)
 
 
