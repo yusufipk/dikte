@@ -1542,6 +1542,10 @@ class Dikte:
             # not yet up for its full time is not sent, the same as one never
             # shown: the user had no time to cancel it.
             grab = getattr(self, "assist_grab", None)
+            if grab is not None and grab.peek() is None:
+                # Possibly not even pressed yet: the copy must not go on to
+                # press in whatever window has the focus by then.
+                grab.cancel()
             if grab is not None and self._preview_pending():
                 grab.shown.clear()
             self._stop_ask_now()

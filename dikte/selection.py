@@ -447,7 +447,9 @@ def restore_past_a_late_copy(saved):
     late answer is waited for (briefly) before restoring. If one came, its
     text is remembered, and should that text land again right after the
     restore (an application that writes twice), it is restored over once
-    more. Anything else arriving then is left alone.
+    more. Anything else arriving then is left alone. A late copy whose text
+    could not be read is the one exception: with nothing to compare, any
+    change right after the restore is restored over, as before.
     """
     count = change_count()
     if count is None:
@@ -457,12 +459,21 @@ def restore_past_a_late_copy(saved):
         late = ""
         if _moved(count):
             settle_clipboard()
-            late = paste.read_text() or ""
+            # None is a clipboard held by another program for a moment, or a
+            # pbpaste that failed: asked once more before giving up on it.
+            late = paste.read_text()
+            if late is None:
+                time.sleep(POLL)
+                late = paste.read_text()
         # Taken before the restore, so that a late copy landing while it runs
         # is not mistaken for the restore's own write.
         before = change_count()
         restore(saved, keep=True)
-        if late and _lands_again(before, late):
+        if late is None:
+            again = _moved(change_count())
+        else:
+            again = bool(late) and _lands_again(before, late)
+        if again:
             settle_clipboard()
             restore(saved, keep=True)
     finally:
@@ -556,7 +567,9 @@ def copy_selection(focus=None, cancelled=None, publish=None):
         if publish is not None:
             publish(text)
         if text:
-            settle_clipboard(cancelled)
+            # Not cut short by a cancel: the selection is already read, and
+            # an application still writing would land over the restore.
+            settle_clipboard()
             restore(saved)
         elif pressed:
             restore_past_a_late_copy(saved)
@@ -592,15 +605,17 @@ def capture(focus=None, cancelled=None, publish=None):
                 return NOTHING
         if cancelled is not None and cancelled.is_set():
             return NOTHING
-        early = None
+        early, published = None, []
         if publish is not None:
             def early(text):
+                published.append(True)
                 publish(_selected(text, "clipboard"))
         with _paste_lock():
             text = copy_selection(focus, cancelled, early)
         return LEFT_ALONE if text is None else _selected(text, "clipboard")
     except (paste.PasteError, OSError, subprocess.SubprocessError) as exc:
-        print(f"dikte: could not read the selection: {exc}", file=sys.stderr)
+        what = ("put the clipboard back" if published else "read the selection")
+        print(f"dikte: could not {what}: {exc}", file=sys.stderr)
         return NOTHING
 
 
@@ -657,8 +672,11 @@ class Grab:
 
     def _run(self):
         try:
-            self._result = capture(self.focus, self._cancelled,
-                                   publish=self._publish)
+            read = capture(self.focus, self._cancelled, publish=self._publish)
+            # A read already published stands: what capture returns after it
+            # only says whether the clipboard went back, which it has logged.
+            if not self._read.is_set():
+                self._result = read
         finally:
             self._read.set()
 

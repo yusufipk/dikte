@@ -293,6 +293,31 @@ class Capture(DikteTest):
             restoring.set()
             grab._thread.join(2)
 
+    def test_a_restore_failing_after_the_read_keeps_the_read(self):
+        def fake(focus, cancelled, publish=None):
+            publish(selection.Selection("kept", "clipboard"))
+            return selection.NOTHING     # what capture says when restore raised
+
+        with mock.patch.object(selection, "capture", side_effect=fake):
+            grab = selection.Grab()
+            grab._thread.join(2)
+        grab.shown.set()
+        self.assertEqual(grab.result().text, "kept")
+        self.assertFalse(grab.dropped)
+
+    def test_a_restore_failure_is_logged_as_one(self):
+        def copy(focus, cancelled, publish):
+            publish("read")
+            raise OSError("pbcopy died")
+
+        err = io.StringIO()
+        with mock.patch.object(paste, "desktop", return_value=paste.MACOS), \
+                mock.patch.object(selection, "copy_selection", side_effect=copy), \
+                contextlib.redirect_stderr(err):
+            got = selection.capture(publish=lambda read: None)
+        self.assertEqual(got, selection.NOTHING)
+        self.assertIn("could not put the clipboard back", err.getvalue())
+
     def test_a_selection_never_shown_is_never_sent(self):
         with mock.patch.object(selection, "capture",
                                return_value=selection.Selection("old", "primary")):
@@ -411,7 +436,7 @@ class CopyTiming(DikteTest):
         self.assertEqual(self.counts.call_count, selection.QUIET_MAX_POLLS + 1)
         self.calls.copy_bytes.assert_called_once_with(b"what was there")
 
-    def clipboard(self, events=(), during_restore=None):
+    def clipboard(self, events=(), during_restore=None, unreadable=False):
         """A fake clipboard with a change count. `events` are (read number,
         new text) pairs: the change lands once the count has been read that
         many times. Every restore puts the old text back and moves the count;
@@ -450,7 +475,7 @@ class CopyTiming(DikteTest):
             # The copy's own polls see an empty clipboard throughout.
             if reads["n"] <= round(selection.SETTLE / selection.POLL):
                 return ""
-            return state["text"]
+            return None if unreadable else state["text"]
 
         self.patch_attr(paste, "read_text", read_text)
         return state
@@ -509,6 +534,30 @@ class CopyTiming(DikteTest):
         self.assertEqual(len(self.restores()), 1)
         # The first count, the watch before the restore, and the baseline.
         self.assertEqual(self.counts.call_count, 1 + selection.LATE_POLLS + 1)
+
+    def test_a_late_copy_that_cannot_be_read_restores_over_any_change(self):
+        """Nothing to compare it with, so the old rule: whatever lands right
+        after the restore is restored over."""
+        state = self.clipboard(events=[(3, "the selection"), (14, "again")],
+                               unreadable=True)
+        reads = []
+        original = paste.read_text
+        self.patch_attr(paste, "read_text", lambda: reads.append(1) or original())
+        self.copy()
+        self.assertEqual(len(self.restores()), 2)
+        self.assertEqual(state["text"], "what was there")
+        # The copy's own polls, then the late text asked for twice.
+        self.assertEqual(len(reads), round(selection.SETTLE / selection.POLL) + 2)
+
+    def test_a_cancel_after_the_read_does_not_cut_the_settle_short(self):
+        cancelled = threading.Event()
+        self.calls.read_text.side_effect = lambda: cancelled.set() or "sel"
+        seen = []
+        counts = iter([5, 6, 7, 7, 7])
+        self.counts.side_effect = lambda: seen.append("count") or next(counts)
+        self.calls.copy_bytes.side_effect = lambda data: seen.append("restore")
+        self.assertEqual(self.copy(cancelled=cancelled), "sel")
+        self.assertEqual(seen, ["count"] * 5 + ["restore"])
 
     def test_the_read_is_published_before_the_watch(self):
         seen = []
@@ -1686,6 +1735,20 @@ class App(DikteTest):
         self.assertEqual((first, second), ([], []))
         self.assertEqual(len(target._waiters[app.ASK]), 2)
 
+    def test_a_dead_microphone_calls_off_a_copy_not_yet_read(self):
+        target, grab = self.held(None)
+        grab.shown = mock.Mock(wraps=threading.Event())
+        target.tray = mock.Mock()
+        app.Dikte._on_recorder_died(target)
+        grab.cancel.assert_called_once_with()
+        target.recorder.stop.assert_called_once_with()
+
+    def test_a_dead_microphone_leaves_a_finished_read_uncancelled(self):
+        target, grab = self.held(selection.NOTHING)
+        target.tray = mock.Mock()
+        app.Dikte._on_recorder_died(target)
+        grab.cancel.assert_not_called()
+
     def test_a_dead_microphone_forgets_a_held_stop(self):
         target, _ = self.held(None)
         app.Dikte.stop_ask(target)
@@ -2066,3 +2129,4 @@ class Session(DikteTest):
 
 if __name__ == "__main__":
     unittest.main()
+
