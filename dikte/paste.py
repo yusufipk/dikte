@@ -611,8 +611,9 @@ def _macos_snapshot():
         return None
 
 
-def _macos_restore(snapshot):
-    """Put a native snapshot back, then discard its short-lived files."""
+def _macos_restore(snapshot, keep=False):
+    """Put a native snapshot back, then discard its short-lived files unless
+    asked to keep them for another restore."""
     environment = dict(os.environ, DIKTE_PASTEBOARD_DIR=snapshot.directory)
     try:
         subprocess.run(
@@ -623,7 +624,8 @@ def _macos_restore(snapshot):
     except (OSError, subprocess.SubprocessError):
         pass
     finally:
-        shutil.rmtree(snapshot.directory, ignore_errors=True)
+        if not keep:
+            shutil.rmtree(snapshot.directory, ignore_errors=True)
 
 def _clipboard_environment():
     """pbcopy and pbpaste take their text encoding from the locale. An app
@@ -711,9 +713,9 @@ def copy(text):
                            tool=here.clipboard, code=res.returncode))
 
 
-def copy_bytes(data):
+def copy_bytes(data, keep=False):
     if isinstance(data, _MAC_SNAPSHOT):
-        _macos_restore(data)
+        _macos_restore(data, keep)
         return
     if data is None:
         return

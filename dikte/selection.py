@@ -38,8 +38,16 @@ of our own, and Wayland offers no such target at all. Where the copy shortcut is
 pressed (macOS, Windows, and Linux without a readable PRIMARY), it goes to the
 focused window. Off the Mac that is Ctrl+Insert, which terminals do not take
 as an interrupt, but an editor that copies the current line when nothing is
-selected (VS Code, JetBrains) hands that line over as the selection. Apply pastes into whatever window has the focus once the answer
-window is hidden; only macOS hands the front back to the original application.
+selected (VS Code, JetBrains) hands that line over as the selection. The
+copy is the source application's own, so a clipboard history that records
+copies (Win+V on Windows, Klipper on KDE) may keep the selection before any
+preview has been shown; the restore afterwards does not take it back out.
+
+Apply pastes into whatever window has the focus once the answer window is
+hidden; only macOS hands the front back to the original application. The
+answer window is shown without taking the focus, except on KWin's Wayland
+session, which activates it anyway; there it starts with no widget focused and
+no default button, so a key meant for another window does nothing in it.
 """
 
 import collections
@@ -67,6 +75,9 @@ POLL = 0.05
 # spent waiting for that. See settle_clipboard.
 QUIET_POLLS = 2
 QUIET_MAX_POLLS = 10
+# With the copy pressed and nothing read, how many polls the change count is
+# watched for a late answer, before the restore and again after it.
+LATE_POLLS = 10
 # How long Apply waits for the window it hid to hand focus back.
 APPLY_DELAY = 0.4
 # How many times a clipboard that could not be read is asked, 0.1 s apart.
@@ -270,8 +281,10 @@ def clipboard_tool():
 def _win_clipboard_private():
     """Whether a password manager has asked for the clipboard to be left alone.
 
-    IsClipboardFormatAvailable needs no OpenClipboard, so this cannot collide
-    with the program that put the password there.
+    The two markers that count by being there are asked about with
+    IsClipboardFormatAvailable, which needs no OpenClipboard. The history
+    marker's value has to be read, which opens the clipboard briefly
+    (_win_dword) and only when that marker is on offer.
     """
     try:
         user32, kernel32 = paste._win_api()
@@ -311,15 +324,22 @@ def _win_clipboard_empty():
         return False
 
 
-def restore(saved):
-    """Put back what snapshot() took. NOT_TEXT and UNAVAILABLE are left alone."""
+def restore(saved, keep=False):
+    """Put back what snapshot() took. NOT_TEXT and UNAVAILABLE are left alone.
+
+    `keep` holds on to a macOS snapshot's files for another restore; discard()
+    lets go of them.
+    """
     if saved in UNREADABLE:
         return
     if saved is EMPTY:
         with contextlib.suppress(paste.PasteError):
             paste.copy("")
         return
-    paste.copy_bytes(saved)
+    if keep:
+        paste.copy_bytes(saved, keep=True)
+    else:
+        paste.copy_bytes(saved)
 
 
 def discard(saved):
@@ -375,7 +395,7 @@ def change_count():
             board = api.shared(b"NSPasteboard", b"generalPasteboard")
             if not board.value:
                 return None
-            return int(api.ask_unsigned(board, api.selector(b"changeCount")))
+            return int(api.ask_signed(board, api.selector(b"changeCount")))
         except (AttributeError, OSError, TypeError, ValueError):
             return None
     return None
@@ -399,6 +419,39 @@ def settle_clipboard(cancelled=None):
         now = change_count()
         still = still + 1 if now == last else 0
         last = now
+
+
+def _moved(since):
+    """Wait up to LATE_POLLS for the change count to leave `since`."""
+    for _ in range(LATE_POLLS):
+        time.sleep(POLL)
+        if change_count() != since:
+            return True
+    return False
+
+
+def restore_past_a_late_copy(saved):
+    """Restore after a copy that was pressed but read nothing.
+
+    A slow application may still answer it, and a copy landing after the
+    restore would leave the selection, perhaps a password, on the clipboard
+    in place of what was there. Where the system counts clipboard changes, a
+    late answer is waited for (briefly) before restoring, and the restore is
+    done again if one lands right after it.
+    """
+    count = change_count()
+    if count is None:
+        restore(saved)
+        return
+    if _moved(count):
+        settle_clipboard()
+    restore(saved, keep=True)
+    try:
+        if _moved(change_count()):
+            settle_clipboard()
+            restore(saved, keep=True)
+    finally:
+        discard(saved)
 
 
 def _wait_for_text(cancelled):
@@ -447,6 +500,7 @@ def copy_selection(focus=None, cancelled=None):
     if saved in UNREADABLE:
         return None
     text = ""
+    pressed = False
     try:
         paste.copy("")
         if paste.desktop() is paste.WINDOWS:
@@ -460,13 +514,18 @@ def copy_selection(focus=None, cancelled=None):
             _mac_front_back(focus)
             if _called_off(cancelled):
                 return ""
+        pressed = True
         paste.press(copy_shortcut(), delay=0, focus=focus)
         text = _wait_for_text(cancelled)
         return text
     finally:
         if text:
             settle_clipboard(cancelled)
-        restore(saved)
+            restore(saved)
+        elif pressed:
+            restore_past_a_late_copy(saved)
+        else:
+            restore(saved)
 
 
 def _paste_lock():
@@ -516,6 +575,7 @@ class NoGrab:
 
     focus = None
     reads = False
+    dropped = False
 
     def peek(self):
         return NOTHING
@@ -546,6 +606,9 @@ class Grab:
         # result(). `shown_at` is when, by time.monotonic().
         self.shown = threading.Event()
         self.shown_at = None
+        # True once result() has held back a selection that was read but
+        # never shown, so the answer can say why it ignored it.
+        self.dropped = False
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -570,6 +633,7 @@ class Grab:
         # A selection the user was never shown is not sent: it may be one
         # nobody meant to send, an old PRIMARY or an editor's current line.
         if self._result.text and not self.shown.is_set():
+            self.dropped = True
             return NOTHING
         return self._result
 
@@ -695,6 +759,12 @@ def parse_reply(reply, selected):
 
 # --- putting an edit back ----------------------------------------------------
 
+def _refusal(reason):
+    # The first line is what the indicator has room for; the reason follows
+    # on the next, for the tray and the answer window.
+    return t("Nothing was pasted. Use Copy instead.") + "\n" + reason
+
+
 def apply(text, conf, focus=None):
     """Paste `text` over the selection it was made from, then restore the clipboard.
 
@@ -708,18 +778,16 @@ def apply(text, conf, focus=None):
         # Pasting goes through the clipboard, and what is on it now could
         # not be put back afterwards, so nothing is pasted at all.
         if saved is MISSING:
-            raise paste.PasteError(t(
-                "{tool} is needed to check the clipboard, so nothing was "
-                "pasted. Install it, or use Copy.", tool=clipboard_tool()))
+            raise paste.PasteError(_refusal(t(
+                "{tool} is needed to check the clipboard.",
+                tool=clipboard_tool())))
         if saved is NOT_TEXT:
-            raise paste.PasteError(t(
+            raise paste.PasteError(_refusal(t(
                 "The clipboard holds an image, files or a password, which "
-                "could not be put back as they were, so nothing was pasted. "
-                "Use Copy instead."))
+                "could not be put back as they were.")))
         if saved is UNAVAILABLE:
-            raise paste.PasteError(t(
-                "The clipboard could not be read just now, so nothing was "
-                "pasted. Try again, or use Copy."))
+            raise paste.PasteError(_refusal(t(
+                "The clipboard could not be read just now.")))
         try:
             paste.copy(text)
         except paste.PasteError:
