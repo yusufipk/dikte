@@ -34,17 +34,38 @@ from tests.support import DikteTest, make_wav, speech
 _qt_app = QApplication.instance() or QApplication([])
 
 
-def _no_real_tool(argv, *args, **kwargs):
-    raise AssertionError(f"a test ran a real program: {argv!r}")
+# What a test reached that would have touched the desktop it runs on, from
+# whichever thread. Checked after every test in this module; see _guard.
+_violations = []
+
+
+def _refused(what, error):
+    def refuse(*args, **kwargs):
+        _violations.append(f"{what}{args[:1]!r}")
+        raise error(f"a test reached the real {what}")
+    return refuse
 
 
 def setUpModule():
-    # wl-paste, xclip, xsel, pbpaste and osascript would read or write the
-    # desktop the suite runs on. Every test here fakes them; one that forgets
-    # fails here instead of touching the live clipboard.
-    patcher = mock.patch.object(subprocess, "run", _no_real_tool)
-    patcher.start()
-    unittest.addModuleCleanup(patcher.stop)
+    # wl-paste, xclip, xsel, pbpaste and osascript, the Windows clipboard and
+    # key calls, and the macOS key press would read or write the desktop the
+    # suite runs on. Every test here fakes them. One that forgets is refused,
+    # with an error the code under test may well swallow, and is failed by
+    # the check after it whichever thread it happened on.
+    for target, name, error in (
+            (subprocess, "run", OSError), (subprocess, "Popen", OSError),
+            (paste, "_win_api", OSError), (paste, "_macos_press", paste.PasteError)):
+        patcher = mock.patch.object(target, name, _refused(name, error))
+        patcher.start()
+        unittest.addModuleCleanup(patcher.stop)
+
+
+def tearDownModule():
+    # A background thread that got there after its test's check.
+    if _violations:
+        found = list(_violations)
+        _violations.clear()
+        raise AssertionError(f"reached the real desktop: {found}")
 
 
 def completed(code=0, stdout=b"", stderr=b""):
@@ -2130,3 +2151,27 @@ class Session(DikteTest):
 if __name__ == "__main__":
     unittest.main()
 
+
+def _check_no_real_tools(test):
+    if _violations:
+        found = list(_violations)
+        _violations.clear()
+        test.fail(f"reached the real desktop: {found}")
+
+
+def _guard(cls):
+    set_up = cls.setUp
+
+    def setUp(self):
+        set_up(self)
+        self.addCleanup(_check_no_real_tools, self)
+
+    cls.setUp = setUp
+
+
+for _cls in list(globals().values()):
+    # Every test class here, subclasses included: a check run twice costs
+    # nothing.
+    if (isinstance(_cls, type) and issubclass(_cls, unittest.TestCase)
+            and _cls.__module__ == __name__):
+        _guard(_cls)
