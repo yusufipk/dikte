@@ -304,6 +304,24 @@ class Lookup(DikteTest):
             self.assertEqual((choice.name, choice.looked), ("Chat", True))
         self.assertIsNot(threads[0], threading.main_thread())
 
+    def test_a_lookup_that_failed_falls_back_to_default_too(self):
+        from dikte import app
+        conf = self.config(profiles=[{"name": "Chat", "apps": ["slack"]}])
+        real = profiles.choose
+        calls = []
+
+        def choose(*args, **kwargs):
+            calls.append(args)
+            if len(calls) == 1:
+                raise ValueError("a profile that trips the chooser")
+            return real(*args, **kwargs)
+
+        with mock.patch.object(app.frontapp, "program_name", return_value="slack"), \
+                mock.patch.object(app.profiles, "choose", side_effect=choose), \
+                mock.patch("sys.stderr"):
+            choice = app._ProfileLookup(conf, None).result()
+        self.assertEqual((choice.name, choice.program, choice.looked), ("", "", True))
+
     def test_a_lookup_that_never_answers_falls_back_to_default(self):
         import threading
         from dikte import app

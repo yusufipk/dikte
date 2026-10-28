@@ -1232,6 +1232,7 @@ TR = {
     "The program in front could not be found out.": "Öndeki program bulunamadı.",
     "On GNOME, per-application profiles need the “Window Calls” GNOME Shell extension installed.": "GNOME'da uygulamaya göre profiller için “Window Calls” GNOME Shell eklentisi kurulu olmalı.",
     "On KDE Plasma under Wayland, per-application profiles need kdotool installed.": "Wayland altındaki KDE Plasma'da uygulamaya göre profiller için kdotool kurulu olmalı.",
+    "On X11, per-application profiles need xprop installed.": "X11'de uygulamaya göre profiller için xprop kurulu olmalı.",
     "A profile says how a dictation should read, and can translate it. The Default profile is used unless a named profile lists the program in front when the recording starts. Files, meetings and the agent are never changed by a profile.": "Profil, bir diktenin nasıl okunacağını belirler ve onu çevirebilir. Kayıt başladığında öndeki programı listeleyen adlı bir profil yoksa Varsayılan profil kullanılır. Dosyalar, toplantılar ve ajan hiçbir profilden etkilenmez.",
     "Add profile…": "Profil ekle…",
     "Add profile": "Profil ekle",

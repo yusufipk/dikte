@@ -147,6 +147,7 @@ class DictionaryEditor(QWidget):
         self.setProperty(_OWNED, True)
         self._entries = []
         self._loaded = []
+        self._cleared = False
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         # One sentence on screen; how it is used is in the tooltip.
@@ -634,6 +635,8 @@ class ProfilesEditor(QWidget):
         if backend is frontapp._kde_wayland and not frontapp.shutil.which("kdotool"):
             return t("On KDE Plasma under Wayland, per-application profiles need "
                      "kdotool installed.")
+        if backend is frontapp._x11 and not frontapp.shutil.which("xprop"):
+            return t("On X11, per-application profiles need xprop installed.")
         if backend is frontapp._gnome and frontapp.gnome_extension["present"] is False:
             return t("On GNOME, per-application profiles need the “Window "
                      "Calls” GNOME Shell extension installed.")
@@ -860,17 +863,19 @@ class ProfilesEditor(QWidget):
 
     def learn_from_examples(self):
         """Read the pasted text into the selected profile's learned style, then
-        empty the boxes: the text was lent for this, not given to keep."""
+        empty the boxes: the text was lent for this, not given to keep. Kept
+        when nothing was found in it, for the user to add to."""
         before = self.before.toPlainText().strip()
         after = self.after.toPlainText().strip()
         corrections = [(before, after)] if before and after else []
         found = profiles.learn_style([self.examples.toPlainText()], corrections)
-        for box in (self.examples, self.before, self.after):
-            box.clear()
         if not found:
+            # Left in place, so that a few more sentences can be added to them.
             self.learn_result.setText(t("Not enough to learn from; paste a few "
                                         "more sentences."))
             return {}
+        for box in (self.examples, self.before, self.after):
+            box.clear()
         profile = self.current()
         profile["learned"] = dict(profile["learned"], **found)
         self.learn_result.setText(t("Learned: {preferences}",
@@ -897,8 +902,10 @@ class ProfilesEditor(QWidget):
         self.override.addItem(t("Automatic, by the program in front"), "")
         for name in self.profile_names():
             self.override.addItem(name, name)
-        index = self.override.findData(chosen) if chosen else 0
-        self.override.setCurrentIndex(max(0, index))
+        # Matched without regard to case, as profiles.override() matches it.
+        index = next((i for i, name in enumerate(self.profile_names(), start=1)
+                      if name.casefold() == chosen.casefold()), 0) if chosen else 0
+        self.override.setCurrentIndex(index)
         self.override.blockSignals(with_signals)
 
     def _selected(self, _row=None):

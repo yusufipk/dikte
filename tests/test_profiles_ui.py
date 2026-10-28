@@ -173,6 +173,19 @@ class Profiles(DikteTest):
         editor.store(conf)
         self.assertEqual(conf["profile_default"]["learned"], {})
 
+    def test_too_little_to_learn_from_is_left_to_add_to(self):
+        editor = self.editor(self.config(style_learning=True))
+        editor.examples.setPlainText("Ok.")
+        self.assertEqual(editor.learn_from_examples(), {})
+        self.assertEqual(editor.examples.toPlainText(), "Ok.")
+
+    def test_the_override_is_found_whatever_its_case(self):
+        """profiles.override() matches without regard to case, so the box
+        must show the same profile a dictation would use."""
+        conf = self.config(profiles=[{"name": "Chat"}], profile_override="chat")
+        editor = self.editor(conf)
+        self.assertEqual(editor.override.currentData(), "Chat")
+
     def test_switches_round_trip(self):
         conf = self.config(profile_style=False, profile_by_app=False,
                            translation_enabled=False, style_learning=True)
@@ -202,6 +215,15 @@ class Profiles(DikteTest):
                 mock.patch.object(frontapp.shutil, "which",
                                   return_value="/usr/bin/kdotool"):
             self.assertNotIn("kdotool", profiles_ui.ProfilesEditor.detection_text())
+
+    def test_x11_without_xprop_says_so(self):
+        with mock.patch.object(frontapp, "backend", return_value=frontapp._x11), \
+                mock.patch.object(frontapp.shutil, "which", return_value=None):
+            self.assertEqual(profiles_ui.ProfilesEditor.detection_text(),
+                             "On X11, per-application profiles need xprop installed.")
+        with mock.patch.object(frontapp, "backend", return_value=frontapp._x11), \
+                mock.patch.object(frontapp.shutil, "which", return_value="/usr/bin/xprop"):
+            self.assertEqual(profiles_ui.ProfilesEditor.detection_text(), "")
 
     def test_the_kdotool_note_is_translated(self):
         from dikte import i18n

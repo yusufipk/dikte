@@ -171,23 +171,26 @@ class _ProfileLookup:
         self._choose(program, title=title)
 
     def result(self):
-        if self._thread is not None:
+        looked = self._thread is not None
+        if looked:
             self._thread.join(self.WAIT)
-            if self._thread.is_alive():
-                self._thread = None
-                try:
-                    fallback = profiles.choose(self._conf, "", True)
-                except Exception as exc:  # a profile is never worth a dictation
-                    print(f"dikte: could not choose a profile: {exc}",
-                          file=sys.stderr)
-                    fallback = None
-                with self._lock:
-                    # Still asking: the Default profile, said so in the history
-                    # like any other program that could not be found out. Unless
-                    # the answer landed in the moment since the wait ended.
-                    if self._choice is None:
-                        self._choice = fallback
+            self._thread = None
         with self._lock:
+            missing = self._choice is None
+        fallback = None
+        if missing:
+            # Still asking, or the choice failed: the Default profile, said so
+            # in the history like any other program that could not be found
+            # out. None only when even that cannot be worked out.
+            try:
+                fallback = profiles.choose(self._conf, "", looked)
+            except Exception as exc:  # a profile is never worth a dictation
+                print(f"dikte: could not choose a profile: {exc}",
+                      file=sys.stderr)
+        with self._lock:
+            # Unless the answer landed in the moment since the wait ended.
+            if self._choice is None:
+                self._choice = fallback
             self._settled = True
             return self._choice
 
