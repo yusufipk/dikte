@@ -2,6 +2,7 @@
 and what learning may add to them."""
 
 import json
+from unittest import mock
 
 from dikte import config as cfg
 from dikte import dictionary
@@ -97,6 +98,28 @@ class Records(DikteTest):
         self.assertEqual([r["term"] for r in merged], ["Paraşüt", "OpenFrame", "Claude"])
         stored = json.loads(dictionary.path().read_text(encoding="utf-8"))
         self.assertEqual(stored["pending"], {"grafana": [2, 0]})
+
+    def test_a_spelling_learned_while_the_user_typed_it_is_listed_once(self):
+        """The window saved "kubectl" typed in, and learning, in the moment
+        before the file was written, kept "kube cuttle -> kubectl": the hint
+        must not say kubectl twice."""
+        conf = self.config()
+        loaded = self.stored(conf, [("Paraşüt",)])
+        pending = dictionary.save(conf, loaded + [dictionary.entry("kubectl")], loaded)
+        dictionary._write(loaded + [dictionary.entry("kube cuttle", "kubectl", "auto")],
+                          {}, "Paraşüt")
+        merged = dictionary.write(pending)
+        self.assertEqual([(r["term"], r["spelling"]) for r in merged],
+                         [("Paraşüt", ""), ("kubectl", "")])
+        self.assertEqual(conf.dictionary_hint(), "Paraşüt, kubectl")
+
+    def test_one_learned_before_the_save_is_left_out_the_same_way(self):
+        conf = self.config()
+        loaded = self.stored(conf, [("Paraşüt",)])
+        dictionary._write(loaded + [dictionary.entry("kube cuttle", "kubectl", "auto")],
+                          {}, "Paraşüt")
+        merged = self.stored(conf, [("Paraşüt",), ("Kubectl",)], loaded)
+        self.assertEqual([r["term"] for r in merged], ["Paraşüt", "Kubectl"])
 
     def test_a_deletion_in_the_window_is_a_deletion(self):
         conf = self.config()

@@ -331,10 +331,16 @@ def _empty():
     return {"entries": [], "pending": {}, "synced": "", "rejected": [], "clock": 0}
 
 
-def _arrived(current, loaded):
-    """Records on disk that the window never loaded: learned while it was open."""
+def _arrived(current, loaded, edited):
+    """Records on disk that the window never loaded: learned while it was open.
+
+    Not one whose word or spelling `edited` already has as a word or a
+    spelling: a correction learned as "kube cuttle -> kubectl" while the user
+    typed "kubectl" in would otherwise put kubectl in the hint twice."""
     seen = {_key(r["term"]) for r in loaded}
-    return [r for r in current if _key(r["term"]) not in seen]
+    have = {_key(r["term"]) for r in edited} | {_key(hint_of(r)) for r in edited}
+    return [r for r in current if _key(r["term"]) not in seen
+            and _key(r["term"]) not in have and _key(hint_of(r)) not in have]
 
 
 def save(conf, edited, loaded):
@@ -350,7 +356,7 @@ def save(conf, edited, loaded):
     what write() needs."""
     with _LOCK:
         current, _, _ = _state(conf)
-        merged = merge(list(edited), _arrived(current, loaded))
+        merged = merge(list(edited), _arrived(current, loaded, edited))
         text = render_hint(merged)
         conf["transcribe_prompt"] = text
         return merged, list(loaded), text
@@ -366,7 +372,7 @@ def write(pending, forget=False):
     merged, loaded, text = pending
     with _LOCK:
         stored = _read_file() or _empty()
-        merged = merge(merged, _arrived(stored["entries"], loaded))
+        merged = merge(merged, _arrived(stored["entries"], loaded, merged))
         # A learned record the user took out is remembered as refused, so the
         # same word is not learned straight back three dictations later.
         kept = {_key(r["term"]) for r in merged}
