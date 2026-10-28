@@ -551,11 +551,14 @@ zu zum zur im vom beim mir mich dich uns du sie habe haben kann kannst
 bitte danke bis gestern heute morgen viele hat aus ihn ihm jetzt dann kein
 keine uhr wegen hol gib ruf leg schreib schick von mein meine dein unser
 unsere wurde ins sein muss soll herr herrn frau eins zwei drei vier fünf
-sechs sieben acht neun zehn elf zwölf
+sechs sieben acht neun zehn elf zwölf gut gute guten gutes neue neuer neues
+neuen frohe frohes schönes schönen liebe lieber alles sehr nein hier
 """.split())
 # Also everyday words in Turkish (Nur, der, dem, "Excel den" written apart)
-# or in English text (MIT, im, I am, the den): weaker evidence than the rest.
-_GERMAN_SHARED = frozenset("der dem den des mit im am nur".split())
+# or in English text (MIT, I am, Red Hat, let it die, ins and outs): weaker
+# evidence than the rest, so a name made of one can still be learned.
+_GERMAN_SHARED = frozenset(
+    "der dem den des mit im am nur die hat bis aus ins leg elf".split())
 # Letters Turkish writes and German never does.
 _TURKISH = set("ıİşŞğĞ")
 _APOSTROPHES = "'\u2019"
@@ -582,8 +585,10 @@ def capitalises_nouns(language, text):
     text = unicodedata.normalize("NFC", text)
     # A Turkish suffix after an apostrophe (Excel'den, Mac'im) is not a word,
     # and ß is looked for before casefolding, which turns it into "ss".
+    # A word straight after a number is a unit or a time ("9 am"), not German.
     words = [m.group() for m in _WORD.finditer(text)
-             if not (m.start() and text[m.start() - 1] in _APOSTROPHES)]
+             if not (m.start() and text[m.start() - 1] in _APOSTROPHES)
+             and not text[:m.start()].rstrip(" ")[-1:].isdigit()]
     if any("ß" in w or "ä" in w.casefold() for w in words):
         return True
     folded = [w.casefold() for w in words]

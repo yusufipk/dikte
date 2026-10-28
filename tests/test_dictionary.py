@@ -263,7 +263,9 @@ class Learning(DikteTest):
                          "Der Termin mit dem Kunden im Büro",
                          "Unser Team trifft sich am Donnerstag in Raum fünf",
                          "Mein Bruder wohnt in Berlin",
-                         "Erinnerung Zahnarzt um vier"):
+                         "Erinnerung Zahnarzt um vier",
+                         "Gute Nacht, Schatz",
+                         "Neuer Termin am Freitag"):
             with self.subTest(sentence=sentence):
                 self.assertTrue(dictionary.capitalises_nouns("auto", sentence))
         for sentence in ("I am going to push the fix to OpenFrame this morning.",
@@ -281,7 +283,9 @@ class Learning(DikteTest):
                          "Meet me in the den",
                          "Ask the MIT team if the old build can wait until Monday",
                          "Nur Hanım der ki toplantı yarın",
-                         "Sie Ahmet ile konuşsun, toplantı yarın"):
+                         "Sie Ahmet ile konuşsun, toplantı yarın",
+                         "We run Red Hat on all servers with Kubernetes",
+                         "Meeting at 9 am, call Sarah at 11 am"):
             with self.subTest(sentence=sentence):
                 self.assertFalse(dictionary.capitalises_nouns("auto", sentence))
         self.assertTrue(dictionary.capitalises_nouns("de", "We met Ahmet."))
