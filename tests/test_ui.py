@@ -402,6 +402,29 @@ class Settings(DikteTest):
                          [("kube control", "kubectl")])
         self.assertEqual(window.dirty_label.text(), "")
 
+    def test_looking_around_a_fresh_window_is_not_an_edit(self):
+        """Showing a tab raises its page among its siblings, which reorders
+        what findChildren returns; the boxes are compared one to one all the
+        same. Searching the dictionary and picking a profile edit nothing."""
+        conf = self.config(profiles=[{"name": "Chat", "apps": ["slack"]}])
+        window = self.window(conf)
+        tabs = window.tabs
+        for index in range(tabs.count()):
+            tabs.setCurrentIndex(index)
+        tabs.setCurrentWidget(window.profiles_editor.parentWidget().parentWidget())
+        window.profiles_editor.select(1)
+        self.assertEqual(window.dirty_label.text(), "")
+        tabs.setCurrentIndex(tabs.indexOf(tabs.currentWidget()) - 1)
+        inner = window.dictionary_editor.parentWidget().parentWidget()
+        inner.setCurrentWidget(window.dictionary_editor)
+        window.dictionary_editor.search.setText("kube")
+        self.assertEqual(window.dirty_label.text(), "")
+        # An edit still is one, and taking it back again is not.
+        window.auto_paste.toggle()
+        self.assertEqual(window.dirty_label.text(), t("Unsaved changes"))
+        window.auto_paste.toggle()
+        self.assertEqual(window.dirty_label.text(), "")
+
     def test_only_a_save_that_changed_the_language_says_so(self):
         # The owner answers language_changed by replacing the window, so a
         # save that left the language alone must keep quiet.

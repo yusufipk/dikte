@@ -1157,8 +1157,15 @@ class SettingsWindow(QDialog):
         ]
         for box in compact:
             box.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        # Listed once, in a fixed order. findChildren follows the order of the
+        # children, and showing a tab raises its page to the end of that, so a
+        # list read again after the user moved between tabs would compare its
+        # values against the wrong boxes. The editors' own boxes are left out:
+        # a search or a selection there is not an edit, and the editors say
+        # when something was edited.
+        self._form_boxes = self._boxes()
         self._saved_form = self._form_values()
-        for box in self.tabs.findChildren((QLineEdit, QComboBox, QCheckBox, QSpinBox, QPlainTextEdit)):
+        for box in self._form_boxes:
             if isinstance(box, (QLineEdit, QPlainTextEdit)):
                 box.textChanged.connect(self._show_dirty)
             elif isinstance(box, QComboBox):
@@ -1195,12 +1202,15 @@ class SettingsWindow(QDialog):
         self._local_state_timer.timeout.connect(self._show_local_state)
         self._show_local_state()
 
+    def _boxes(self):
+        return [box for box in self.tabs.findChildren(
+                    (QLineEdit, QComboBox, QCheckBox, QSpinBox, QPlainTextEdit))
+                if not profiles_ui.owned(box)]
+
     def _form_values(self):
         values = []
-        for box in self.tabs.findChildren((QLineEdit, QComboBox, QCheckBox, QSpinBox, QPlainTextEdit)):
-            if profiles_ui.owned(box):
-                # The editors report their own contents, below.
-                continue
+        # The editors report their own contents, below.
+        for box in getattr(self, "_form_boxes", None) or self._boxes():
             if isinstance(box, QPlainTextEdit):
                 if not box.isReadOnly():
                     values.append(box.toPlainText())
