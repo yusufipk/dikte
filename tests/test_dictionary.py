@@ -2,11 +2,15 @@
 and what learning may add to them."""
 
 import json
+import os
+import tempfile
 from unittest import mock
+
+from PyQt6.QtCore import QLockFile
 
 from dikte import config as cfg
 from dikte import dictionary
-from tests.support import DikteTest
+from tests.support import DikteTest, posix_only
 
 
 class Migration(DikteTest):
@@ -354,6 +358,74 @@ class Learning(DikteTest):
         self.learn(conf, "It runs on OpenFrame now.", 3)
         self.assertFalse(cfg.CONFIG_FILE.exists())
         self.assertEqual(conf.dictionary_hint(), "Paraşüt, OpenFrame")
+
+
+class Files(DikteTest):
+    """The file is rewritten by the application and by the command line, each
+    from a process of its own."""
+
+    def test_each_write_has_a_temporary_file_of_its_own(self):
+        made, real = [], tempfile.mkstemp
+
+        def mkstemp(**kwargs):
+            made.append(kwargs)
+            return real(**kwargs)
+
+        with mock.patch.object(dictionary.tempfile, "mkstemp", side_effect=mkstemp):
+            dictionary._write([dictionary.entry("Dikte")], {}, "Dikte")
+        self.assertEqual(made[0]["dir"], cfg.CONFIG_DIR)
+        self.assertEqual([p.name for p in cfg.CONFIG_DIR.iterdir()], ["dictionary.json"])
+
+    @posix_only
+    def test_the_words_are_never_readable_by_others(self):
+        old = os.umask(0o022)
+        self.addCleanup(os.umask, old)
+        opened = []
+        real = os.fdopen
+
+        def fdopen(handle, *args, **kwargs):
+            # Already private when the first word goes in.
+            opened.append(os.fstat(handle).st_mode & 0o777)
+            return real(handle, *args, **kwargs)
+
+        with mock.patch.object(dictionary.os, "fdopen", side_effect=fdopen):
+            dictionary._write([dictionary.entry("Dikte")], {}, "Dikte")
+        self.assertEqual(opened, [0o600])
+        self.assertEqual(dictionary.path().stat().st_mode & 0o777, 0o600)
+
+    def test_an_unreadable_file_is_set_aside_not_written_over(self):
+        conf = self.config()
+        cfg.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        dictionary.path().write_text("{not json", encoding="utf-8")
+        broken = cfg.CONFIG_DIR / "dictionary.json.broken"
+        # `dikte history clear`, which used to take it for an empty one.
+        with mock.patch("builtins.print"):
+            cfg.clear_history()
+        self.assertEqual(broken.read_text(encoding="utf-8"), "{not json")
+        self.assertFalse(dictionary.path().exists())
+        dictionary.learn(conf, "It runs on OpenFrame now.", "It runs on OpenFrame now.")
+        self.assertEqual(broken.read_text(encoding="utf-8"), "{not json")
+        self.assertIn("openframe", dictionary._read_file()["pending"])
+
+    def test_a_file_held_by_another_process_is_waited_for(self):
+        """`dikte history delete` in a terminal while the application learns:
+        each takes the file's lock, so neither writes over the other."""
+        conf = self.config()
+        dictionary.learn(conf, "It runs on OpenFrame now.", "It runs on OpenFrame now.")
+        other = QLockFile(str(cfg.CONFIG_DIR / "dictionary.json.lock"))
+        self.assertTrue(other.tryLock(0))
+        self.addCleanup(other.unlock)
+        with mock.patch.object(dictionary, "FILE_LOCK_MS", 20):
+            with self.assertRaises(OSError):
+                dictionary.forget_pending()
+            # Said, not raised, by the history it came with.
+            with mock.patch("builtins.print") as said:
+                cfg.clear_history()
+            self.assertIn("could not forget", said.call_args.args[0])
+        self.assertIn("openframe", dictionary._read_file()["pending"])
+        other.unlock()
+        dictionary.forget_pending()
+        self.assertEqual(dictionary._read_file()["pending"], {})
 
 
 class Corrections(DikteTest):

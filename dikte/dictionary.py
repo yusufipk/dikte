@@ -11,7 +11,9 @@ The records live in dictionary.json next to config.json rather than inside it.
 Learning adds to them from the dictation thread, and config.json is written
 whole by the settings window and by the command line from another process; a
 file of its own, behind a lock of its own, is what keeps a learned entry from
-being written over by a save that never knew about it.
+being written over by a save that never knew about it. The lock is a lock file
+as well as a thread lock, since `dikte history delete` rewrites the file from
+the command line's process while the application may be learning into it.
 
 `transcribe_prompt` is kept, holding the rendered text. An older version, or
 `dikte config set transcribe_prompt`, keeps working on it, and the file
@@ -28,13 +30,18 @@ remembers how many line breaks stood before it, so the text renders back with
 the lines it was typed in.
 """
 
+import contextlib
 import copy
 import difflib
 import json
 import os
+import pathlib
 import re
+import tempfile
 import threading
 import unicodedata
+
+from PyQt6.QtCore import QLockFile
 
 from . import config as cfg
 
@@ -60,11 +67,32 @@ REJECTED_LIMIT = 500
 HINT_BUDGET = 600
 
 _LOCK = threading.Lock()
+# How long to wait for another process holding the file, in milliseconds. A
+# write takes a few; past this the holder is stuck, and the caller is told.
+FILE_LOCK_MS = 5000
 
 
 def path():
     """Read from cfg each time, so a test that moves the config moves this too."""
     return cfg.CONFIG_DIR / "dictionary.json"
+
+
+@contextlib.contextmanager
+def _locked():
+    """Held around every read that is followed by a write: this process's
+    lock, then the file's, for the other processes that write it."""
+    with _LOCK:
+        cfg.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        lock = QLockFile(str(path().with_suffix(".json.lock")))
+        # Stale only when its holder is gone, never by age alone, as with the
+        # application's own lock (ipc.instance_lock).
+        lock.setStaleLockTime(0)
+        if not lock.tryLock(FILE_LOCK_MS):
+            raise OSError(f"{path()} is held by another process")
+        try:
+            yield
+        finally:
+            lock.unlock()
 
 
 def pieces(text):
@@ -309,22 +337,56 @@ def glossary(conf):
     return render_glossary(found)
 
 
+def _read_for_write():
+    """_read_file() for a caller holding _locked() that is about to write. A
+    file that is there but cannot be parsed is set aside first, the way
+    Config.load sets aside a config.json it cannot read, so that the write
+    does not quietly replace whatever was left in it."""
+    stored = _read_file()
+    if stored is not None:
+        return stored
+    try:
+        with open(path(), encoding="utf-8") as fh:
+            unreadable = not isinstance(json.load(fh), dict)
+    except OSError:
+        return None  # not there, or not ours to read: nothing to set aside
+    except ValueError:
+        unreadable = True
+    if unreadable:
+        broken = path().with_suffix(".json.broken")
+        try:
+            path().replace(broken)
+        except OSError:
+            pass
+        else:
+            print(f"dikte: could not read the dictionary; the unreadable file "
+                  f"was kept as {broken}")
+    return None
+
+
 def _write(entries, pending, synced, rejected=(), clock=0):
     # Forgotten first: two writes inside one tick of the file system clock can
-    # leave the same time and size behind, and only this process writes here.
+    # leave the same time and size behind.
     _cache["entry"] = (None, None)
     cfg.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
     target = path()
-    tmp = target.with_suffix(".json.tmp")
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump({"version": 1, "entries": entries, "pending": pending,
-                   "synced": synced, "rejected": list(rejected)[-REJECTED_LIMIT:],
-                   "clock": clock},
-                  fh, ensure_ascii=False, indent=2)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.chmod(tmp, 0o600)
-    cfg._replace_with_retry(tmp, target)
+    # A name of its own, made readable to the user alone from the start rather
+    # than chmodded after the words are already in it.
+    handle, tmp = tempfile.mkstemp(prefix="dictionary.", suffix=".json.tmp",
+                                   dir=cfg.CONFIG_DIR)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as fh:
+            json.dump({"version": 1, "entries": entries, "pending": pending,
+                       "synced": synced, "rejected": list(rejected)[-REJECTED_LIMIT:],
+                       "clock": clock},
+                      fh, ensure_ascii=False, indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())
+        cfg._replace_with_retry(pathlib.Path(tmp), target)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise
 
 
 def _empty():
@@ -370,8 +432,8 @@ def write(pending, forget=False):
     way save() kept what arrived before. `forget` empties the names still
     being counted."""
     merged, loaded, text = pending
-    with _LOCK:
-        stored = _read_file() or _empty()
+    with _locked():
+        stored = _read_for_write() or _empty()
         merged = merge(merged, _arrived(stored["entries"], loaded, merged))
         # A learned record the user took out is remembered as refused, so the
         # same word is not learned straight back three dictations later.
@@ -404,8 +466,8 @@ def forget_pending(texts=None):
     """Drop names still being counted. They are words out of dictations, kept
     only for learning, and go when learning or the history does: all of them,
     or with `texts`, the ones that occur in those texts (the rows deleted)."""
-    with _LOCK:
-        stored = _read_file()
+    with _locked():
+        stored = _read_for_write()
         if stored is None or not stored["pending"]:
             return
         if texts is None:
@@ -789,8 +851,8 @@ def learn(conf, raw, text, speech_language=""):
     heard = {_key(w) for w in _WORD.findall(raw)}
     found = [(term, starts) for term, starts in runs(text)
              if all(_key(w) in heard for w in term.split())]
-    with _LOCK:
-        current, stored, _ = _state(conf)
+    with _locked():
+        current, stored, _ = _state(conf, _read_for_write())
         stored = stored or _empty()
         pending, rejected = stored["pending"], stored["rejected"]
         clock = stored["clock"] + 1
