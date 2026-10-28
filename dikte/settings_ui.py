@@ -2484,10 +2484,15 @@ class SettingsWindow(QDialog):
         clear.clicked.connect(self._clear_history)
         reload_ = QPushButton(t("Reload"))
         reload_.clicked.connect(self._load_history)
+        # Two rows, what acts on the selection above what acts on the list:
+        # in one, the labels no longer fit the home window's column.
         self.history_actions = row = QHBoxLayout()
         row.addWidget(self.history_retry)
         row.addWidget(copy)
         row.addWidget(self.history_original)
+        row.addStretch()
+        layout.addLayout(row)
+        row = QHBoxLayout()
         row.addWidget(delete)
         row.addWidget(clear)
         row.addWidget(reload_)

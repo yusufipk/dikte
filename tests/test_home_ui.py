@@ -144,6 +144,28 @@ class Home(DikteTest):
         self.window.refresh_results()
         self.assertTrue(self.window.original_button.isHidden())
 
+    def test_every_history_button_fits_at_the_default_width(self):
+        """Seven actions in English and in Turkish, in a column the window's
+        default width leaves them: none may be clipped."""
+        for language in ("en", "tr"):
+            with self.subTest(language=language):
+                i18n.set_language(language)
+                settings = self.fixture.window(self.conf)
+                window = home_ui.HomeWindow(self.controller, settings)
+                self.addCleanup(window.deleteLater)
+                self.addCleanup(window.close)
+                window.show()
+                window.show_mode("history")
+                QApplication.processEvents()
+                page = window.mode_pages["history"]
+                buttons = [b for b in page.findChildren(QPushButton) if b.isVisible()]
+                self.assertGreaterEqual(len(buttons), 7)
+                for button in buttons:
+                    self.assertGreaterEqual(button.width(), button.sizeHint().width(),
+                                            button.text())
+                    right = button.mapTo(page, button.rect().topRight()).x()
+                    self.assertLessEqual(right, page.viewport().width(), button.text())
+
     def test_clearing_history_removes_the_latest_preview(self):
         cfg.append_history({"text": "Remove this preview"})
         self.window.refresh_results()
