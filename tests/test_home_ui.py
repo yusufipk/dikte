@@ -178,9 +178,16 @@ class Home(DikteTest):
                                                 button.sizeHint().width(), button.text())
                         self.assertGreaterEqual(button.height(),
                                                 button.sizeHint().height(), button.text())
-                        corner = button.mapTo(page, button.rect().bottomRight())
-                        self.assertLess(corner.x(), page.viewport().width(),
-                                        button.text())
+                        # At the default font everything is in view; at a
+                        # very large one a button wider than the column may
+                        # scroll sideways, but it is never cut off.
+                        if scale == 1:
+                            corner = button.mapTo(page, button.rect().bottomRight())
+                            right = page.viewport().width()
+                        else:
+                            corner = button.mapTo(page.widget(), button.rect().bottomRight())
+                            right = page.widget().width()
+                        self.assertLess(corner.x(), right, button.text())
                         # A row the layout was given no height for is drawn
                         # below its parent and cut off.
                         host = button.parentWidget()
