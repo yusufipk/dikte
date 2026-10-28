@@ -285,6 +285,15 @@ class Pipeline(QObject):
                     selected = assist.result()
                     prompt = selection.build_prompt(
                         question, selected.text, assistant.uses_tools(conf))
+                    system = selection.SYSTEM_PROMPT
+                    # The instruction from Settings, when it is the user's own,
+                    # still holds for a plain question. A run with a selection
+                    # keeps to the strict prompt alone.
+                    own = conf["assistant_prompt"].strip()
+                    if own and not selected.text and own not in (
+                            cfg.ASSISTANT_PROMPT_EN.strip(),
+                            cfg.ASSISTANT_PROMPT_TR.strip()):
+                        system += "\n\n" + own
                     reply, denied = assistant.ask(
                         prompt, conf,
                         on_stage=self.stage.emit,
@@ -295,7 +304,7 @@ class Pipeline(QObject):
                         # run with no tools; a provider that cannot do that
                         # refuses it with a message.
                         tool_free=bool(selected.text),
-                        system=selection.SYSTEM_PROMPT,
+                        system=system,
                     )
                     kind, text = selection.parse_reply(reply, selected.text)
                 warning = "\n".join(x for x in (warning, denied) if x)

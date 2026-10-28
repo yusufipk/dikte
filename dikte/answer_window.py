@@ -102,6 +102,10 @@ class AnswerWindow(QDialog):
         self.bridge.copy_finished.connect(self._copied)
         self.setWindowTitle(t("Dikte: {name}", name=agent) if agent else "Dikte")
         self.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        # The answer can take half a minute, and the user may be typing
+        # somewhere by then: shown without the focus, an Enter meant for
+        # that window cannot press Apply or Copy here.
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.resize(520, 360)
 
         layout = QVBoxLayout(self)

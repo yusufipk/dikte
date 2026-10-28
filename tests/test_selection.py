@@ -678,11 +678,30 @@ class Reply(unittest.TestCase):
         self.assertEqual(selection.parse_reply("[[replace]]\nShorter.", "Long."),
                          (selection.EDIT, "Shorter."))
 
-    def test_an_edit_keeps_the_selections_own_edges(self):
-        """A triple-clicked line keeps its newline, indented code its indent."""
+    def test_an_edit_keeps_the_selections_indent_but_no_line_break(self):
+        """Indented code keeps its indent; a trailing newline pasted into a
+        terminal would run the line, so it is not put back."""
         self.assertEqual(
             selection.parse_reply("[[replace]]\nx = 2\n\n", "    x = 1\n"),
-            (selection.EDIT, "    x = 2\n"))
+            (selection.EDIT, "    x = 2"))
+        self.assertEqual(
+            selection.parse_reply("[[replace]]\nb", "a  \r\n  "),
+            (selection.EDIT, "b  "))
+
+    def test_a_fence_around_the_whole_rewrite_comes_off(self):
+        self.assertEqual(
+            selection.parse_reply("[[replace]]\n```python\nx = 2\ny = 3\n```",
+                                  "x = 1"),
+            (selection.EDIT, "x = 2\ny = 3"))
+
+    def test_fences_inside_the_rewrite_stay(self):
+        reply = "[[replace]]\n```\na\n```\ntext\n```\nb\n```"
+        self.assertEqual(selection.parse_reply(reply, "old")[1],
+                         reply.split("\n", 1)[1])
+
+    def test_an_answer_keeps_its_fence(self):
+        self.assertEqual(selection.parse_reply("[[answer]]\n```\nls\n```", "x"),
+                         (selection.ANSWER, "```\nls\n```"))
 
     def test_an_answer_is_an_answer(self):
         self.assertEqual(selection.parse_reply("[[answer]]\nIt means X.", "t"),
@@ -786,6 +805,17 @@ class Apply(DikteTest):
         with self.assertRaises(paste.PasteError):
             selection.apply("New text.", self.conf)
         self.calls.copy_bytes.assert_not_called()
+
+    def test_a_failed_paste_on_macos_leaves_no_snapshot_files(self):
+        directory = self.path("dikte-clipboard-x")
+        directory.mkdir()
+        (directory / "0-0.bin").write_bytes(b"old")
+        saved = paste._MAC_SNAPSHOT(str(directory), "[]")
+        self.calls.press.side_effect = paste.PasteError("not trusted")
+        with mock.patch.object(selection, "snapshot", return_value=saved):
+            with self.assertRaises(paste.PasteError):
+                selection.apply("New text.", self.conf)
+        self.assertFalse(directory.exists())
 
 
 class Window(DikteTest):
@@ -940,6 +970,15 @@ class Window(DikteTest):
         self.assertIn("&lt;b&gt;", window.selection.toolTip())
         self.assertTrue(window.selection.toolTip().startswith("<qt>"))
         self.assertEqual(window.instruction.textFormat(), Qt.TextFormat.PlainText)
+
+    def test_it_never_takes_the_focus_when_it_opens(self):
+        window, _ = self.make()
+        self.assertTrue(window.testAttribute(
+            Qt.WidgetAttribute.WA_ShowWithoutActivating))
+        with mock.patch.object(window, "activateWindow") as activate:
+            app._present(window, activate=False)
+        activate.assert_not_called()
+        self.assertTrue(window.isVisible())
 
     def test_no_selection_hides_the_selection_line(self):
         window, _ = self.make(selected="", can_apply=False)
@@ -1201,7 +1240,8 @@ class App(DikteTest):
         self.addCleanup(target.answer_window.deleteLater)
         copy.assert_not_called()
         press.assert_not_called()
-        present.assert_called_once_with(target.answer_window)
+        # Shown without the focus, so typing elsewhere cannot press a button.
+        present.assert_called_once_with(target.answer_window, activate=False)
         self.assertEqual(target.ask_state, app.IDLE)
         return target.answer_window
 
@@ -1391,6 +1431,30 @@ class ToolFree(DikteTest):
         self.assertIs(run.ask.call_args.kwargs["tool_free"], True)
         run = chain.run_chain(Chain.grab(""), reply="Lima.")
         self.assertIs(run.ask.call_args.kwargs["tool_free"], False)
+
+    def test_the_users_own_instruction_rides_along_only_without_a_selection(self):
+        chain = Chain("test_an_edit_is_handed_over_not_applied")
+        chain.setUp()
+        self.addCleanup(chain.doCleanups)
+        chain.conf["assistant_prompt"] = "Always answer in French."
+        run = chain.run_chain(Chain.grab(""), reply="Lima.")
+        system = run.ask.call_args.kwargs["system"]
+        self.assertTrue(system.startswith(selection.SYSTEM_PROMPT))
+        self.assertIn("Always answer in French.", system)
+        run = chain.run_chain(Chain.grab("Some text."))
+        self.assertEqual(run.ask.call_args.kwargs["system"], selection.SYSTEM_PROMPT)
+
+    def test_the_default_instruction_never_rides_along(self):
+        """It promises a pasted one-liner, which an answer window is not."""
+        chain = Chain("test_an_edit_is_handed_over_not_applied")
+        chain.setUp()
+        self.addCleanup(chain.doCleanups)
+        for default in (cfg.ASSISTANT_PROMPT_EN, cfg.ASSISTANT_PROMPT_TR, ""):
+            with self.subTest(default=default[:20]):
+                chain.conf["assistant_prompt"] = default
+                run = chain.run_chain(Chain.grab(""), reply="Lima.")
+                self.assertEqual(run.ask.call_args.kwargs["system"],
+                                 selection.SYSTEM_PROMPT)
 
     def test_the_prompt_says_there_are_no_tools_when_text_is_selected(self):
         prompt = selection.build_prompt("summarise", "text", True)

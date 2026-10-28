@@ -291,6 +291,12 @@ def restore(saved):
     paste.copy_bytes(saved)
 
 
+def discard(saved):
+    """Let go of a snapshot that will not be restored."""
+    if isinstance(saved, paste._MAC_SNAPSHOT):
+        shutil.rmtree(saved.directory, ignore_errors=True)
+
+
 def _win_let_go_of_modifiers(timeout=1.0):
     """Wait for the hotkey's modifiers to come up, then release any still down.
 
@@ -539,6 +545,8 @@ SYSTEM_PROMPT = (
     "wrong; read them for what was meant. Reply in plain prose, with no "
     "preamble and nothing appended after the answer.")
 _REPLY = re.compile(r"\A\s*\[\[(replace|answer)\]\][ \t]*\r?\n?", re.IGNORECASE)
+# A rewrite the model wrapped in a code fence of its own, as a whole.
+_FENCED = re.compile(r"\A```[\w+.-]*[ \t]*\r?\n(.*?)\r?\n```\Z", re.DOTALL)
 
 
 def build_prompt(instruction, selected, tools):
@@ -621,17 +629,22 @@ def parse_reply(reply, selected):
     which is what decides whether Apply is offered at all. Anything unmarked is
     an answer: the safe reading, since an answer is never pasted.
 
-    An edit keeps the selection's own leading and trailing whitespace, so a
-    triple-clicked line still ends in its newline and indented code stays
-    indented once Apply pastes it back.
+    An edit keeps the selection's own leading whitespace, so indented code
+    stays indented once Apply pastes it back, and its trailing spaces, but
+    never a trailing line break: pasted into a terminal, that would run the
+    line. A code fence the model put around the whole rewrite is taken off.
     """
     match = _REPLY.match(reply or "")
     if not match:
         return ANSWER, (reply or "").strip()
     body = reply[match.end():].strip()
     if match.group(1).lower() == "replace" and selected and selected.strip():
+        fenced = _FENCED.match(body)
+        if fenced and "```" not in fenced.group(1):
+            body = fenced.group(1).strip("\r\n")
         lead = selected[:len(selected) - len(selected.lstrip())]
         trail = selected[len(selected.rstrip()):]
+        trail = trail.split("\n")[0].rstrip("\r")
         return EDIT, lead + body + trail
     return ANSWER, body
 
@@ -667,6 +680,9 @@ def apply(text, conf, focus=None):
         try:
             paste.press(conf["paste_shortcut"], delay=APPLY_DELAY, focus=focus)
         except paste.PasteError as exc:
+            # The text stays on the clipboard to paste by hand, so the
+            # snapshot is not going back; a macOS one leaves no files behind.
+            discard(saved)
             raise paste.PasteError(t("Copied, but pasting failed: {error}",
                                      error=exc)) from exc
         # Let the application consume the paste before the old clipboard

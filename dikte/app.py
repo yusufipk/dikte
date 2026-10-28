@@ -1386,7 +1386,7 @@ class Dikte:
             bridge=self.answer_bridge,
         )
         self.answer_window = window
-        _present(window)
+        _present(window, activate=False)
 
     def _on_answer_applied(self, _token, error):
         """An Apply finished, for the current window or one long replaced."""
@@ -1749,8 +1749,9 @@ def _clock(seconds):
             else f"{minutes}:{secs:02d}")
 
 
-def _present(window):
-    """Show a window where the user is now, raised and focused.
+def _present(window, activate=True):
+    """Show a window where the user is now, raised and, unless told not to,
+    focused.
 
     A window that was shown once keeps its position when it is shown again,
     and one left open stays on the virtual desktop it was left on, so opening
@@ -1776,7 +1777,8 @@ def _present(window):
         window.move(max(frame.left(), area.left()), max(frame.top(), area.top()))
     window.show()
     window.raise_()
-    window.activateWindow()
+    if activate:
+        window.activateWindow()
 
 
 def main():
