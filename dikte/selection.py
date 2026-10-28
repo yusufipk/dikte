@@ -134,12 +134,20 @@ _TEXT_TARGETS = {"UTF8_STRING", "STRING", "TEXT", "COMPOUND_TEXT"}
 _META_TARGETS = {"TARGETS", "TIMESTAMP", "MULTIPLE", "SAVE_TARGETS", "DELETE",
                  "INSERT_PROPERTY", "INSERT_SELECTION"}
 # Offers that mean an image, other media or files: a clipboard holding one of
-# these is never flattened to text, whatever text form comes beside it.
+# these is never flattened to text, whatever text form comes beside it. KDE's
+# password-manager hint is here too: put back as plain text, a copied password
+# would lose the mark that keeps it out of the clipboard history.
 _BLOCKING_PREFIXES = ("image/", "video/", "audio/", "x-special/")
 _BLOCKING = {"application/x-qt-image", "application/x-kde4-urilist",
              "application/x-kde-cutselection", "application/vnd.portal.files",
              "application/vnd.portal.filetransfer", "application/x-moz-file",
-             "application/x-moz-file-promise", "FILE_NAME", "PIXMAP", "BITMAP"}
+             "application/x-moz-file-promise", "FILE_NAME", "PIXMAP", "BITMAP",
+             "x-kde-passwordManagerHint"}
+# What Windows password managers register beside a copied password, asking
+# clipboard histories and monitors to leave it alone. Restoring writes text
+# only, which would drop the request, so such a clipboard is not touched.
+WIN_PRIVATE_FORMATS = ("ExcludeClipboardContentFromMonitorProcessing",
+                       "CanIncludeInClipboardHistory", "Clipboard Viewer Ignore")
 WAYLAND_TYPES = ["wl-paste", "--list-types"]
 X11_TARGETS = ["xclip", "-selection", "clipboard", "-out", "-target", "TARGETS"]
 
@@ -157,6 +165,8 @@ def snapshot():
         if kind != "text":
             return {"empty": EMPTY, "other": NOT_TEXT,
                     "missing": MISSING}.get(kind, UNAVAILABLE)
+    if here is paste.WINDOWS and _win_clipboard_private():
+        return NOT_TEXT
     previous = paste.read_clipboard()
     if here is paste.WINDOWS:
         # Only text is read there, so b"" is either an empty clipboard or one
@@ -176,11 +186,8 @@ def _linux_clipboard_kind(here):
     an OpenDocument fragment, a link's uri-list). A file manager's copy, a
     copied image and the like are never flattened. An offer of meta targets
     alone is 'other': something owns the clipboard, and what it holds is not
-    known, so it is left alone.
-
-    KDE marks a copied password with x-kde-passwordManagerHint. That form is
-    dropped like any other extra, so a restore puts the password back as
-    plain text, which a clipboard history may then keep.
+    known, so it is left alone. So is a password KDE's password managers
+    marked: see _BLOCKING.
     """
     argv = WAYLAND_TYPES if here is paste.WAYLAND else X11_TARGETS
     if not shutil.which(argv[0]):
@@ -240,6 +247,20 @@ def clipboard_tool():
     if here is paste.X11:
         return X11_TARGETS[0]
     return ""
+
+
+def _win_clipboard_private():
+    """Whether a password manager has asked for the clipboard to be left alone.
+
+    IsClipboardFormatAvailable needs no OpenClipboard, so this cannot collide
+    with the program that put the password there.
+    """
+    try:
+        user32 = paste._win_api()[0]
+        return any(user32.IsClipboardFormatAvailable(
+            user32.RegisterClipboardFormatW(name)) for name in WIN_PRIVATE_FORMATS)
+    except (AttributeError, OSError):
+        return False
 
 
 def _win_clipboard_empty():
@@ -517,8 +538,9 @@ def apply(text, conf, focus=None):
                 "pasted. Install it, or use Copy.", tool=clipboard_tool()))
         if saved is NOT_TEXT:
             raise paste.PasteError(t(
-                "The clipboard holds an image or files, which pasting would "
-                "lose, so nothing was pasted. Use Copy instead."))
+                "The clipboard holds an image, files or a password, which "
+                "could not be put back as they were, so nothing was pasted. "
+                "Use Copy instead."))
         if saved is UNAVAILABLE:
             raise paste.PasteError(t(
                 "The clipboard could not be read just now, so nothing was "

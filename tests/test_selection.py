@@ -101,6 +101,7 @@ class Capture(DikteTest):
         self.patch_attr(selection, "_win_let_go_of_modifiers", self.calls.let_go)
         self.patch_attr(selection, "_win_clipboard_empty", self.calls.win_empty)
         self.calls.win_empty.return_value = False
+        self.patch_attr(selection, "_win_clipboard_private", lambda: False)
         # Linux asks for the clipboard's types first; never the real one.
         self.patch_attr(selection, "_linux_clipboard_kind", lambda here: "text")
 
@@ -347,6 +348,8 @@ class LinuxClipboard(DikteTest):
             b"application/vnd.portal.files\ntext/plain\n": "other",
             b"application/vnd.portal.filetransfer\ntext/plain\n": "other",
             b"application/x-moz-file\ntext/plain\n": "other",
+            # A password from KeePassXC or KWallet on KDE.
+            b"text/plain\nx-kde-passwordManagerHint\nUTF8_STRING\n": "other",
         }
         for offer, expected in cases.items():
             with self.subTest(offer=offer):
@@ -367,6 +370,65 @@ class LinuxClipboard(DikteTest):
             got = selection.capture()
         self.assertEqual(got.text, "picked")
         self.assertEqual(calls.copy.call_args_list, [mock.call(""), mock.call("")])
+
+
+class PasswordManagers(DikteTest):
+    """A copied password is left exactly where it is, marks and all."""
+
+    def user32(self, present=()):
+        ids = {name: 0xC000 + index
+               for index, name in enumerate(selection.WIN_PRIVATE_FORMATS)}
+        available = {ids[name] for name in present}
+        return types.SimpleNamespace(
+            RegisterClipboardFormatW=lambda name: ids[name],
+            IsClipboardFormatAvailable=lambda fmt: fmt in available)
+
+    def snap(self, present):
+        with mock.patch.object(paste, "desktop", return_value=paste.WINDOWS), \
+                mock.patch.object(paste, "_win_api",
+                                  return_value=(self.user32(present), None)), \
+                mock.patch.object(paste, "read_clipboard",
+                                  return_value=b"hunter2") as read:
+            return selection.snapshot(), read
+
+    def test_a_windows_password_is_not_text_and_is_never_read(self):
+        for name in selection.WIN_PRIVATE_FORMATS:
+            with self.subTest(format=name):
+                saved, read = self.snap([name])
+                self.assertIs(saved, selection.NOT_TEXT)
+                read.assert_not_called()
+
+    def test_ordinary_windows_text_is_read_as_before(self):
+        saved, read = self.snap([])
+        self.assertEqual(saved, b"hunter2")
+        read.assert_called_once_with()
+
+    def test_the_copy_is_never_pressed_over_a_password(self):
+        calls = mock.Mock()
+        with mock.patch.object(paste, "desktop", return_value=paste.WINDOWS), \
+                mock.patch.object(selection, "_win_clipboard_private",
+                                  return_value=True), \
+                mock.patch.multiple(paste, copy=calls.copy, press=calls.press,
+                                    read_clipboard=calls.read_clipboard,
+                                    copy_bytes=calls.copy_bytes), \
+                contextlib.redirect_stderr(io.StringIO()):
+            got = selection.capture()
+        self.assertEqual(got, selection.NOTHING)
+        self.assertEqual(calls.mock_calls, [])
+
+    def test_apply_refuses_over_a_kde_password_and_points_to_copy(self):
+        conf = self.config(paste_shortcut="ctrl+v")
+        offer = completed(stdout=b"text/plain\nx-kde-passwordManagerHint\n")
+        with mock.patch.object(paste, "desktop", return_value=paste.WAYLAND), \
+                mock.patch.object(selection.shutil, "which", return_value="wl-paste"), \
+                mock.patch.object(selection.subprocess, "run", return_value=offer), \
+                mock.patch.object(paste, "copy") as copy, \
+                mock.patch.object(paste, "press") as press:
+            with self.assertRaises(paste.PasteError) as caught:
+                selection.apply("New text.", conf)
+        self.assertIn("Use Copy", str(caught.exception))
+        copy.assert_not_called()
+        press.assert_not_called()
 
 
 class Prompt(unittest.TestCase):
@@ -454,7 +516,7 @@ class Apply(DikteTest):
                                return_value=selection.NOT_TEXT) as snap:
             with self.assertRaises(paste.PasteError) as caught:
                 selection.apply("New text.", self.conf)
-        self.assertIn("image or files", str(caught.exception))
+        self.assertIn("image, files or a password", str(caught.exception))
         self.assertEqual(snap.call_count, 1)   # not worth asking again
         self.calls.copy.assert_not_called()
         self.calls.press.assert_not_called()

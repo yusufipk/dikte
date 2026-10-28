@@ -1202,10 +1202,11 @@ TR = {
         "saklanır; düzenlemelerde bu, yeniden yazılmış metindir. Linux'ta en "
         "son vurgulanan metin, vurgu kalktıktan sonra da gönderilebilir. "
         "Windows'ta panoda yalnızca bir resim ya da dosya varsa seçim okunmaz.",
-    "The clipboard holds an image or files, which pasting would lose, so "
-    "nothing was pasted. Use Copy instead.":
-        "Panoda bir resim ya da dosya var ve yapıştırmak onu kaybettirirdi, bu "
-        "yüzden hiçbir şey yapıştırılmadı. Bunun yerine kopyalamayı kullan.",
+    "The clipboard holds an image, files or a password, which could not be "
+    "put back as they were, so nothing was pasted. Use Copy instead.":
+        "Panoda bir resim, dosya ya da parola var ve bunlar olduğu gibi geri "
+        "konamazdı, bu yüzden hiçbir şey yapıştırılmadı. Bunun yerine "
+        "kopyalamayı kullan.",
     "{tool} is needed to check the clipboard, so nothing was pasted. Install "
     "it, or use Copy.":
         "Panoyu denetlemek için {tool} gerekiyor, bu yüzden hiçbir şey "
