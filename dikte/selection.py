@@ -55,7 +55,9 @@ a second before the restore. One later than that is not told apart from a copy
 the user made, so it is left on the clipboard. The half second after the
 restore only catches the same late text coming back, and restores over that
 alone, never over other content (a copy of the user's own, or a password
-manager clearing the clipboard).
+manager clearing the clipboard). A late copy that could not be read at all is
+restored over once more after a settle, whatever is there then, except a clear
+or a clipboard marked private.
 """
 
 import collections
@@ -448,8 +450,11 @@ def restore_past_a_late_copy(saved):
     text is remembered, and should that text land again right after the
     restore (an application that writes twice), it is restored over once
     more. Anything else arriving then is left alone. A late copy whose text
-    could not be read is the one exception: with nothing to compare, any
-    change right after the restore is restored over, as before.
+    could not be read is the one exception: the program holding the
+    clipboard is most likely the one still writing it, and its write may land
+    during the restore or swallow it, so the restore is made once more after
+    a settle, unless what is there by then is a clear (a password manager's)
+    or marked private.
     """
     count = change_count()
     if count is None:
@@ -470,10 +475,11 @@ def restore_past_a_late_copy(saved):
         before = change_count()
         restore(saved, keep=True)
         if late is None:
-            again = _moved(change_count())
-        else:
-            again = bool(late) and _lands_again(before, late)
-        if again:
+            settle_clipboard()
+            now = paste.read_text()
+            if now != "" and not _win_clipboard_private():
+                restore(saved, keep=True)
+        elif late and _lands_again(before, late):
             settle_clipboard()
             restore(saved, keep=True)
     finally:
@@ -608,13 +614,15 @@ def capture(focus=None, cancelled=None, publish=None):
         early, published = None, []
         if publish is not None:
             def early(text):
-                published.append(True)
+                # Only a real read: a press that failed calls this too, with
+                # nothing, and its error is not a restore's.
+                published.append(bool(text))
                 publish(_selected(text, "clipboard"))
         with _paste_lock():
             text = copy_selection(focus, cancelled, early)
         return LEFT_ALONE if text is None else _selected(text, "clipboard")
     except (paste.PasteError, OSError, subprocess.SubprocessError) as exc:
-        what = ("put the clipboard back" if published else "read the selection")
+        what = ("put the clipboard back" if any(published) else "read the selection")
         print(f"dikte: could not {what}: {exc}", file=sys.stderr)
         return NOTHING
 

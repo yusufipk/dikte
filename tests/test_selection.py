@@ -567,8 +567,17 @@ class CopyTiming(DikteTest):
         self.copy()
         self.assertEqual(len(self.restores()), 2)
         self.assertEqual(state["text"], "what was there")
-        # The copy's own polls, then the late text asked for twice.
-        self.assertEqual(len(reads), round(selection.SETTLE / selection.POLL) + 2)
+        # The copy's own polls, the late text asked for twice, then what is
+        # there after the restore.
+        self.assertEqual(len(reads), round(selection.SETTLE / selection.POLL) + 3)
+
+    def test_an_unreadable_late_copy_never_restores_over_a_clear(self):
+        state = self.clipboard(events=[(3, "the selection")], unreadable=True)
+        polls = round(selection.SETTLE / selection.POLL)
+        answers = iter([""] * polls + [None, None, ""])
+        self.patch_attr(paste, "read_text", lambda: next(answers))
+        self.copy()
+        self.assertEqual(len(self.restores()), 1)
 
     def test_a_cancel_after_the_read_does_not_cut_the_settle_short(self):
         cancelled = threading.Event()
@@ -1028,6 +1037,8 @@ class Apply(DikteTest):
         for name in ("read_clipboard", "copy", "copy_bytes", "press"):
             self.patch_attr(paste, name, getattr(self.calls, name))
         self.patch_attr(selection, "_linux_clipboard_kind", lambda here: "text")
+        # Windows asks the clipboard for password markers before a snapshot.
+        self.patch_attr(selection, "_win_clipboard_private", lambda: False)
         self.patch_attr(selection, "change_count", lambda: None)
         self.patch_attr(selection, "_mac_front_back", lambda focus: None)
 
@@ -2148,8 +2159,6 @@ class Session(DikteTest):
                          [{"role": "user", "content": "earlier"}])
 
 
-if __name__ == "__main__":
-    unittest.main()
 
 
 def _check_no_real_tools(test):
@@ -2175,3 +2184,7 @@ for _cls in list(globals().values()):
     if (isinstance(_cls, type) and issubclass(_cls, unittest.TestCase)
             and _cls.__module__ == __name__):
         _guard(_cls)
+
+
+if __name__ == "__main__":
+    unittest.main()
