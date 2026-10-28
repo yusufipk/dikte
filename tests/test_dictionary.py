@@ -241,7 +241,9 @@ class Learning(DikteTest):
                          "Wir treffen uns am Montag im Büro.",
                          "Kannst du mir bitte die Unterlagen zum Termin schicken?",
                          "Hallo Thomas, danke für die schnelle Antwort. Viele Grüße",
-                         "Schick die Rechnung an Müller."):
+                         "Schick die Rechnung an Müller.",
+                         "Ich habe heute mit Barış über das neue Projekt gesprochen und die Termine",
+                         "Termin mit Anna nächste Woche."):
             with self.subTest(sentence=sentence):
                 self.assertTrue(dictionary.capitalises_nouns("auto", sentence))
         for sentence in ("I am going to push the fix to OpenFrame this morning.",
@@ -250,7 +252,11 @@ class Learning(DikteTest):
                          "Raporu Excel’den alıp Notion’a koy, sonra Mac’im üzerinden Slack’e at.",
                          "Nur Hanım’a Excel'den raporu gönder.",
                          "Excel'den rapor gelsin, Mac'im de olsun.",
-                         "Make a temp dir and let the old process finish before we ship it."):
+                         "Make a temp dir and let the old process finish before we ship it.",
+                         "Nur geliyor",
+                         "Ahmet der ki tamam",
+                         "Send it to Ali im Slack",
+                         "Ask Nur and the MIT team"):
             with self.subTest(sentence=sentence):
                 self.assertFalse(dictionary.capitalises_nouns("auto", sentence))
         self.assertTrue(dictionary.capitalises_nouns("de", "We met Ahmet."))

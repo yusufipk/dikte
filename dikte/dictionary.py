@@ -550,6 +550,9 @@ sich auch wird werden sind noch nur oder aber wenn dass schon wie bei nach
 zu zum zur im vom beim mir mich dich uns du sie habe haben kann kannst
 bitte danke bis gestern heute morgen viele
 """.split())
+# Also everyday words in Turkish (Nur, der, dem) or in English text (MIT,
+# im): one of them alone says nothing about a short dictation.
+_GERMAN_SHARED = frozenset("der dem mit im nur".split())
 # Letters Turkish writes and German never does.
 _NOT_GERMAN = set("ıİşŞğĞ")
 _APOSTROPHES = "'\u2019"
@@ -559,19 +562,23 @@ def capitalises_nouns(language, text):
     """Whether the dictation was in a language that capitalises every noun:
     by its code when there is one, and otherwise by its words, German when
     two of them and one word in ten are German's everyday ones, or one of
-    them in a dictation of six words or fewer."""
+    them that only German uses in a dictation of six words or fewer. A
+    Turkish letter asks for three, for a German sentence with a Turkish name
+    in it."""
     code = (language or "").lower()
     if code not in ("", "auto"):
         return code[:2] in _NOUN_CAPITALS
-    if _NOT_GERMAN & set(text):
-        return False
     # A Turkish suffix after an apostrophe (Excel'den, Mac'im) is not a word,
     # and ß is looked for before casefolding, which turns it into "ss".
     words = [m.group() for m in _WORD.finditer(text)
              if not (m.start() and text[m.start() - 1] in _APOSTROPHES)]
-    hits = sum(w.casefold() in _GERMAN or "ß" in w for w in words)
+    folded = [w.casefold() for w in words]
+    hits = sum(f in _GERMAN or "ß" in w or "ä" in f for w, f in zip(words, folded))
+    if _NOT_GERMAN & set(text):
+        return hits >= 3 and hits * 10 >= len(words)
     if len(words) <= 6:
-        return hits >= 1
+        return any((f in _GERMAN and f not in _GERMAN_SHARED) or "ß" in w or "ä" in f
+                   for w, f in zip(words, folded))
     return hits >= 2 and hits * 10 >= len(words)
 
 
