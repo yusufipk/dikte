@@ -30,7 +30,8 @@ tool-free, are not sent one.
 Known limits. PRIMARY outlives the highlight on most desktops, so text
 highlighted earlier can go along with a question meant to stand alone. The
 indicator shows its length and how it begins while the instruction is still
-being recorded, so it can be cancelled before anything is sent, and the answer
+being recorded, so it can be cancelled before anything is sent; a selection
+that never made it on screen is not sent at all (Grab.result), and the answer
 window shows both again. How old a selection is cannot be told: X11's
 TIMESTAMP target counts in the X server's clock, which reading takes a window
 of our own, and Wayland offers no such target at all. Where the copy shortcut is
@@ -509,6 +510,10 @@ class Grab:
         self.focus = focus
         self._result = NOTHING
         self._cancelled = threading.Event()
+        # Set by the application once what was read has been on screen; see
+        # result(). `shown_at` is when, by time.monotonic().
+        self.shown = threading.Event()
+        self.shown_at = None
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
@@ -529,6 +534,10 @@ class Grab:
             # Given up on: it must not go on to press the copy in whatever
             # window has the focus by the time it gets the paste lock.
             self._cancelled.set()
+            return NOTHING
+        # A selection the user was never shown is not sent: it may be one
+        # nobody meant to send, an old PRIMARY or an editor's current line.
+        if self._result.text and not self.shown.is_set():
             return NOTHING
         return self._result
 

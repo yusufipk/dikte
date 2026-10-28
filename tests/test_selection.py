@@ -244,6 +244,8 @@ class Capture(DikteTest):
 
         with mock.patch.object(selection, "capture", side_effect=fake):
             grab = selection.Grab(focus=7)
+            grab._thread.join(2)
+            grab.shown.set()
             self.assertEqual(grab.result(), selection.Selection("x", "primary"))
         self.assertIsNot(seen[0][0], threading.current_thread())
         self.assertEqual(seen[0][1], 7)
@@ -255,6 +257,15 @@ class Capture(DikteTest):
             grab = selection.Grab()
             self.assertEqual(grab.result(timeout=0.05), selection.NOTHING)
             release.set()
+
+    def test_a_selection_never_shown_is_never_sent(self):
+        with mock.patch.object(selection, "capture",
+                               return_value=selection.Selection("old", "primary")):
+            grab = selection.Grab()
+            grab._thread.join(2)
+        self.assertEqual(grab.result(), selection.NOTHING)
+        grab.shown.set()
+        self.assertEqual(grab.result().text, "old")
 
     def test_a_grab_given_up_on_never_presses_the_copy_later(self):
         """Stuck behind a dictation's paste, it must not wake up and press
@@ -1193,7 +1204,9 @@ class App(DikteTest):
         note = target.ask_overlay.set_note.call_args.args[0]
         self.assertTrue(note.startswith("Selected (300 characters): xxx"))
         self.assertLess(len(note), 80)
-        self.assertFalse(target._grab_timer.isActive())
+        grab.shown.set.assert_called_once_with()
+        target._grab_timer.timeout.emit()
+        target.ask_overlay.set_note.assert_called_once()
 
     def test_a_read_finishing_after_the_recording_is_not_shown(self):
         target, grab = self.assist_with(None)
@@ -1202,6 +1215,78 @@ class App(DikteTest):
         target._grab_timer.timeout.emit()
         target.ask_overlay.set_note.assert_not_called()
         self.assertFalse(target._grab_timer.isActive())
+
+    def held(self, read, shown_at=None, now=100.0):
+        target = self.controller(True)
+        grab = mock.Mock(reads=True, shown_at=shown_at)
+        grab.peek.return_value = read
+        target.assist_grab = grab
+        target.ask_state = app.RECORDING
+        target._stop_held_since = None
+        target.ticker = mock.Mock()
+        target._clear_pause = mock.Mock()
+        clock = mock.patch.object(app.time, "monotonic", return_value=now)
+        self.enterContext(clock)
+        return target, grab
+
+    def test_a_stop_before_the_selection_is_read_keeps_recording(self):
+        target, _ = self.held(None)
+        app.Dikte.stop_ask(target)
+        self.assertEqual(target.ask_state, app.RECORDING)
+        target.recorder.stop.assert_not_called()
+
+    def test_a_stop_right_after_the_preview_waits_for_it_to_be_read(self):
+        target, grab = self.held(selection.Selection("secret", "primary"),
+                                 shown_at=99.8)
+        app.Dikte.stop_ask(target)
+        target.recorder.stop.assert_not_called()
+        with mock.patch.object(app.time, "monotonic",
+                               return_value=99.8 + app.ASSIST_PREVIEW_SECONDS):
+            app.Dikte.stop_ask(target)
+        target.recorder.stop.assert_called_once_with()
+        self.assertEqual(target.ask_state, app.BUSY)
+        self.assertIsNone(target._stop_held_since)
+
+    def test_a_preview_already_read_stops_at_once(self):
+        target, _ = self.held(selection.Selection("secret", "primary"), shown_at=90.0)
+        app.Dikte.stop_ask(target)
+        target.recorder.stop.assert_called_once_with()
+
+    def test_nothing_selected_stops_at_once(self):
+        target, _ = self.held(selection.NOTHING)
+        app.Dikte.stop_ask(target)
+        target.recorder.stop.assert_called_once_with()
+
+    def test_a_held_stop_gives_up_holding_in_the_end(self):
+        target, _ = self.held(None)
+        app.Dikte.stop_ask(target)
+        with mock.patch.object(app.time, "monotonic",
+                               return_value=100.0 + app.ASSIST_HOLD_SECONDS):
+            app.Dikte.stop_ask(target)
+        target.recorder.stop.assert_called_once_with()
+
+    def test_a_held_stop_goes_through_on_the_watchers_tick(self):
+        target = self.controller(True)
+        target.ticker = mock.Mock()
+        target._clear_pause = mock.Mock()
+        grab = mock.Mock(reads=True, shown_at=None)
+        grab.peek.return_value = None
+        with mock.patch.object(selection, "Grab", return_value=grab), \
+                mock.patch.object(app.time, "monotonic", return_value=999.0):
+            app.Dikte._toggle_assist(target)
+            self.addCleanup(target._grab_timer.stop)
+            target.last_toggle.clear()
+            app.Dikte._toggle_assist(target)      # the stop, held
+        target.recorder.stop.assert_not_called()
+        grab.peek.return_value = selection.Selection("text", "primary")
+        with mock.patch.object(app.time, "monotonic", return_value=1000.0):
+            target._grab_timer.timeout.emit()     # preview goes up
+        self.assertEqual(grab.shown_at, 1000.0)
+        target.recorder.stop.assert_not_called()
+        with mock.patch.object(app.time, "monotonic", return_value=1001.5):
+            target._grab_timer.timeout.emit()
+        target.recorder.stop.assert_called_once_with()
+        self.assertEqual(target.ask_state, app.BUSY)
 
     def test_nothing_selected_says_so(self):
         target, _ = self.assist_with(selection.NOTHING)

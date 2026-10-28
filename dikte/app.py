@@ -856,20 +856,53 @@ class Dikte:
             timer.stop()
         timer = self._grab_timer = QTimer()
         timer.setInterval(50)
+        self._stop_held_since = None
+        noted = []
 
         def look():
             if self.assist_grab is not grab or self.ask_state != RECORDING:
                 timer.stop()
                 return
-            read = grab.peek()
-            if read is None:
-                return
-            timer.stop()
-            self.ask_overlay.set_note(_grab_note(grab, read))
+            if not noted:
+                read = grab.peek()
+                if read is not None:
+                    noted.append(True)
+                    self.ask_overlay.set_note(_grab_note(grab, read))
+                    if read.text and grab.reads:
+                        grab.shown_at = time.monotonic()
+                        grab.shown.set()
+            # A stop held back for the preview goes through once it can.
+            if getattr(self, "_stop_held_since", None) is not None:
+                self.stop_ask()
 
         timer.timeout.connect(look)
         timer.start()
         look()
+
+    def _hold_for_preview(self):
+        """Whether a stop has to wait for the selection's preview.
+
+        Only a selection that has been on screen is sent (see Grab.result),
+        and a stop pressed before it has been up for ASSIST_PREVIEW_SECONDS
+        keeps recording that much longer, still open to a cancel. Held at
+        most ASSIST_HOLD_SECONDS: a read that has not finished by then is
+        not sent at all.
+        """
+        grab = getattr(self, "assist_grab", None)
+        if grab is None or not getattr(grab, "reads", False):
+            return False
+        read = grab.peek()
+        now = time.monotonic()
+        pending = read is None or bool(read.text) and (
+            grab.shown_at is None
+            or now - grab.shown_at < ASSIST_PREVIEW_SECONDS)
+        if not pending:
+            return False
+        held = getattr(self, "_stop_held_since", None)
+        if held is None:
+            self._stop_held_since = now
+            return True
+        return now - held < ASSIST_HOLD_SECONDS
 
     def _drop_grab(self):
         """A question that will not run: stop its copy if it has not happened."""
@@ -973,8 +1006,9 @@ class Dikte:
         self.recorder.stop()
 
     def stop_ask(self):
-        if self.ask_state != RECORDING:
+        if self.ask_state != RECORDING or self._hold_for_preview():
             return
+        self._stop_held_since = None
         self.cues.play("stop")
         self.ticker.stop()
         self._clear_pause()
@@ -1721,6 +1755,12 @@ class Dikte:
         # reaching atexit and would otherwise leave the models in memory.
         ggml.stop_all()
         self.tray.hide()
+
+
+# How long a selection's preview is up before a stop may send it, and the
+# most a stop is held back waiting for that.
+ASSIST_PREVIEW_SECONDS = 1.0
+ASSIST_HOLD_SECONDS = 3.0
 
 
 def _grab_note(grab, read):
