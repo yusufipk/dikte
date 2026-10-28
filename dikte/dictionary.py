@@ -564,6 +564,15 @@ _TURKISH = set("ıİşŞğĞ")
 _APOSTROPHES = "'\u2019"
 
 
+def _after_number(text, start):
+    """Whether the word at start follows a number, spaces apart: a unit or a
+    time ("9 am"), not German."""
+    i = start - 1
+    while i >= 0 and text[i] == " ":
+        i -= 1
+    return i >= 0 and text[i].isdigit()
+
+
 def capitalises_nouns(language, text):
     """Whether the dictation was in a language that capitalises every noun:
     by its code when there is one, and otherwise by its words.
@@ -585,10 +594,9 @@ def capitalises_nouns(language, text):
     text = unicodedata.normalize("NFC", text)
     # A Turkish suffix after an apostrophe (Excel'den, Mac'im) is not a word,
     # and ß is looked for before casefolding, which turns it into "ss".
-    # A word straight after a number is a unit or a time ("9 am"), not German.
     words = [m.group() for m in _WORD.finditer(text)
              if not (m.start() and text[m.start() - 1] in _APOSTROPHES)
-             and not text[:m.start()].rstrip(" ")[-1:].isdigit()]
+             and not _after_number(text, m.start())]
     if any("ß" in w or "ä" in w.casefold() for w in words):
         return True
     folded = [w.casefold() for w in words]
