@@ -866,7 +866,7 @@ class WithoutAnInstance(DikteTest):
         launch.assert_called_once_with("toggle")
 
     def test_every_verb_that_opens_a_window_can_start_it(self):
-        for verb in ("home", "settings", "toggle", "ask", "meeting"):
+        for verb in ("home", "settings", "toggle", "ask", "meeting", "assist"):
             with self.subTest(verb=verb):
                 self.assertTrue(self.run_verb([verb])[3].called)
 

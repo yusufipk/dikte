@@ -45,7 +45,7 @@ NOT_RUNNING = 3
 # Verbs that start the application when none is running, which is what a
 # shortcut registered with the desktop has always relied on: press the key on a
 # fresh login and Dikte comes up recording.
-GUI_VERBS = {"", "home", "settings", "toggle", "ask", "meeting"}
+GUI_VERBS = {"", "home", "settings", "toggle", "ask", "meeting", "assist"}
 
 # Asking a process that is not there to stop, cancel or quit is not a failure;
 # it is already in the state that was asked for.
