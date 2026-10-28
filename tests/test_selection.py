@@ -557,19 +557,21 @@ class CopyTiming(DikteTest):
         self.assertEqual(self.counts.call_count, 1 + selection.LATE_POLLS + 1)
 
     def test_a_late_copy_that_cannot_be_read_restores_over_any_change(self):
-        """Nothing to compare it with, so the old rule: whatever lands right
-        after the restore is restored over."""
+        """Nothing to compare it with: whatever lands right after the restore,
+        short of a clear or a private copy, is restored over."""
         state = self.clipboard(events=[(3, "the selection"), (14, "again")],
                                unreadable=True)
-        reads = []
-        original = paste.read_text
-        self.patch_attr(paste, "read_text", lambda: reads.append(1) or original())
         self.copy()
-        self.assertEqual(len(self.restores()), 2)
+        self.assertGreaterEqual(len(self.restores()), 2)
         self.assertEqual(state["text"], "what was there")
-        # The copy's own polls, the late text asked for twice, then what is
-        # there after the restore.
-        self.assertEqual(len(reads), round(selection.SETTLE / selection.POLL) + 3)
+        self.calls.discard.assert_called_once_with(b"what was there")
+
+    def test_an_unreadable_late_copy_writing_again_later_is_caught(self):
+        state = self.clipboard(events=[(3, "the selection"), (16, "the selection")],
+                               unreadable=True)
+        self.copy()
+        self.assertEqual(state["text"], "what was there")
+        self.assertGreaterEqual(len(self.restores()), 3)
 
     def test_an_unreadable_late_copy_never_restores_over_a_clear(self):
         state = self.clipboard(events=[(3, "the selection")], unreadable=True)

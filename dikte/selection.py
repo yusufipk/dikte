@@ -475,15 +475,26 @@ def restore_past_a_late_copy(saved):
         before = change_count()
         restore(saved, keep=True)
         if late is None:
-            settle_clipboard()
-            now = paste.read_text()
-            if now != "" and not _win_clipboard_private():
-                restore(saved, keep=True)
+            _restore_over_unreadable(saved)
+            # The writer may still be at it after the settle: one more look,
+            # as long as the watch before the restore lasted.
+            if _moved(change_count()):
+                _restore_over_unreadable(saved)
         elif late and _lands_again(before, late):
             settle_clipboard()
             restore(saved, keep=True)
     finally:
         discard(saved)
+
+
+def _restore_over_unreadable(saved):
+    """Settle, then restore unless the clipboard now holds a clear (a password
+    manager's) or a copy marked private. A private one may be the source's own
+    late copy of a password; it is left for that manager to clear."""
+    settle_clipboard()
+    now = paste.read_text()
+    if now != "" and not _win_clipboard_private():
+        restore(saved, keep=True)
 
 
 def _lands_again(since, late):
