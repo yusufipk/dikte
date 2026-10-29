@@ -40,11 +40,11 @@ up and pasted into the window you were typing in. It runs on Linux, macOS and
          Grafana'da bir panel açtım ve PyQt ile arayüzü bitirdim.
   ```
 - **Writing profiles.** A tone for each program, translation, and a dictionary
-  that learns your names.
+  of your names that can learn them as you correct.
 - **Voice commands.** Say a task to Claude Code, Codex or Antigravity and get
   the answer pasted back, or ask about the text you selected.
 - **Meetings.** Your microphone and the other side are recorded together,
-  written out and turned into minutes.
+  written out and turned into minutes. Not on Windows yet.
 - **Audio and video files** become text or `.srt` subtitles.
 - **History** of every dictation, and a `dikte` command for everything the
   window does.
@@ -53,9 +53,10 @@ up and pasted into the window you were typing in. It runs on Linux, macOS and
 ## Install
 
 Download it from the [releases page](../../releases): an AppImage for Linux, a
-disk image for each Mac and a setup for Windows. On a Mac the first launch is
-refused until you press **Open Anyway** under System Settings → Privacy &
-Security.
+disk image for each Mac and a setup for Windows. The AppImage still needs the
+system packages below. On a Mac the first launch is refused until you press
+**Open Anyway** under System Settings → Privacy & Security, and the shortcut
+there is `Ctrl+Option+Space`.
 
 To install from source on Arch:
 
@@ -69,7 +70,7 @@ dikte
 Fedora, Ubuntu, macOS and Windows have their own steps in
 [docs/install.md](docs/install.md). On KDE the shortcuts start working after
 your next login; until then, turn on the built-in listener under Settings →
-Shortcuts.
+Shortcuts, which needs your user in the `input` group.
 
 ## Using it
 
@@ -81,6 +82,8 @@ Shortcuts.
 | Speak a command to an agent | Tray menu → *Ask Claude*, or `dikte ask` |
 | Start / end a meeting | Tray menu → *Record a meeting*, or `dikte meeting` |
 | Settings | Tray menu → *Settings*, or `dikte settings` |
+| Look for a newer version | General tab → *Check now*, or `dikte update` |
+| Reload after an update | Tray menu → *Restart*, or `dikte restart` |
 | Quit | Tray menu → *Quit*, or `dikte quit` |
 
 How each part works, and where the code for it lives, is in

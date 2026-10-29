@@ -40,11 +40,11 @@ ve o an yazdığın pencereye yapıştırılır. Linux'ta, macOS'ta ve
          Grafana'da bir panel açtım ve PyQt ile arayüzü bitirdim.
   ```
 - **Yazım profilleri.** Her program için ayrı üslup, çeviri ve kullandığın
-  isimleri öğrenen bir sözlük.
+  isimlerin bir sözlüğü; istersen düzelttikçe öğrenir.
 - **Sesli komut.** Claude Code'a, Codex'e ya da Antigravity'ye bir iş söyle,
   cevabı yapıştırılsın; ya da seçtiğin metin hakkında sor.
 - **Toplantılar.** Mikrofonun ve karşı taraf birlikte kaydedilir, yazıya
-  çevrilir ve tutanağa dönüşür.
+  çevrilir ve tutanağa dönüşür. Windows'ta henüz yok.
 - **Ses ve video dosyaları** metne ya da `.srt` altyazıya çevrilir.
 - **Geçmiş** bütün diktelerini tutar, pencerenin yaptığı her şeyin bir de
   `dikte` komutu var.
@@ -53,8 +53,10 @@ ve o an yazdığın pencereye yapıştırılır. Linux'ta, macOS'ta ve
 ## Kurulum
 
 [Sürümler sayfasından](../../releases) indir: Linux için AppImage, her Mac için
-bir disk imajı, Windows için kurulum. Mac'te ilk açılış, Sistem Ayarları →
-Gizlilik ve Güvenlik altından **Yine de Aç** diyene kadar reddedilir.
+bir disk imajı, Windows için kurulum. AppImage yine de aşağıdaki sistem
+paketlerini ister. Mac'te ilk açılış, Sistem Ayarları → Gizlilik ve Güvenlik
+altından **Yine de Aç** diyene kadar reddedilir, kısayol da orada
+`Ctrl+Option+Space`.
 
 Arch'ta kaynaktan kurmak için:
 
@@ -68,7 +70,7 @@ dikte
 Fedora, Ubuntu, macOS ve Windows'un adımları
 [docs/install.tr.md](docs/install.tr.md)'de. KDE'de kısayollar bir sonraki
 oturum açışında çalışmaya başlar; o zamana kadar Ayarlar → Kısayollar'dan
-yerleşik dinleyiciyi aç.
+yerleşik dinleyiciyi aç, bunun için kullanıcının `input` grubunda olması gerekir.
 
 ## Kullanım
 
@@ -80,6 +82,8 @@ yerleşik dinleyiciyi aç.
 | Ajana sesle komut ver | Tepsi menüsü → *Claude'a sor*, ya da `dikte ask` |
 | Toplantıyı başlat / bitir | Tepsi menüsü → *Toplantı kaydet*, ya da `dikte meeting` |
 | Ayarlar | Tepsi menüsü → *Ayarlar*, ya da `dikte settings` |
+| Yeni sürüm var mı bak | Genel sekmesi → *Şimdi bak*, ya da `dikte update` |
+| Güncelleme sonrası yeniden yükle | Tepsi menüsü → *Yeniden başlat*, ya da `dikte restart` |
 | Çık | Tepsi menüsü → *Çık*, ya da `dikte quit` |
 
 Her parçanın nasıl çalıştığı ve kodunun nerede durduğu
