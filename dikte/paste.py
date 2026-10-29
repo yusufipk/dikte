@@ -611,8 +611,9 @@ def _macos_snapshot():
         return None
 
 
-def _macos_restore(snapshot):
-    """Put a native snapshot back, then discard its short-lived files."""
+def _macos_restore(snapshot, keep=False):
+    """Put a native snapshot back, then discard its short-lived files unless
+    asked to keep them for another restore."""
     environment = dict(os.environ, DIKTE_PASTEBOARD_DIR=snapshot.directory)
     try:
         subprocess.run(
@@ -623,7 +624,17 @@ def _macos_restore(snapshot):
     except (OSError, subprocess.SubprocessError):
         pass
     finally:
-        shutil.rmtree(snapshot.directory, ignore_errors=True)
+        if not keep:
+            shutil.rmtree(snapshot.directory, ignore_errors=True)
+
+def _clipboard_environment():
+    """pbcopy and pbpaste take their text encoding from the locale. An app
+    started from Finder or launchd has none, and they then fall back to the
+    system's legacy encoding: UTF-8 goes in and "ç" comes out as "√ß"."""
+    if desktop() is MACOS:
+        return dict(os.environ, LC_ALL="en_US.UTF-8")
+    return None
+
 
 def read_clipboard():
     here = desktop()
@@ -637,10 +648,36 @@ def read_clipboard():
     if not shutil.which(here.read_command[0]):
         return None
     try:
-        res = subprocess.run(here.read_command, capture_output=True, timeout=5)
+        res = subprocess.run(here.read_command, capture_output=True, timeout=5,
+                             env=_clipboard_environment())
     except (subprocess.SubprocessError, OSError):
         return None
     return res.stdout if res.returncode == 0 else None
+
+
+def read_text():
+    """The clipboard as text: '' when it holds none, None when it cannot be read.
+
+    read_clipboard() keeps every byte so a restore is faithful; this is for the
+    one caller that wants to read what is there, a question about a selection.
+    """
+    here = desktop()
+    if here is WINDOWS:
+        return _win_read_text()
+    # Asked for text by name: left to choose, wl-paste hands over the first
+    # type on offer, which need not be text at all.
+    argv = (here.read_command + ["--type", "text"] if here is WAYLAND
+            else here.read_command)
+    if not shutil.which(argv[0]):
+        return None
+    try:
+        res = subprocess.run(argv, capture_output=True, timeout=5,
+                             env=_clipboard_environment())
+    except (subprocess.SubprocessError, OSError):
+        return None
+    # wl-paste and xclip exit non-zero on an empty clipboard, which is the
+    # answer "nothing", not a failure to read.
+    return res.stdout.decode("utf-8", "replace") if res.returncode == 0 else ""
 
 
 def _run_copy(payload):
@@ -652,6 +689,7 @@ def _run_copy(payload):
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
         timeout=10,
+        env=_clipboard_environment(),
     )
 
 
@@ -675,9 +713,9 @@ def copy(text):
                            tool=here.clipboard, code=res.returncode))
 
 
-def copy_bytes(data):
+def copy_bytes(data, keep=False):
     if isinstance(data, _MAC_SNAPSHOT):
-        _macos_restore(data)
+        _macos_restore(data, keep)
         return
     if data is None:
         return

@@ -29,7 +29,7 @@ atexit.register(shutil.rmtree, _SANDBOX, True)
 # back to it, and the tests for "there is no key" would pass only on a machine
 # without one.
 for _var in ("OPENAI_API_KEY", "GROQ_API_KEY", "OPENROUTER_API_KEY",
-             "REQUESTY_API_KEY"):
+             "REQUESTY_API_KEY", "CUSTOM_API_KEY"):
     os.environ.pop(_var, None)
 
 # The interface language leaks through module-level state, so the tests fix it

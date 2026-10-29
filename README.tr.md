@@ -91,14 +91,10 @@ tutar. PyQt6 pip'ten değil brew'dan geliyor, Homebrew'un Python'u içine
 kurulmayı reddediyor; sanal ortam kullanacaksan
 `DIKTE_PYTHON=…/venv/bin/python ./install.sh`.
 
-Orada elle derlenmesi gereken tek parça yerel transkripsiyon: whisper.cpp'nin
-macOS sürümü yok, Homebrew'unki de `WHISPER_BUILD_SERVER=OFF` ile derleniyor,
-yani `whisper-cli` kuruluyor, Dikte'nin konuştuğu sunucu değil. Kendin derle
-(`cmake -B build -DWHISPER_BUILD_SERVER=ON -DGGML_METAL=ON && cmake --build
-build -j`) ve `build/bin/whisper-server` dosyasını `PATH` üzerindeki bir dizine koy,
-ya da buluta çevir. Toplantı için
-BlackHole veya Loopback gerekiyor (`brew install blackhole-2ch`); dikte için
-gerekmiyor.
+Yerel transkripsiyon için whisper.cpp'nin sunucusu gerekiyor, onu
+`brew install whisper.cpp` kuruyor ve Dikte Finder'dan açılsa bile buluyor.
+Toplantı için BlackHole veya Loopback gerekiyor
+(`brew install blackhole-2ch`); dikte için gerekmiyor.
 
 Windows da aynı şekilde çalışıyor, Dikte açıkken kombinasyonu sistemin kendi
 kısayol servisi üzerinden tutuyor. Sürümler sayfasındaki kurulum kaydın
@@ -122,8 +118,8 @@ Temizlemeyi kapatırsan ham transkript yapıştırılır.
 
 | İşlem | Bulut sağlayıcıları | Diğer seçenekler |
 | --- | --- | --- |
-| Sesi yazıya çevirme | OpenAI, Groq, OpenRouter, Requesty | Yerel model |
-| Temizleme | OpenRouter, Requesty, Google AI Studio, DeepSeek, OpenCode Go | Yerel model; Claude Code, Codex veya Antigravity CLI |
+| Sesi yazıya çevirme | OpenAI, Groq, OpenRouter, Requesty, Google AI Studio, OpenAI uyumlu herhangi bir sunucu | Yerel model |
+| Temizleme | OpenRouter, Requesty, Google AI Studio, DeepSeek, OpenCode Go, OpenAI uyumlu herhangi bir sunucu | Yerel model; Claude Code, Codex veya Antigravity CLI |
 
 Modelleri ve temizleme için düşünme seviyesini Ayarlar'dan seçebilirsin. API
 anahtarlarını da buraya girebilirsin; boş bırakılan anahtarlar için
@@ -185,9 +181,10 @@ olmasını ister.
   ölçtüğü seviyeyi yazar, eşiği ona bakarak ayarlarsın.
 - **Yanlış duyulan kelimeler düzeltilir.** Konuşma modelleri özel isimlerde sesçe
   benzer bir şeye kayıyor; temizleme modelinden bunları bağlamdan onarması,
-  bağlam netleştirmiyorsa dokunmaması isteniyor. Temizleme kuralları sekmesine
+  bağlam netleştirmiyorsa dokunmaması isteniyor. Sözlük sekmesine
   yazdığın isimler transkripsiyon modeline ipucu, temizleme modeline sözlük
-  olarak gidiyor; "kuber netis"i tanımasını sağlayan da bu:
+  olarak gidiyor; "kuber netis"i tanımasını sağlayan da bu (programa göre üslup
+  seçen ya da çeviri yapan yazım profilleri de aynı sözlüğü kullanıyor):
 
   ```
   ham    ıı bugün şey kuber netis üzerinde çalışan servisleri güncelledim
@@ -210,8 +207,9 @@ olmasını ister.
   veremiyor, sormadan ne yapabileceğini kendi allow-rule'ları belirliyor.
   OpenRouter, OpenCode Go ya da Requesty ise hiçbiri kurulu olmayan bir
   makinede düz soru
-  cevap için duruyor. Sağlayıcı, model, izinler ve çalışma dizini Ayarlar → Ajan
-  sekmesinde; arka arkaya verilen komutlar tek bir konuşmada kalır.
+  cevap için duruyor. Sağlayıcı, model, izinler ve çalışma dizini, seçili metin
+  hakkında soran isteğe bağlı kısayolla birlikte Ayarlar → Ajan sekmesinde; arka
+  arkaya verilen komutlar tek bir konuşmada kalır.
 - **Toplantılar** mikrofonla hoparlör çıkışından aynı anda kaydedilir; kimin ne
   dediği tahmin edilmez, sesin hangi kanaldan geldiğiyle belli olur. İki taraf
   ayrı ayrı yazıya çevrilip tek bir zaman damgalı transkriptte birleştirilir,
@@ -221,7 +219,8 @@ olmasını ister.
   düşer. Yarıda kalan bir işlem ses kaydını saklar, yeniden denemede parası
   ödenmiş transkriptin üstünden devam eder.
 - **Ses ve video dosyaları** Ayarlar → Ses dosyası sekmesinde aynı modellerden
-  geçer; istersen `[dd:ss]` zaman damgalarıyla, uzun dosyalar ffmpeg ile
+  geçer; istersen `[dd:ss]` zaman damgalarıyla, konuşmacı ayırabilen bir modelde
+  konuşmacı etiketleriyle, uzun dosyalar ffmpeg ile
   parçalanarak, sonuç `.txt` ya da `.srt` altyazı olarak kaydedilerek; temizleme
   burada kendi kurallarıyla, altyazı için yazılmış haliyle çalışır: satırlar
   yerinde kalır, hiçbir şey kısaltılmaz.

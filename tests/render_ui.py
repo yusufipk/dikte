@@ -31,7 +31,7 @@ CASES = (
     ("settings-api", 720, 760), ("settings-assistant", 720, 760),
     ("settings-shortcuts", 720, 640), ("overlay", 220, 48),
 )
-SETTINGS_PAGES = {"general": 0, "display": 1, "api": 2, "assistant": 4, "shortcuts": 6}
+SETTINGS_PAGES = {"general": 0, "display": 1, "api": 2, "assistant": 5, "shortcuts": 7}
 
 
 def settle():

@@ -2,7 +2,9 @@
 
 import contextlib
 import os
+import pathlib
 import queue
+import re
 import subprocess
 import time
 import unittest
@@ -81,6 +83,18 @@ class Table(unittest.TestCase):
         self.assertEqual(hotkey.SHORTCUTS["toggle"].fallback, "Ctrl+Space")
         self.assertEqual([name for name, spec in hotkey.SHORTCUTS.items()
                           if spec.fallback], ["toggle"])
+
+    def test_the_uninstaller_takes_every_one_of_them_back(self):
+        """uninstall.sh is shell and cannot read the table, so it carries the
+        verbs and the desktop files twice; a new shortcut has to be in both."""
+        script = (pathlib.Path(__file__).parents[1] / "scripts"
+                  / "uninstall.sh").read_text("utf-8")
+        verbs = re.search(r"for which in ([\w -]+); do", script).group(1).split()
+        ids = re.search(r"for id in ([\w -]+); do", script).group(1).split()
+        for name, spec in hotkey.SHORTCUTS.items():
+            with self.subTest(name=name):
+                self.assertIn(spec.verb, verbs)
+                self.assertIn(spec.desktop_id.removesuffix(".desktop"), ids)
 
     def test_the_fallback_a_mac_gets_is_not_one_macos_already_holds(self):
         """Ctrl+Space switches the input source there and Cmd+Space is

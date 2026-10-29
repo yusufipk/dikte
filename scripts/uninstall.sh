@@ -95,7 +95,7 @@ echo "──────────────────"
 if ((MACOS)); then
   say "Nothing to unregister: macOS shortcuts live only while Dikte runs."
 elif [[ -n "$PY" ]] && "$PY" -c 'import PyQt6.QtWidgets' 2>/dev/null; then
-  for which in toggle pause cancel ask meeting; do
+  for which in toggle pause cancel ask meeting assist; do
     "$PY" "$ENTRY" shortcut remove "$which" >/dev/null 2>&1 || true
   done
   case "$(PYTHONPATH="$DIR" "$PY" -c 'from dikte import hotkey; print(hotkey.backend())' 2>/dev/null)" in
@@ -177,7 +177,7 @@ if ((!MACOS)); then
   # Removing the shortcut takes its desktop file with it, but an install from
   # before this script existed may have left one behind on a desktop that never
   # used them.
-  for id in dikte-toggle dikte-pause dikte-cancel dikte-ask dikte-meeting; do
+  for id in dikte-toggle dikte-pause dikte-cancel dikte-ask dikte-meeting dikte-assist; do
     if [[ -e "$APP_DIR/$id.desktop" ]]; then
       remove "$APP_DIR/$id.desktop"
     fi

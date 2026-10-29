@@ -231,6 +231,11 @@ class ChunkSeconds(DikteTest):
     def test_a_file_short_enough_on_both_counts_is_not_cut(self):
         self.assertEqual(ft.chunk_seconds(self.file(1024), ft.MAX_CHUNK_SECONDS), 0.0)
 
+    def test_a_smaller_limit_cuts_sooner(self):
+        path = self.file(ft.UPLOAD_LIMIT)
+        self.assertEqual(ft.chunk_seconds(path, 600), 0.0)
+        self.assertLess(ft.chunk_seconds(path, 600, ft.UPLOAD_LIMIT // 2), 300)
+
     def test_a_file_with_no_length_is_left_whole(self):
         self.assertEqual(ft.chunk_seconds(self.file(ft.UPLOAD_LIMIT * 2), 0), 0.0)
 
@@ -302,6 +307,23 @@ class Chunks(DikteTest):
         for path, _ in chunks:
             self.assertTrue(path.endswith(".mp3"))
 
+    def test_google_ai_studio_is_cut_to_its_own_smaller_limit(self):
+        """What the others take in one upload is over Google's, base64 and all."""
+        wav = make_wav(self.path("long.wav"), silence(120))
+        between = (api.GEMINI_AUDIO_LIMIT + ft.UPLOAD_LIMIT) // 2
+
+        def encode(path, workdir, name, *args):
+            out = os.path.join(workdir, name)
+            with open(out, "wb") as fh:
+                fh.write(b"\x00" * (between if name == "audio.mp3" else 1024))
+            return out
+
+        with mock.patch.object(ft, "_to_mp3", side_effect=encode):
+            others = self.worker._chunks(wav, self.root, self.target("openai"), False)
+            google = self.worker._chunks(wav, self.root, self.target("gemini"), False)
+        self.assertEqual(len(others), 1)
+        self.assertGreater(len(google), 1)
+
 
 class Transcriber(DikteTest):
     """The chain, with ffmpeg and both API calls faked."""
@@ -357,6 +379,23 @@ class Transcriber(DikteTest):
         text, segments = done[0]
         self.assertEqual(text, "[00:00] one\n[00:02] two")
         self.assertEqual(len(segments), 2)
+
+    def test_timestamps_on_a_provider_without_them_are_refused_before_converting(self):
+        """Not a plain transcript passed off as the subtitles that were asked for."""
+        self.conf["transcribe_provider"] = "gemini"
+        self.conf["gemini_api_key"] = "AIza-test"
+        done, failures, progress, _ = self.run_chain(timestamps=True)
+        self.assertNotIn("Converting audio…", progress)
+        self.assertEqual(done, [])
+        self.assertIn("Google AI Studio", failures[0])
+        self.assertIn("timestamps", failures[0])
+
+    def test_a_provider_without_timestamps_still_transcribes_plain_text(self):
+        self.conf["transcribe_provider"] = "gemini"
+        self.conf["gemini_api_key"] = "AIza-test"
+        done, failures, _, _ = self.run_chain()
+        self.assertEqual(failures, [])
+        self.assertEqual(done[0][0], "raw text")
 
     def test_no_ffmpeg_installed(self):
         worker = ft.FileTranscriber(self.conf)
@@ -446,6 +485,15 @@ class Transcriber(DikteTest):
         self.assertEqual(call.call_count, ft.RETRIES)
         self.assertIn("502", failures[0])
 
+    def test_a_timeout_is_given_fewer_tries_than_a_refusal(self):
+        """Ten minutes that may have been billed is not asked for seven times."""
+        call = mock.Mock(side_effect=api.ApiError("timed out", None, retryable=True))
+        with mock.patch.object(ft.FileTranscriber, "_wait"):
+            _, failures, _, _ = self.run_chain(fail=call)
+        self.assertEqual(call.call_count, ft.SLOW_RETRIES)
+        self.assertLess(ft.SLOW_RETRIES, ft.RETRIES)
+        self.assertIn("timed out", failures[0])
+
     def test_what_was_heard_before_the_failure_is_still_handed_over(self):
         """An hour already transcribed is not thrown away over the chunk after it."""
         boom = api.ApiError("HTTP 502: timeout", 502)
@@ -470,6 +518,98 @@ class Transcriber(DikteTest):
         self.assertTrue(worker.busy)
         worker.start(self.source, False, False)
         self.assertTrue(worker.busy)
+
+
+class LinkSpeakers(unittest.TestCase):
+    def test_the_first_chunk_is_numbered_in_the_order_voices_are_heard(self):
+        out = ft.link_speakers([], [(0, 1, "a", "B"), (1, 2, "b", "A"), (2, 3, "c", "B")])
+        self.assertEqual([who for *_, who in out], [0, 1, 0])
+
+    def test_labels_swapped_between_chunks_are_put_back(self):
+        before = [(0, 10, "x", 0), (10, 20, "y", 1)]
+        incoming = [(5, 10, "x", "1"), (10, 20, "y", "0"), (20, 30, "z", "1")]
+        out = ft.link_speakers(before, incoming)
+        self.assertEqual([who for *_, who in out], [0, 1, 0])
+
+    def test_a_voice_silent_in_the_overlap_is_matched_by_elimination(self):
+        before = [(0, 10, "x", 0), (10, 20, "y", 1)]
+        incoming = [(15, 20, "y", "0"), (25, 30, "z", "1")]
+        out = ft.link_speakers(before, incoming)
+        self.assertEqual([who for *_, who in out], [1, 0])
+
+    def test_a_voice_back_after_a_chunk_away_keeps_its_number(self):
+        # The chunk before held only voice 1; voice 0 sat it out and is back.
+        before = [(480, 540, "b", 1)]
+        incoming = [(480, 540, "b", "x"), (600, 700, "a", "y")]
+        out = ft.link_speakers(before, incoming, voices=2)
+        self.assertEqual([who for *_, who in out], [1, 0])
+
+    def test_a_newcomer_is_never_given_a_number_already_in_use(self):
+        before = [(0, 10, "x", 2)]
+        incoming = [(5, 10, "x", "a"), (12, 14, "new", "b"), (15, 16, "newer", "c")]
+        out = ft.link_speakers(before, incoming, voices=3)
+        self.assertEqual([who for *_, who in out], [2, 3, 4])
+
+    def test_a_third_voice_gets_a_number_of_its_own(self):
+        before = [(0, 10, "x", 0)]
+        incoming = [(5, 10, "x", "0"), (12, 14, "new", "1")]
+        out = ft.link_speakers(before, incoming)
+        self.assertEqual([who for *_, who in out], [0, 1])
+
+
+class Speakers(DikteTest):
+    def setUp(self):
+        super().setUp()
+        self.source = make_wav(self.path("input.wav"), tone(1.0))
+        self.conf = self.config(openrouter_api_key="sk-or-test",
+                                transcribe_provider="openrouter",
+                                openrouter_file_model="microsoft/mai-transcribe-2")
+
+    def run_chain(self, timestamps, heard):
+        worker = ft.FileTranscriber(self.conf)
+        done = []
+        worker.finished.connect(lambda *args: done.append(args))
+        with mock.patch.object(ft, "_to_wav", side_effect=lambda *a, **k: self.source), \
+                mock.patch.object(ft, "_to_mp3", side_effect=lambda path, *a, **k: path), \
+                mock.patch.object(ft.shutil, "which", return_value="/usr/bin/ffmpeg"), \
+                mock.patch.object(api, "transcribe_speakers", return_value=heard) as call, \
+                mock.patch.object(api, "transcribe_segments",
+                                  return_value=[(0.0, 1.0, "plain")]):
+            worker._work(self.source, timestamps, False, True)
+        return done, call
+
+    def test_every_timestamped_line_and_cue_says_who_spoke(self):
+        done, _ = self.run_chain(True, [(0.0, 1.0, "hi", "A"), (2.0, 3.0, "yo", "B")])
+        text, cues = done[0]
+        self.assertEqual(text, "[00:00] Speaker 1: hi\n[00:02] Speaker 2: yo")
+        self.assertEqual(cues[1], (2.0, 3.0, "Speaker 2: yo"))
+
+    def test_without_timestamps_a_voice_is_one_line_until_it_changes(self):
+        done, _ = self.run_chain(False, [(0.0, 1.0, "hi", "A"), (1.0, 2.0, "there", "A"),
+                                         (2.0, 3.0, "yo", "B")])
+        self.assertEqual(done[0][0], "Speaker 1: hi there\nSpeaker 2: yo")
+        self.assertEqual(done[0][1], [])
+
+    def test_a_long_turn_goes_on_in_new_named_lines(self):
+        line = "word " * 200
+        done, _ = self.run_chain(False, [(float(i), i + 1.0, line, "A") for i in range(20)])
+        lines = done[0][0].split("\n")
+        self.assertGreater(len(lines), 1)
+        self.assertTrue(all(x.startswith("Speaker 1: ") for x in lines))
+        self.assertTrue(all(len(x) < ft.CLEANUP_CHUNK_CHARS for x in lines))
+
+    def test_cleanup_is_not_handed_the_meetings_names(self):
+        self.conf["meeting_self_name"] = "Zeynep"
+        prompt = self.conf.cleanup_prompt(with_timestamps=True, with_speakers=True,
+                                          subtitles=True, participants=False)
+        self.assertNotIn("Zeynep", prompt)
+        self.assertIn("Zeynep", self.conf.cleanup_prompt(with_speakers=True))
+
+    def test_a_model_that_cannot_label_speakers_runs_without_them(self):
+        self.conf["openrouter_file_model"] = ""
+        done, call = self.run_chain(True, [])
+        call.assert_not_called()
+        self.assertEqual(done[0][0], "[00:00] plain")
 
 
 if __name__ == "__main__":

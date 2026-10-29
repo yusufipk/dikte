@@ -570,6 +570,26 @@ class Providers(DikteTest):
         self.assertEqual(code, 0)
         self.assertIn("deepseek: connection works, 1 models visible", out)
 
+    def test_google_ai_studio_lists_its_chat_models_for_transcription_too(self):
+        self.write_config({"gemini_api_key": "AIza-test"})
+        catalog = {"data": [{"id": "models/gemini-3.5-flash-lite"},
+                            {"id": "gemini-embedding-001"}]}
+        with fake_urlopen(catalog) as calls:
+            code, out, _ = self.run_cmd(cli.cmd_models, provider="gemini",
+                                        transcription=True)
+        self.assertEqual(code, 0)
+        self.assertEqual(out.split(), ["gemini-3.5-flash-lite"])
+        self.assertEqual(calls[0].full_url,
+                         "https://generativelanguage.googleapis.com/v1beta/openai/models")
+
+    def test_google_ai_studio_is_tested_once_under_its_own_name(self):
+        self.write_config({"gemini_api_key": "AIza-test"})
+        with fake_urlopen({"data": [{"id": "gemini-3.5-flash-lite"}]}) as calls:
+            code, out, _ = self.run_cmd(cli.cmd_test_key, which="gemini")
+        self.assertEqual(code, 0)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(out.strip(), "✓ gemini: connection works, 1 models visible")
+
     def test_requesty_is_a_choice_and_reports_under_its_own_name(self):
         parser = cli.build_parser()
         self.assertEqual(
@@ -799,6 +819,21 @@ class Finding(DikteTest):
         cfg.append_history({"ts": "now", "text": "only one"})
         self.assertIsNone(cli._find_history("yesterday"))
 
+    def test_deleting_a_row_sets_an_unreadable_dictionary_aside(self):
+        """The command line rewrites the dictionary file to forget the names
+        the row held; one it cannot read is kept, not replaced."""
+        from dikte import dictionary
+        cfg.append_history({"ts": "now", "raw": "on openframe",
+                            "text": "On OpenFrame."})
+        cfg.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        dictionary.path().write_text("{not json", encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = cli.cmd_history_delete(Options(which=["1"]))
+        self.assertEqual(code, 0)
+        self.assertEqual(cfg.read_history(), [])
+        self.assertEqual((cfg.CONFIG_DIR / "dictionary.json.broken")
+                         .read_text(encoding="utf-8"), "{not json")
+
     def test_a_meeting_by_its_stem(self):
         for base in ("20260801-100000", "20260802-110000"):
             cfg.save_meeting({"base": base, "status": "done"})
@@ -866,7 +901,7 @@ class WithoutAnInstance(DikteTest):
         launch.assert_called_once_with("toggle")
 
     def test_every_verb_that_opens_a_window_can_start_it(self):
-        for verb in ("home", "settings", "toggle", "ask", "meeting"):
+        for verb in ("home", "settings", "toggle", "ask", "meeting", "assist"):
             with self.subTest(verb=verb):
                 self.assertTrue(self.run_verb([verb])[3].called)
 
@@ -1131,6 +1166,61 @@ class TranscribeRunsHere(DikteTest):
             cli.cmd_transcribe(opts)
 
         self.assertEqual(ggml.whisper.settings()["model"], "ggml-base.bin")
+
+    def test_the_worker_is_let_finish_its_cleanup_before_exit(self):
+        # Finished arrives before the worker removes its scratch audio, and its
+        # thread is a daemon: exiting straight away left the directory behind.
+        wav = self.path("clip.wav")
+        wav.write_bytes(b"RIFF not really audio")
+        opts = cli.build_parser().parse_args(["transcribe", str(wav)])
+        with mock.patch.object(cli.filetranscribe, "FileTranscriber") as worker, \
+                mock.patch.object(cli, "_headless",
+                                  return_value={"error": "stopped"}), \
+                captured():
+            cli.cmd_transcribe(opts)
+        worker.return_value.wait.assert_called_once()
+
+    def started_with(self, *args):
+        """What the worker was started with, or None if it never was."""
+        wav = self.path("clip.wav")
+        wav.write_bytes(b"RIFF not really audio")
+        opts = cli.build_parser().parse_args(["transcribe", str(wav), *args])
+
+        def headless(begin, on_interrupt=None):
+            begin(lambda result: None)
+            return {"error": "stopped"}
+
+        with mock.patch.object(cli.filetranscribe, "FileTranscriber") as worker, \
+                mock.patch.object(cli, "_headless", side_effect=headless), \
+                captured() as (out, err):
+            code = cli.cmd_transcribe(opts)
+        call = worker.return_value.start.call_args
+        return code, call.args if call else None, out.getvalue() + err.getvalue()
+
+    def test_subtitles_from_a_provider_with_no_timestamps_are_refused(self):
+        self.write_config({"transcribe_provider": "gemini",
+                           "gemini_api_key": "AIza-test"})
+        for flag in ("--srt", "--timestamps"):
+            with self.subTest(flag=flag):
+                code, started, said = self.started_with(flag)
+                self.assertEqual(code, 1)
+                self.assertIsNone(started)
+                self.assertIn("Google AI Studio", said)
+
+    def test_a_stored_timestamps_setting_is_not_held_against_it(self):
+        """The window greys the switch out and keeps the setting for later."""
+        self.write_config({"transcribe_provider": "gemini",
+                           "gemini_api_key": "AIza-test",
+                           "file_timestamps": True})
+        _code, started, _ = self.started_with()
+        self.assertFalse(started[1])
+
+    def test_the_others_still_take_the_stored_setting(self):
+        self.write_config({"transcribe_provider": "openai",
+                           "openai_api_key": "sk-test",
+                           "file_timestamps": True})
+        _code, started, _ = self.started_with()
+        self.assertTrue(started[1])
 
 
 if __name__ == "__main__":

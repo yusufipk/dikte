@@ -172,6 +172,10 @@ TR = {
     "Discarded a stock phrase: “{text}”": "Kalıp cümle atıldı: “{text}”",
     "Discard stock phrases models invent for near-silent audio":
         "Sessize yakın seste modelin uydurduğu kalıp cümleleri at",
+    "Play audio cues when recording changes":
+        "Kayıt durumu değiştiğinde sesli uyarı çal",
+    "A short pattern marks recording start, stop, completion and failure.":
+        "Kısa bir ses deseni kaydın başlamasını, bitmesini, tamamlanmasını ve başarısız olmasını belirtir.",
     "Whisper answers silence with things like “Thanks for watching”.":
         "Whisper sessizliğe “Altyazı M.K.” gibi şeylerle karşılık verir.",
     "Speech also has to rise {margin} dB above the recording's own noise "
@@ -215,20 +219,28 @@ TR = {
     # --- api errors ----------------------------------------------------
     "{service} API key is empty. Add it in Settings.":
         "{service} API anahtarı boş. Ayarlar'dan gir.",
+    "{service} address is empty. Add it in Settings.":
+        "{service} adresi boş. Ayarlar'dan gir.",
+    "{service} address must start with http:// or https://.":
+        "{service} adresi http:// ya da https:// ile başlamalı.",
     "Transcript came back empty.": "Transkript boş döndü.",
     "The cleanup model returned an empty reply.": "Temizleme modeli boş yanıt döndü.",
     "Could not connect: {reason}": "Bağlantı kurulamadı: {reason}",
     "Could not parse the response: {error}": "Yanıt çözümlenemedi: {error}",
 
-    "whisper.cpp has no macOS build, and Homebrew's leaves out the "
-    "server. Build it (cmake -B build -DWHISPER_BUILD_SERVER=ON "
-    "-DGGML_METAL=ON && cmake --build build -j), put the binary "
-    "on the PATH, or transcribe in the cloud. See the README.":
-        "whisper.cpp'nin macOS için hazır paketi yok; Homebrew paketi de "
-        "sunucuyu içermiyor. Sunucuyu derle (cmake -B build "
-        "-DWHISPER_BUILD_SERVER=ON -DGGML_METAL=ON && cmake --build build -j) "
-        "ve whisper-server dosyasını PATH üzerindeki bir dizine koy "
-        "veya bulutta transkripsiyon yap. README'ye bak.",
+    "Graphics capability unknown. The active backend is reported after "
+    "whisper.cpp starts.":
+        "Grafik desteği bilinmiyor. Etkin arka uç whisper.cpp başladıktan sonra "
+        "gösterilir.",
+    "Installed on the system: whisper.cpp {version}\n{path}":
+        "Sistemde kurulu: whisper.cpp {version}\n{path}",
+    "No macOS server download is available here. Install it with "
+    "`brew install whisper.cpp`, then reopen Settings. Dikte detects "
+    "Homebrew's whisper-server automatically. See the README for custom builds.":
+        "Buradan indirilebilen bir macOS sunucusu yok. "
+        "`brew install whisper.cpp` ile kur, ardından Ayarlar'ı yeniden aç. "
+        "Dikte, Homebrew'un whisper-server programını otomatik bulur. "
+        "Özel derlemeler için README'ye bak.",
 
     # --- settings: tabs and general ------------------------------------
     "Dikte Settings": "Dikte Ayarları",
@@ -322,6 +334,13 @@ TR = {
     "(falls back to DEEPSEEK_API_KEY)": "(boşsa DEEPSEEK_API_KEY kullanılır)",
     "(falls back to OPENCODE_API_KEY)": "(boşsa OPENCODE_API_KEY kullanılır)",
     "(falls back to REQUESTY_API_KEY)": "(boşsa REQUESTY_API_KEY kullanılır)",
+    "Custom server": "Özel sunucu",
+    "Custom server address": "Özel sunucu adresi",
+    "OpenAI-compatible, e.g. http://localhost:8000/v1":
+        "OpenAI uyumlu, örneğin http://localhost:8000/v1",
+    "Optional (falls back to CUSTOM_API_KEY)":
+        "İsteğe bağlı (boşsa CUSTOM_API_KEY kullanılır)",
+    "Empty: the server's default model": "Boş: sunucunun varsayılan modeli",
     "Test": "Test et",
     "Trying…": "Deneniyor…",
     "Runs on OpenRouter.": "OpenRouter üzerinde çalışır.",
@@ -329,6 +348,7 @@ TR = {
     "Runs on DeepSeek.": "DeepSeek üzerinde çalışır.",
     "Runs on OpenCode Go.": "OpenCode Go üzerinde çalışır.",
     "Runs on Requesty.": "Requesty üzerinde çalışır.",
+    "Runs on your custom server.": "Özel sunucunda çalışır.",
     "Connection works. {count} audio models visible.":
         "Bağlantı tamam. {count} ses modeli görünüyor.",
     "Connection works. {count} models visible.":
@@ -391,6 +411,26 @@ TR = {
     "Audio and video files": "Ses ve video dosyaları",
     "All files": "Tüm dosyalar",
     "Add timestamps": "Zaman damgası ekle",
+    "Tell the speakers apart": "Konuşmacıları ayır",
+    "Puts who is talking in front of every line. Only offered for the models known "
+    "to label speakers.":
+        "Her satırın başına kimin konuştuğunu yazar. Yalnızca konuşmacıları "
+        "etiketlediği bilinen modellerde çıkar.",
+    "Speaker {number}": "Konuşmacı {number}",
+    "{model} cannot tell speakers apart.": "{model} konuşmacıları ayıramıyor.",
+    "{service} returns no timestamps.": "{service} zaman damgası döndürmüyor.",
+    "{service} returns no timestamps, so it cannot make subtitles or meeting "
+    "transcripts. Pick another speech to text provider in Settings.":
+        "{service} zaman damgası döndürmediği için altyazı ya da toplantı dökümü "
+        "çıkaramıyor. Ayarlar'dan başka bir yazıya çevirme sağlayıcısı seç.",
+    "Gives no timestamps, so subtitles and meetings need another provider.":
+        "Zaman damgası vermez, altyazı ve toplantılar için başka bir sağlayıcı gerekir.",
+    "{service} takes at most {size} MB of audio in one request.":
+        "{service} tek istekte en fazla {size} MB ses kabul ediyor.",
+    "{service} spent its whole reply on thinking and wrote no transcript.":
+        "{service} bütün yanıtını düşünmeye harcadı ve döküm yazmadı.",
+    "{service} wrote no transcript ({reason}).":
+        "{service} döküm yazmadı ({reason}).",
     "Prefixes every segment with [mm:ss]. Uses whisper-1 on whichever provider "
     "you picked, the only model that returns segment times.":
         "Her bölümün başına [dd:ss] koyar. Bölüm zamanı döndüren tek model olan "
@@ -549,6 +589,14 @@ TR = {
         "Geçmiş bu sayıyı aştıktan sonra, her yeni kayıt geldiğinde en eski kayıt "
         "silinir. Hepsini tutmak için 0 yaz.",
     "Delete the {count} selected entries?": "Seçili {count} kayıt silinsin mi?",
+    "Retry": "Tekrar dene",
+    "Transcribe the kept recording of a failed dictation again. The "
+    "text goes to the clipboard.":
+        "Başarısız bir diktenin saklanan kaydını yeniden yazıya döker. Metin "
+        "panoya kopyalanır.",
+    "The recording was kept; select it and press Retry.":
+        "Kayıt saklandı; seçip Tekrar dene'ye bas.",
+    "The recording is no longer there: {path}": "Kayıt artık yerinde değil: {path}",
     "Delete the whole history? This cannot be undone.":
         "Geçmişin tamamı silinsin mi? Bu geri alınamaz.",
 
@@ -559,7 +607,6 @@ TR = {
     "Start a new conversation now": "Şimdi yeni konuşma başlat",
     "Stop {name}": "{name} durdur",
     "Stopping…": "Durduruluyor…",
-    "Stopped.": "Durduruldu.",
     "{name} starts fresh next time.": "{name} bir sonrakine sıfırdan başlayacak.",
     "Dikte: talking to Claude": "Dikte: ajanla konuşuyor",
     "Dikte: recording for Claude": "Dikte: ajan için kaydediyor",
@@ -898,6 +945,13 @@ TR = {
         "deneyin.",
     "Local whisper": "Yerel whisper",
     "Local model": "Yerel model",
+    "Model folder": "Model klasörü",
+    "The folder shared by the local whisper and llama models. Choose "
+    "an ASCII-only path on Windows if your user folder contains "
+    "characters whisper.cpp cannot open. Empty uses the default.":
+        "Yerel whisper ve llama modellerinin ortak klasörü. Windows kullanıcı "
+        "klasörünüzde whisper.cpp'nin açamadığı karakterler varsa yalnızca ASCII "
+        "karakterlerden oluşan bir yol seçin. Boş bırakılırsa varsayılan kullanılır.",
     "Not loaded.": "Yüklü değil.",
     "Loaded; it did not say what it is running on.":
         "Yüklendi; neyin üzerinde çalıştığını söylemedi.",
@@ -1107,7 +1161,7 @@ TR = {
     "A specific graphics card can only be selected with Dikte's managed Vulkan program. Choose Automatic or Processor in Settings.": "Belirli bir ekran kartı yalnızca Dikte'nin yönettiği Vulkan programıyla seçilebilir. Ayarlar'dan Otomatik veya İşlemci'yi seç.",
     "Advanced": "Gelişmiş",
     "Automatic (whisper.cpp default)": "Otomatik (whisper.cpp varsayılanı)",
-    "Automatic lets whisper.cpp choose a graphics card when its build supports one. Processor keeps all speech recognition on the CPU.": "Otomatik seçeneği, kullanılan derleme destekliyorsa ekran kartını whisper.cpp'nin seçmesini sağlar. İşlemci seçeneğinde tüm konuşma tanıma işlemi CPU üzerinde yapılır.",
+    "Automatic lets whisper.cpp choose a graphics card through Metal, CUDA, ROCm or Vulkan when its build supports one. Processor keeps all speech recognition on the CPU.": "Otomatik seçeneği, kullanılan derleme destekliyorsa Metal, CUDA, ROCm veya Vulkan üzerinden bir ekran kartını whisper.cpp'nin seçmesini sağlar. İşlemci seçeneğinde tüm konuşma tanıma işlemi CPU üzerinde yapılır.",
     "CPU threads": "İşlemci iş parçacıkları",
     "CPU-thread limit available to this process: {count}. Automatic lets whisper.cpp choose. More threads are not always faster.": "Bu işlem için kullanılabilir iş parçacığı sınırı: {count}. Otomatik seçeneğinde sayıyı whisper.cpp belirler. Daha fazla iş parçacığı her zaman daha hızlı değildir.",
     "Custom program unavailable: {path}": "Özel program kullanılamıyor: {path}",
@@ -1127,6 +1181,7 @@ TR = {
     "Selected: Processor (CPU).": "Seçili: İşlemci (CPU).",
     "Selected: {name}.": "Seçili: {name}.",
     "The program's graphics device mapping could not be verified.": "Programın ekran kartı eşlemesi doğrulanamadı.",
+    "This whisper.cpp build has no graphics card support, so it always runs on the processor.": "Bu whisper.cpp derlemesinde ekran kartı desteği yok, bu yüzden her zaman işlemcide çalışır.",
     "The saved processing device is invalid. Choose a device in Settings.": "Kayıtlı işlem aygıtı geçersiz. Ayarlar'dan bir aygıt seç.",
     "The selected custom or unmanaged program does not provide verified explicit graphics selection.": "Seçilen özel veya Dikte'nin yönetmediği program, doğrulanmış ekran kartı seçimini desteklemiyor.",
     "The selected graphics card is not available. Choose another processing device in Settings.": "Seçilen ekran kartı kullanılamıyor. Ayarlar'dan başka bir işlem aygıtı seç.",
@@ -1137,4 +1192,180 @@ TR = {
     "{size} system": "{size} sistem belleği",
     "{size} {kind} graphics": "{size} {kind} ekran kartı belleği",
 
+    # Asking about selected text.
+    "Selected text": "Seçili metin",
+    "Ask about the selected text": "Seçili metin hakkında sor",
+    "Select text, press the shortcut and say what to do with it. The answer "
+    "opens in a window; nothing is pasted until you press Apply. The "
+    "selection goes to the agent with no tools, and Codex and Antigravity are "
+    "not sent it. The history keeps your instruction and the reply, not the "
+    "selection.":
+        "Metni seç, kısayola bas ve onunla ne yapılacağını söyle. Cevap bir "
+        "pencerede açılır; Uygula'ya basmadan hiçbir şey yapıştırılmaz. Seçim "
+        "ajana araçsız gönderilir; Codex ve Antigravity'ye hiç gönderilmez. "
+        "Geçmişte seçim değil, talimatın ve cevap saklanır.",
+    "The clipboard was left alone, so no selection was read.":
+        "Panoya dokunulmadı, bu yüzden seçim okunmadı.",
+    "The selection was not shown in time, so it was not sent.":
+        "Seçim zamanında gösterilemedi, bu yüzden gönderilmedi.",
+    "Nothing was pasted. Use Copy instead.":
+        "Hiçbir şey yapıştırılmadı. Bunun yerine kopyalamayı kullan.",
+    "The clipboard holds an image, files or a password, which could not be "
+    "put back as they were.":
+        "Panoda bir resim, dosya ya da parola var ve bunlar olduğu gibi geri "
+        "konamazdı.",
+    "{tool} is needed to check the clipboard.":
+        "Panoyu denetlemek için {tool} gerekiyor.",
+    "The clipboard could not be read just now. Try again in a moment.":
+        "Pano şu an okunamadı. Birazdan yeniden dene.",
+    "{name} cannot run without tools, so selected text is not sent to it. "
+    "Use Claude Code or a chat provider.":
+        "{name} araçsız çalıştırılamadığı için seçili metin ona gönderilmez. "
+        "Claude Code'u ya da bir sohbet sağlayıcısını kullan.",
+    "Dikte: {name}": "Dikte: {name}",
+    "You said: {text}": "Söylediğin: {text}",
+    "About the selection ({count} characters): {preview}":
+        "Seçim hakkında ({count} karakter): {preview}",
+    "Selected ({count} characters): {preview}": "Seçili ({count} karakter): {preview}",
+    "Nothing selected": "Seçili metin yok",
+    "This agent does not read the selection.": "Bu ajan seçili metni okumaz.",
+    "Apply": "Uygula",
+    "Replaces the selected text in the window it came from. Nothing is pasted "
+    "until you press this.":
+        "Seçili metni geldiği pencerede değiştirir. Buna basmadan hiçbir şey "
+        "yapıştırılmaz.",
+    "Cancel": "Vazgeç",
+    "Closes this and leaves the original text alone.":
+        "Pencereyi kapatır, asıl metne dokunmaz.",
+    "Copy failed": "Kopyalanamadı",
+
+
+    # Writing profiles, translation and the personal dictionary.
+    "Default": "Varsayılan",
+    "Profiles": "Profiller",
+    "Copy original": "Orijinali kopyala",
+    "Copy the transcript as it was heard, before it was translated.": "Transkripti çevrilmeden önce, duyulduğu haliyle kopyala.",
+    "  ·  profile: {name}": "  ·  profil: {name}",
+    "  ·  translated into {language}": "  ·  çeviri: {language}",
+    "  ·  translation into {language} failed": "  ·  {language} çevirisi başarısız",
+    "Your own instruction replaces the built-in one. The dictionary, and the style and translation of the profile in use, are still added after it. Switch the profile style off under Profiles to use your instruction alone.": "Kendi talimatın yerleşik talimatın yerine geçer. Sözlük ile kullanılan profilin üslubu ve çevirisi yine de arkasına eklenir. Talimatını tek başına kullanmak için Profiller altında profil üslubunu kapat.",
+    "Could not save the dictionary: {error}": "Sözlük kaydedilemedi: {error}",
+    "Translating into {language}…": "{language} diline çevriliyor…",
+    "Cleaning up ({profile})…": "Temizleniyor ({profile})…",
+    "Translation failed, so the original transcript was copied and not pasted: {error}": "Çeviri başarısız oldu; orijinal transkript kopyalandı ama yapıştırılmadı: {error}",
+    "The program in front is looked up when a recording starts. When it cannot be found out or no profile lists it, the Default profile is used, and the history names the profile and the program.": "Kayıt başladığında öndeki program bulunur. Bulunamazsa ya da hiçbir profil onu listelemiyorsa Varsayılan profil kullanılır; geçmiş, kullanılan profili ve programı yazar.",
+    " ({program})": " ({program})",
+    " (program unknown)": " (program bilinmiyor)",
+    "Dictionary entry": "Sözlük kaydı",
+    "e.g. dikte": "örn. dikte",
+    "Optional, e.g. Dikte": "İsteğe bağlı, örn. Dikte",
+    "Word or expression": "Kelime veya ifade",
+    "Preferred spelling": "Tercih edilen yazım",
+    "Search": "Ara",
+    "Add…": "Ekle…",
+    "Edit…": "Düzenle…",
+    "Added": "Ekleyen",
+    "Auto": "Otomatik",
+    "Auto, heard as: {heard}": "Otomatik, duyulan: {heard}",
+    "Manual": "Elle",
+    "Auto-added": "Otomatik eklenenler",
+    "Manually added": "Elle eklenenler",
+    "Clear auto-learned": "Otomatik öğrenilenleri temizle",
+    "Learn names and terms from my dictations": "Diktelerimden isim ve terim öğren",
+    "Only ordinary dictations are read, and only once they have been cleaned up and finished without a warning: never meetings, files, the agent, translations, the clipboard or other programs. A name written with a capital in the middle of a sentence is added after it has come through three dictations unchanged, marked Auto. So is a misheard word the cleanup puts right the same way three times (Klod Kod to Claude Code), with what it was heard as. Until then what is being counted is kept in the dictionary file. A learned entry you delete is not learned again. The learning runs on this computer; what it adds is sent to the models with the rest of the dictionary.": "Yalnızca sıradan dikteler okunur, o da temizlendikten ve uyarısız bittikten sonra: toplantılar, dosyalar, ajan, çeviriler, pano ya da başka programlar asla okunmaz. Cümle ortasında büyük harfle yazılan bir isim, üç diktede değişmeden geçtikten sonra Otomatik işaretiyle eklenir. Temizlemenin üç kez aynı şekilde düzelttiği, yanlış duyulmuş bir kelime de (Klod Kod yerine Claude Code) nasıl duyulduğuyla birlikte öyle eklenir. O zamana kadar sayılanlar sözlük dosyasında tutulur. Öğrenilmiş bir kaydı silersen bir daha öğrenilmez. Öğrenme bu bilgisayarda yapılır; eklediği kayıtlar sözlüğün geri kalanıyla birlikte modellere gider.",
+    "Names and terms you say often. They go to the transcription model as a hint, and to the cleanup model as a glossary, so it can repair the ones that still come out wrong. Every profile uses the same dictionary, and so do audio files and meetings.": "Sık söylediğin isimler ve terimler. Transkripsiyon modeline ipucu, temizleme modeline sözlük olarak gider; böylece yine yanlış çıkanları düzeltebilir. Bütün profiller aynı sözlüğü kullanır, ses dosyaları ve toplantılar da.",
+    "Leave the spelling empty when the word is already written the way you want it. With one, the cleanup model is told to write the word that way.": "Kelime zaten istediğin gibi yazılıyorsa yazımı boş bırak. Doldurursan temizleme modeline kelimeyi böyle yazması söylenir.",
+    "That word is already in the dictionary.": "Bu kelime sözlükte zaten var.",
+    "What profiles may do": "Profillerin yapabilecekleri",
+    "Apply the writing style of the profile": "Profilin yazım üslubunu uygula",
+    "Adds the profile's preferences to the dictation cleanup instruction. A cleanup instruction of your own replaces the built-in one, and the style is still added after it; switch this off to use your own instruction alone.": "Profilin tercihlerini dikte temizleme talimatına ekler. Kendi temizleme talimatın yerleşik talimatın yerine geçer ve üslup yine de arkasına eklenir; kendi talimatını tek başına kullanmak için bunu kapat.",
+    "Choose the profile by the program in front": "Profili öndeki programa göre seç",
+    "Translate when the profile has a target language": "Profilde hedef dil varsa çevir",
+    "The translation is made after the recording, by the cleanup model, before the text is pasted. It is not live. If it fails, the original transcript is copied and nothing is pasted.": "Çeviri kayıt bittikten sonra, metin yapıştırılmadan önce temizleme modeli tarafından yapılır. Canlı değildir. Başarısız olursa orijinal transkript kopyalanır ve hiçbir şey yapıştırılmaz.",
+    "Use the style learned from examples I paste in": "Yapıştırdığım örneklerden öğrenilen üslubu kullan",
+    "Profile for every dictation": "Bütün diktelerde kullanılacak profil",
+    "Automatic, by the program in front": "Otomatik, öndeki programa göre",
+    "Find the program name": "Program adını bul",
+    "Switch to the program within three seconds; its name is shown here, ready to be listed in a profile.": "Üç saniye içinde programa geç; adı burada, bir profile yazılmaya hazır halde görünür.",
+    "Switch to the program now…": "Şimdi programa geç…",
+    "In front: {name}": "Öndeki: {name}",
+    "The program in front could not be found out.": "Öndeki program bulunamadı.",
+    "On GNOME, per-application profiles need the “Window Calls” GNOME Shell extension installed.": "GNOME'da uygulamaya göre profiller için “Window Calls” GNOME Shell eklentisi kurulu olmalı.",
+    "On KDE Plasma under Wayland, per-application profiles need kdotool installed.": "Wayland altındaki KDE Plasma'da uygulamaya göre profiller için kdotool kurulu olmalı.",
+    "On X11, per-application profiles need xprop installed.": "X11'de uygulamaya göre profiller için xprop kurulu olmalı.",
+    "A profile says how a dictation should read, and can translate it. The Default profile is used unless a named profile lists the program in front when the recording starts. Files, meetings and the agent are never changed by a profile.": "Profil, bir diktenin nasıl okunacağını belirler ve onu çevirebilir. Kayıt başladığında öndeki programı listeleyen adlı bir profil yoksa Varsayılan profil kullanılır. Dosyalar, toplantılar ve ajan hiçbir profilden etkilenmez.",
+    "Add profile…": "Profil ekle…",
+    "Add profile": "Profil ekle",
+    "Rename…": "Yeniden adlandır…",
+    "Rename profile": "Profili yeniden adlandır",
+    "Name": "Ad",
+    "A profile needs a name of its own.": "Profilin kendine ait bir adı olmalı.",
+    "Programs": "Programlar",
+    "e.g. thunderbird, outlook": "örn. thunderbird, outlook",
+    "Program names, separated by commas, the way Find the program name shows them. A browser counts as one program whatever site is open in it.": "Program adları, virgülle ayrılmış ve Program adını bul'un gösterdiği gibi. Tarayıcı, içinde hangi site açık olursa olsun tek bir program sayılır.",
+    "Formality": "Resmiyet",
+    "Sentences": "Cümleler",
+    "Punctuation": "Noktalama",
+    "Brevity": "Kısalık",
+    "Casual": "Samimi",
+    "Neutral": "Nötr",
+    "Formal": "Resmi",
+    "Short": "Kısa",
+    "Longer": "Daha uzun",
+    "Light": "Hafif",
+    "Expressive": "Duygulu",
+    "Concise": "Öz",
+    "Keep the full phrasing": "İfadeyi tam koru",
+    "No preference": "Tercih yok",
+    "e.g. Write numbers as digits": "örn. Sayıları rakamla yaz",
+    "Also": "Ayrıca",
+    "Do not translate": "Çevirme",
+    "Translate into": "Şu dile çevir",
+    "Reset learned style": "Öğrenilen üslubu sıfırla",
+    "Learned from your examples: {preferences}": "Örneklerinden öğrenilen: {preferences}",
+    "Learn the style from examples": "Üslubu örneklerden öğren",
+    "Paste something you wrote, or a dictation and the way you corrected it. It is read on this computer and not kept: only the preferences found in it are, shown above, and a choice you made yourself always wins over a learned one.": "Yazdığın bir metni ya da bir dikteyi ve onu nasıl düzelttiğini yapıştır. Bu bilgisayarda okunur ve saklanmaz: yalnızca içinden çıkan tercihler saklanır ve yukarıda görünür. Kendi yaptığın bir seçim her zaman öğrenilenin önüne geçer.",
+    "Examples of your own writing": "Kendi yazdığın örnekler",
+    "What Dikte wrote (optional)": "Dikte'nin yazdığı (isteğe bağlı)",
+    "What you corrected it to (optional)": "Senin düzelttiğin hali (isteğe bağlı)",
+    "Learn from these": "Bunlardan öğren",
+    "Learned: {preferences}": "Öğrenilen: {preferences}",
+    "{name}: {value}": "{name}: {value}",
+    "Italian": "İtalyanca",
+    "Sites": "Siteler",
+    "Names and terms you use; they help transcription and cleanup.": "Kullandığın isimler ve terimler; transkripsiyona ve temizlemeye yardım eder.",
+    "Learns after three dictations, on this computer.": "Üç dikteden sonra, bu bilgisayarda öğrenir.",
+    "A profile sets how dictation reads, and can translate it.": "Profil, diktenin nasıl okunacağını belirler ve onu çevirebilir.",
+    "Automatic chooses by the program or site in front. A profile picked here is used for every dictation instead.": "Otomatik, öndeki programa ya da siteye göre seçer. Burada seçilen profil bunun yerine bütün diktelerde kullanılır.",
+    "Paste your own writing; only the preferences found in it are kept.": "Kendi yazdığın bir metni yapıştır; yalnızca içinden çıkan tercihler saklanır.",
+    "Per-application profiles are not available on this desktop.": "Uygulamaya göre profiller bu masaüstünde kullanılamıyor.",
+    "Site matching is not available on macOS.": "Site eşleştirme macOS'ta kullanılamıyor.",
+    "Matches the site's name in the browser tab's title.": "Tarayıcı sekmesinin başlığındaki site adıyla eşleşir.",
+    "The profile changed meanwhile; nothing was added.": "Bu arada profil değişti; bir şey eklenmedi.",
+    "{name} is not a browser Dikte knows.": "{name}, Dikte'nin tanıdığı bir tarayıcı değil.",
+    "List it under Programs instead.": "Onu Programlar altına yaz.",
+    "No site in the title; open the site's tab first.": "Başlıkta site yok; önce sitenin sekmesini aç.",
+    "Read from {browser}.": "{browser} okundu.",
+    "Read from {browser}: “{title}”. Double-click a site to change it.": "{browser} okundu: “{title}”. Değiştirmek için siteye çift tıkla.",
+    "Added “{site}”.": "“{site}” eklendi.",
+    "“{site}” is already listed.": "“{site}” zaten listede.",
+    "Not enough to learn from; paste a few more sentences.": "Öğrenmek için yetersiz; birkaç cümle daha yapıştır.",
+    "e.g. WhatsApp, Gmail, YouTube": "örn. WhatsApp, Gmail, YouTube",
+    "Add": "Ekle",
+    "Add site…": "Site ekle…",
+    "Remove site": "Siteyi kaldır",
+    "Counts down three seconds: switch to the browser tab in the meantime, and the site is read from its title.": "Üç saniye geri sayar: bu sırada tarayıcı sekmesine geç, site sekmenin başlığından okunur.",
+    "Site matching is not available on macOS: reading another program's window title needs a permission Dikte does not ask for. Programs still match.": "Site eşleştirme macOS'ta kullanılamıyor: başka bir programın pencere başlığını okumak, Dikte'nin istemediği bir izin gerektiriyor. Programlar yine eşleşir.",
+    "When a dictation starts in a browser, its window title is read once to match these sites. A site matches the site's name in the title, not the text of the page. Titles are never saved: the history keeps only the site that matched. A site wins over a program, so a browser listed above is used for every other site.": "Dikte bir tarayıcıda başladığında, bu sitelerle eşleştirmek için pencere başlığı bir kez okunur. Site, sayfanın metniyle değil, başlıktaki site adıyla eşleşir. Başlıklar asla kaydedilmez: geçmişte yalnızca eşleşen site tutulur. Site programın önüne geçer; yukarıda listelenen bir tarayıcı, diğer bütün siteler için kullanılır.",
+    "Switch to the tab… {seconds}": "Sekmeye geç… {seconds}",
+    "Reading the window in front…": "Öndeki pencere okunuyor…",
+    "  ·  site: {site}": "  ·  site: {site}",
+    "Portuguese": "Portekizce",
+    "Dutch": "Felemenkçe",
+    "Polish": "Lehçe",
+    "Russian": "Rusça",
+    "Ukrainian": "Ukraynaca",
+    "Japanese": "Japonca",
+    "Korean": "Korece",
+    "Chinese": "Çince",
 }

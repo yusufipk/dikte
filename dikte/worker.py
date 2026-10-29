@@ -21,8 +21,11 @@ from . import assistant
 from . import audio
 from . import cleanup
 from . import config as cfg
+from . import dictionary
 from . import i18n
 from . import paste
+from . import profiles
+from . import selection
 from . import vad
 from .i18n import t
 
@@ -43,11 +46,26 @@ RETRY_WAITS = (10, 30, 60, 120)
 _paste_lock = threading.Lock()
 
 
+def is_kept_recording(path):
+    """Whether `path` is a WAV the chain kept in the recordings directory.
+
+    A retry uploads the file and then deletes or moves it, so a history row
+    edited to point anywhere else must come to nothing."""
+    if not path or not str(path).lower().endswith(".wav"):
+        return False
+    real = os.path.realpath(path)
+    return (os.path.dirname(real) == os.path.realpath(cfg.RECORDINGS_DIR)
+            and os.path.isfile(real))
+
+
 class Pipeline(QObject):
     stage = pyqtSignal(str)          # human-readable progress line
     finished = pyqtSignal(str, str, str, str)  # raw, final text, warning, language
     failed = pyqtSignal(str)
     cancelled = pyqtSignal()
+    # A question about selected text: a dict with the instruction, the reply,
+    # whether it is an edit, and what was selected. Never pasted from here.
+    answered = pyqtSignal(object)
 
     def __init__(self, conf, parent=None):
         super().__init__(parent)
@@ -61,13 +79,17 @@ class Pipeline(QObject):
         self._jobs = collections.deque()
         self._draining = False
         self._jobs_lock = threading.Lock()
+        # Kept recordings with a retry queued or running. Two clicks on Retry
+        # must not send one file twice: the first run moves or deletes it, and
+        # the second would fail on a file that is no longer there.
+        self._retrying = set()
 
     @property
     def busy(self):
         return self._thread is not None and self._thread.is_alive()
 
     def run(self, wav_path, duration, rms_values=(), ask=False, paste=None,
-            focus=None):
+            focus=None, retry=None, profile=None, assist=None):
         """`paste` overrides the setting for this one run, which is what a
         dictation asked for from a terminal wants: the text comes back down the
         socket, and pasting it into whatever had focus is nobody's intention.
@@ -78,10 +100,26 @@ class Pipeline(QObject):
         A run started while one is going waits its turn rather than being
         dropped: the next dictation can be spoken while the last one is still
         being cleaned up, and each one is finished, pasted and reported in the
-        order it was spoken."""
+        order it was spoken.
+
+        `retry` is the history row of a failed dictation whose kept recording
+        `wav_path` is. Its outcome takes that row's place rather than adding a
+        new one. False when that recording is already being retried.
+
+        `profile` is the profiles.Choice the recording was started under, or
+        app.py's lookup that will produce one (anything with a result()),
+        carried with the job so a queued run keeps it. None for the agent,
+        which no profile ever shapes.
+
+        `assist` is the selection.Grab of a question about selected text. The
+        reply then goes out on `answered` rather than to the clipboard."""
         with self._jobs_lock:
+            if retry is not None:
+                if wav_path in self._retrying:
+                    return False
+                self._retrying.add(wav_path)
             self._jobs.append((wav_path, duration, list(rms_values), ask, paste,
-                               focus))
+                               focus, retry, profile, assist))
             if self._draining:
                 return
             self._draining = True
@@ -96,7 +134,11 @@ class Pipeline(QObject):
                     self._draining = False
                     return
                 job = self._jobs.popleft()
-            self._work(*job)
+            try:
+                self._work(*job)
+            finally:
+                with self._jobs_lock:
+                    self._retrying.discard(job[0])
 
     def cancel(self):
         """Give up on a job already under way.
@@ -139,14 +181,26 @@ class Pipeline(QObject):
                 self.stage.emit(stage)
 
     def _work(self, wav_path, duration, rms_values, ask, paste_override=None,
-              focus=None):
+              focus=None, retry=None, profile=None, assist=None):
         conf = self.conf
+        if ask:
+            profile = None
         started = time.monotonic()
         raw = ""
+        # The row this run has written, so a failure after it (the clipboard
+        # refusing the text) does not add a second, failed row for the same
+        # dictation.
+        written = None
+
+        if retry is not None and not is_kept_recording(wav_path):
+            self.failed.emit(t("The recording is no longer there: {path}",
+                               path=wav_path))
+            return
 
         # Room tone only: don't spend an API call, and don't invite a
-        # hallucinated sentence back.
-        if conf["skip_silent"]:
+        # hallucinated sentence back. A retry has no levels to judge by, and
+        # its recording passed this check the first time.
+        if conf["skip_silent"] and retry is None:
             stats = vad.analyse(rms_values, CHUNK_SECONDS, conf["speech_margin_db"])
             if vad.is_silent(stats, conf["silence_db"], conf["speech_margin_db"],
                              conf["min_voiced_seconds"]):
@@ -167,11 +221,15 @@ class Pipeline(QObject):
             auto = conf["language"] == "auto"
             # Read once, at the start the run: a retry asks the same request
             # again, not whatever the settings have drifted to since.
-            language, prompt = conf["language"], conf["transcribe_prompt"]
+            language, prompt = conf["language"], conf.dictionary_hint()
+            # Shared by every try, so a dictation sent in pieces does not send
+            # the ones already written down again.
+            heard = api.Heard()
             if auto:
                 raw, detected = self._transcribe(
                     lambda: api.transcribe_detected(
                         target, wav_path, language=language, prompt=prompt,
+                        heard=heard,
                     ),
                     stage,
                 )
@@ -179,14 +237,23 @@ class Pipeline(QObject):
                 raw = self._transcribe(
                     lambda: api.transcribe(
                         target, wav_path, language=language, prompt=prompt,
+                        heard=heard,
                     ),
                     stage,
                 )
                 detected = ""
 
             if conf["filter_hallucinations"] and vad.looks_like_hallucination(raw, duration):
+                message = t("Discarded a stock phrase: “{text}”", text=raw[:60])
+                if retry is not None:
+                    # Asked for by hand, on a recording the user wanted back:
+                    # it stays, and so does its row, now saying why.
+                    self.failed.emit(self._give_up(wav_path, message, duration,
+                                                   target.model or target.provider, retry,
+                                                   profile))
+                    return
                 self._discard(wav_path)
-                self.failed.emit(t("Discarded a stock phrase: “{text}”", text=raw[:60]))
+                self.failed.emit(message)
                 return
 
             text = raw
@@ -199,36 +266,88 @@ class Pipeline(QObject):
             # ask path runs cleanup under a different setting, and the record
             # should say what happened, not what one of the two gates implies.
             cleaned = False
+            # Only now: transcription does not need the profile, so a lookup
+            # still running has had the whole round trip to finish.
+            profile = self._resolved(profile)
+            # A translation is the cleanup model's job too, so asking for one
+            # runs that step even with cleanup switched off; the prompt then
+            # translates without tidying (see Config.cleanup_prompt).
+            translating = bool(profile is not None and profile.translate_to)
+            translation_failed = False
             # Claude reads through “eee” and “hani” without help, so a dictation
             # on its way there is normally sent as it was heard, one API call and
             # a second or two lighter.
-            if (conf["assistant_cleanup"] if ask else conf["cleanup_enabled"]):
-                self.stage.emit(t("Cleaning up…"))
+            if (conf["assistant_cleanup"] if ask
+                    else conf["cleanup_enabled"] or translating):
+                self.stage.emit(self._cleanup_stage(profile))
                 cleaned = True
                 try:
-                    text = cleanup.run(raw, conf, conf.cleanup_prompt(speech=detected))
+                    text = cleanup.run(raw, conf, conf.cleanup_prompt(
+                        speech=detected, profile=profile))
                 except api.ApiError as exc:
                     # Keep the transcript, but never let the failure pass unseen:
                     # a rejected key would otherwise look like working dictation.
                     text = raw
                     warning = str(exc)
+                    if translating:
+                        # The original goes to the clipboard and not into the
+                        # window: the user asked for another language, and
+                        # pasting this one where it was meant to go would be
+                        # a wrong result that looks like a right one.
+                        translation_failed = True
+                        warning = t("Translation failed, so the original "
+                                    "transcript was copied and not pasted: "
+                                    "{error}", error=exc)
                     print(f"dikte: cleanup failed: {exc}", file=sys.stderr)
 
             question = ""
+            selected = selection.NOTHING
+            kind = ""
             if ask:
                 question = text
                 self.stage.emit(t("Asking {name}…", name=i18n.name(
                     assistant.display_name(conf), "dative")))
-                text, denied = assistant.ask(
-                    question, conf,
-                    on_stage=self.stage.emit,
-                    should_stop=self._stop.is_set,
-                )
+                if assist is None:
+                    text, denied = assistant.ask(
+                        question, conf,
+                        on_stage=self.stage.emit,
+                        should_stop=self._stop.is_set,
+                    )
+                else:
+                    # Collected only now: the key press started it, and the
+                    # transcription has given it all the time it needs.
+                    selected = assist.result()
+                    prompt = selection.build_prompt(
+                        question, selected.text, assistant.uses_tools(conf))
+                    system = selection.SYSTEM_PROMPT
+                    # The instruction from Settings, when it is the user's own,
+                    # still holds for a plain question. A run with a selection
+                    # keeps to the strict prompt alone.
+                    own = conf["assistant_prompt"].strip()
+                    if own and not selected.text and own not in (
+                            cfg.ASSISTANT_PROMPT_EN.strip(),
+                            cfg.ASSISTANT_PROMPT_TR.strip()):
+                        system += "\n\n" + own
+                    reply, denied = assistant.ask(
+                        prompt, conf,
+                        on_stage=self.stage.emit,
+                        should_stop=self._stop.is_set,
+                        keep_session=False,
+                        # Selected text was not written by the user and may
+                        # carry instructions of its own, so it only goes to a
+                        # run with no tools; a provider that cannot do that
+                        # refuses it with a message.
+                        tool_free=bool(selected.text),
+                        system=system,
+                    )
+                    kind, text = selection.parse_reply(reply, selected.text)
                 warning = "\n".join(x for x in (warning, denied) if x)
 
             wants_paste = (conf["assistant_paste"] if ask else conf["auto_paste"])
             if paste_override is not None:
                 wants_paste = paste_override
+            if translation_failed:
+                wants_paste = False
 
             # Into the history before the paste is attempted: the record says
             # what was dictated, not whether a key press landed, and a paste
@@ -237,7 +356,7 @@ class Pipeline(QObject):
                 "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "duration": round(duration, 1),
                 "elapsed": round(time.monotonic() - started, 1),
-                "model": target.model,
+                "model": target.model or target.provider,
                 "cleanup_model": cleanup.model(conf) if cleaned else "",
                 "cleanup_error": warning,
                 "mode": "ask" if ask else "",
@@ -248,11 +367,41 @@ class Pipeline(QObject):
                 "raw": raw,
                 "text": text,
             }
-            cfg.append_history(record)
+            if assist is not None:
+                # What kind of reply it was, and nothing of the selection
+                # itself: the history keeps what was said and what came back,
+                # as it does for every command. An edit's reply is a rewrite
+                # of the selection, so much of it is in `text` all the same.
+                record["assist"] = kind
+            # Only when there is something to tell apart, so that a history
+            # written without profiles has the same rows it always had.
+            self._mark(record, profile)
+            if translating:
+                record["translate_to"] = profile.translate_to
+                record["translated"] = not translation_failed
+            if retry is not None:
+                # Listed where it was spoken, not where it was retried.
+                record["ts"] = retry.get("ts") or record["ts"]
+                written = cfg.replace_history(retry, record)
+            if written is None:
+                cfg.append_history(record)
+                written = record
             try:
                 cfg.trim_history(conf["history_limit"])
             except OSError as exc:
                 print(f"dikte: could not trim the history: {exc}", file=sys.stderr)
+
+            if assist is not None:
+                # Shown, never pasted: the answer window decides what happens
+                # to it, and only when the user says so.
+                self.answered.emit({
+                    "instruction": question, "text": text, "kind": kind,
+                    "selection": selected.text, "warning": warning,
+                    "focus": focus, "speech_language": speech_language,
+                    "reads_selection": getattr(assist, "reads", True),
+                    "selection_dropped": bool(getattr(assist, "dropped", False)),
+                })
+                return
 
             with _paste_lock:
                 previous = (paste.read_clipboard()
@@ -276,6 +425,7 @@ class Pipeline(QObject):
                         # has to be told what the paste then did.
                         record = cfg.amend_history(
                             record, cleanup_error=warning) or record
+                        written = record
                 if previous is not None:
                     # Let the focused application consume the temporary
                     # transcription before putting every old clipboard type
@@ -284,18 +434,114 @@ class Pipeline(QObject):
                     paste.copy_bytes(previous)
 
             self.finished.emit(raw, text, warning, speech_language)
+            if (conf["dictionary_learning"] and not ask and retry is None
+                    and cleaned and not translating and not warning):
+                self._learn(raw, text, speech_language)
 
         except assistant.Cancelled:
             self.cancelled.emit()
         except (api.ApiError, paste.PasteError, assistant.AssistantError) as exc:
             print(f"dikte: {exc}", file=sys.stderr)
-            self.failed.emit(self._keeping(wav_path, str(exc)))
+            self.failed.emit(self._failure(wav_path, str(exc), duration, ask,
+                                           written, retry, profile))
         except Exception as exc:  # never fail silently
             traceback.print_exc()
-            self.failed.emit(self._keeping(wav_path, t("Unexpected error: {error}",
-                                                       error=exc)))
+            self.failed.emit(self._failure(
+                wav_path, t("Unexpected error: {error}", error=exc), duration,
+                ask, written, retry, profile))
         finally:
-            self._discard(wav_path)
+            # A retry that did not get its transcript into the history leaves
+            # its recording alone: when the move to a new name failed, the file
+            # where it is now is the only copy of the speech.
+            if retry is None or written is not None:
+                self._discard(wav_path)
+
+    @staticmethod
+    def _cleanup_stage(profile):
+        """The progress line for the cleanup step, naming the profile and the
+        language when there is one to name."""
+        if profile is not None and profile.translate_to:
+            return t("Translating into {language}…", language=t(
+                profiles.language_name(profile.translate_to)))
+        if profile is not None and profile.shown:
+            return t("Cleaning up ({profile})…",
+                     profile=profiles.display_name(profile))
+        return t("Cleaning up…")
+
+    @staticmethod
+    def _mark(record, profile):
+        """Write which profile a row was made under, when that is worth
+        saying. The name, not the Choice: a retry looks it up again."""
+        if profile is not None and profile.shown:
+            record["profile"] = profile.name
+            if profile.id:
+                record["profile_id"] = profile.id
+            # Only when it was asked for: "" then means it could not be found
+            # out, which is worth saying, and a skipped lookup is not.
+            if profile.looked:
+                record["program"] = profile.program
+            # The keyword that matched, never the title it matched in.
+            if profile.site:
+                record["site"] = profile.site
+
+    def _learn(self, raw, text, speech_language):
+        """Hand a finished dictation to the dictionary. Never at the cost of
+        the dictation itself, which has already been delivered."""
+        try:
+            dictionary.learn(self.conf, raw, text, speech_language)
+        except Exception as exc:  # learning is a bonus, not part of the run
+            print(f"dikte: could not learn from the dictation: {exc}",
+                  file=sys.stderr)
+
+    def _failure(self, wav_path, message, duration, ask, written, retry,
+                 profile=None):
+        """The message for a failed run, its audio kept and, for a dictation
+        that left no row of its own, a failed row the history can retry."""
+        if ask or written is not None:
+            return self._keeping(wav_path, message)[0]
+        try:
+            target = self.conf.transcribe_target()
+            # A custom server left to pick its own model has no id to show.
+            model = target.model or target.provider
+        except Exception:  # the settings themselves may be what failed
+            model = ""
+        return self._give_up(wav_path, message, duration, model, retry, profile)
+
+    @staticmethod
+    def _resolved(profile):
+        """A lookup still working out the program in front, handed over by
+        app.py so that the main thread never waits on it, becomes its Choice.
+        This thread may wait."""
+        return profile.result() if hasattr(profile, "result") else profile
+
+    def _give_up(self, wav_path, message, duration, model, retry, profile=None):
+        """Keep the audio and record the dictation as failed, so the history
+        shows it with a way to try again. A retry that failed once more updates
+        its own row instead of adding another."""
+        profile = self._resolved(profile)
+        message, kept = self._keeping(wav_path, message)
+        if not kept:
+            return message
+        record = {
+            "ts": (retry or {}).get("ts") or time.strftime("%Y-%m-%d %H:%M:%S"),
+            "duration": round(duration, 1),
+            "model": model,
+            "mode": "",
+            "failed": True,
+            "error": message.splitlines()[0] if message else "",
+            "audio": kept,
+            "raw": "",
+            "text": "",
+        }
+        # A retry is run under the profile it was first spoken under.
+        self._mark(record, profile)
+        try:
+            if retry is None or cfg.replace_history(retry, record) is None:
+                cfg.append_history(record)
+                cfg.trim_history(self.conf["history_limit"])
+        except OSError as exc:
+            print(f"dikte: could not record the failure: {exc}", file=sys.stderr)
+        return message
 
     def _keeping(self, wav_path, message):
         """Put the failed run's audio somewhere a retry can find it.
@@ -303,12 +549,14 @@ class Pipeline(QObject):
         A dictation that died on the way to the model is speech the user cannot
         say again from memory; deleting it because a server was down turns one
         failure into two. Kept regardless of the keep_audio setting, which is
-        about the runs that succeeded.
+        about the runs that succeeded. The message and the kept path, '' when
+        the move failed.
         """
         kept = self._keep(wav_path)
         if not kept:
-            return message
-        return message + "\n" + t("The recording was kept: {path}", path=kept)
+            return message, ""
+        return (message + "\n" + t("The recording was kept: {path}", path=kept),
+                kept)
 
     def _keep(self, wav_path):
         """Move the WAV into the recordings directory; its new path, or ''."""
@@ -331,6 +579,10 @@ class Pipeline(QObject):
         if not os.path.exists(wav_path):
             return
         if self.conf["keep_audio"]:
+            # A retried recording is already where kept audio lives.
+            if os.path.dirname(os.path.realpath(wav_path)) == \
+                    os.path.realpath(cfg.RECORDINGS_DIR):
+                return
             if self._keep(wav_path):
                 return
             # The move failing is no reason to delete what the user asked to

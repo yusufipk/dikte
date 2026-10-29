@@ -29,6 +29,7 @@ from dikte import ipc
 from dikte import overlay as overlay_module
 from dikte import paste
 from dikte import settings_ui
+from dikte import theme
 from dikte import update
 from dikte.i18n import t
 from tests.support import DikteTest, only_these_tools
@@ -40,6 +41,7 @@ REAL_LOAD_HOSTED_MODELS = settings_ui.SettingsWindow._load_hosted_models
 REAL_REFRESH_PROCESSING_DEVICES = (
     settings_ui.SettingsWindow._refresh_processing_devices
 )
+REAL_LOAD_TRANSCRIBE_MODELS = settings_ui.SettingsWindow._load_transcribe_models
 
 # One application for the whole run; Qt allows no second one.
 _app = QApplication.instance() or QApplication([])
@@ -61,6 +63,7 @@ CHANGED = {
     "skip_silent": False,
     "silence_db": -42.0,
     "filter_hallucinations": False,
+    "audio_cues": True,
     "keep_audio": True,
     "start_in_tray": False,
     "openai_api_key": "sk-test-key",
@@ -74,6 +77,7 @@ CHANGED = {
     "groq_transcribe_model": "whisper-large-v3",
     "openrouter_transcribe_model": "openai/whisper-1",
     "requesty_transcribe_model": "openai/whisper-1",
+    "gemini_transcribe_model": "gemini-3.1-flash-lite",
     "cleanup_enabled": False,
     "cleanup_provider": "local",
     "cleanup_model": "some/other-model",
@@ -99,6 +103,17 @@ CHANGED = {
     "cleanup_prompt": "Only fix the punctuation.",
     "file_cleanup_prompt": "Keep the stamps where they are.",
     "transcribe_prompt": "Paraşüt, OpenFrame",
+    "dictionary_learning": True,
+    "profile_style": False,
+    "profile_by_app": False,
+    "translation_enabled": False,
+    "style_learning": True,
+    "profile_override": "Email",
+    "profile_default": {"style": {"brevity": "concise"}, "learned": {},
+                        "instruction": "Keep it short.", "translate_to": ""},
+    "profiles": [{"style": {"formality": "formal"}, "learned": {},
+                  "instruction": "", "translate_to": "de", "name": "Email",
+                  "apps": ["thunderbird"]}],
     "assistant_provider": "codex",
     "assistant_model": "opus",
     "assistant_permission_mode": "manual",
@@ -205,10 +220,29 @@ class Settings(DikteTest):
                     else Qt.WindowType.Window)
         self.assertEqual(window.windowType(), expected)
 
+    def test_the_selection_key_is_greyed_out_while_the_feature_is_off(self):
+        window = self.window(cfg.Config())
+        box = window._shortcut_rows["assist"][0]
+        self.assertFalse(box.isEnabled())
+        window.selection_assist.setChecked(True)
+        self.assertTrue(box.isEnabled())
+        window.selection_assist.setChecked(False)
+        self.assertFalse(box.isEnabled())
+        conf = cfg.Config()
+        conf["selection_assist"] = True
+        self.assertTrue(self.window(conf)._shortcut_rows["assist"][0].isEnabled())
+
+    def test_a_selection_key_can_be_removed_with_the_feature_off(self):
+        window = self.window(cfg.Config())
+        row = window._shortcut_rows["assist"][0].parentWidget()
+        for button in row.findChildren(settings_ui.QPushButton):
+            with self.subTest(button=button.text()):
+                self.assertEqual(button.isEnabled(), button.text() == "Remove")
+
     def test_settings_keeps_configuration_and_exposes_separate_task_pages(self):
         window = self.window(cfg.Config())
         tabs = window.findChildren(settings_ui.QTabWidget)[0]
-        self.assertEqual(tabs.count(), 7)
+        self.assertEqual(tabs.count(), 8)
         self.assertEqual(set(window.task_pages), {"file", "minutes", "history"})
         self.assertEqual(window.windowTitle(), "Dikte Settings")
 
@@ -367,6 +401,51 @@ class Settings(DikteTest):
         for key, value in self.changed.items():
             with self.subTest(key=key):
                 self.assertEqual(stored[key], value)
+
+    def test_the_dictionary_and_the_profiles_save_through_the_window(self):
+        from dikte import dictionary
+        conf = cfg.Config()
+        window = self.window(conf)
+        # From the settled form, as the device tests below do: the snapshot the
+        # constructor takes is not what this harness compares against.
+        window._saved_form = window._form_values()
+        window.dictionary_editor.search.setText("anything")
+        window._show_dirty()
+        self.assertEqual(window.dirty_label.text(), "")
+        window.dictionary_editor.add_entry("kube control", "kubectl")
+        self.assertEqual(window.dirty_label.text(), t("Unsaved changes"))
+        window.profiles_editor.add_profile("Chat")
+        window._save()
+        stored = self.read_config_file()
+        self.assertEqual(stored["transcribe_prompt"], "kubectl")
+        self.assertEqual(stored["profiles"][0]["name"], "Chat")
+        self.assertEqual([(r["term"], r["spelling"])
+                          for r in dictionary.records(cfg.Config())],
+                         [("kube control", "kubectl")])
+        self.assertEqual(window.dirty_label.text(), "")
+
+    def test_looking_around_a_fresh_window_is_not_an_edit(self):
+        """Showing a tab raises its page among its siblings, which reorders
+        what findChildren returns; the boxes are compared one to one all the
+        same. Searching the dictionary and picking a profile edit nothing."""
+        conf = self.config(profiles=[{"name": "Chat", "apps": ["slack"]}])
+        window = self.window(conf)
+        tabs = window.tabs
+        for index in range(tabs.count()):
+            tabs.setCurrentIndex(index)
+        tabs.setCurrentWidget(window.profiles_editor.parentWidget().parentWidget())
+        window.profiles_editor.select(1)
+        self.assertEqual(window.dirty_label.text(), "")
+        tabs.setCurrentIndex(tabs.indexOf(tabs.currentWidget()) - 1)
+        inner = window.dictionary_editor.parentWidget().parentWidget()
+        inner.setCurrentWidget(window.dictionary_editor)
+        window.dictionary_editor.search.setText("kube")
+        self.assertEqual(window.dirty_label.text(), "")
+        # An edit still is one, and taking it back again is not.
+        window.auto_paste.toggle()
+        self.assertEqual(window.dirty_label.text(), t("Unsaved changes"))
+        window.auto_paste.toggle()
+        self.assertEqual(window.dirty_label.text(), "")
 
     def test_only_a_save_that_changed_the_language_says_so(self):
         # The owner answers language_changed by replacing the window, so a
@@ -760,6 +839,33 @@ class Settings(DikteTest):
         self.window(cfg.Config())._save()
         self.assertEqual(len(cfg.read_history()), 3)
 
+    def test_a_failed_dictation_can_be_retried_from_the_history(self):
+        cfg.RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+        kept = cfg.RECORDINGS_DIR / "20261006-101010.wav"
+        kept.write_bytes(b"RIFF")
+        failed = {"ts": "then", "duration": 2.0, "failed": True,
+                  "error": "server down", "audio": str(kept), "text": ""}
+        cfg.append_history({"ts": "earlier", "text": "fine"})
+        cfg.append_history(failed)
+        window = self.window(cfg.Config())
+        asked = []
+        window.retry_requested.connect(asked.append)
+        self.assertIn("server down", window.history.item(0).text())
+        window.history.item(1).setSelected(True)
+        self.assertFalse(window.history_retry.isEnabled())
+        window.history.item(0).setSelected(True)
+        self.assertTrue(window.history_retry.isEnabled())
+        window.history_retry.click()
+        self.assertEqual(asked, [failed])
+        self.assertFalse(window.history_retry.isEnabled())
+
+    def test_a_failed_row_whose_recording_is_gone_offers_no_retry(self):
+        cfg.append_history({"ts": "then", "failed": True, "error": "down",
+                            "audio": str(cfg.RECORDINGS_DIR / "gone.wav")})
+        window = self.window(cfg.Config())
+        window.history.item(0).setSelected(True)
+        self.assertFalse(window.history_retry.isEnabled())
+
     def test_saving_tells_whoever_is_listening(self):
         conf = cfg.Config()
         window = self.window(conf)
@@ -782,6 +888,72 @@ class Settings(DikteTest):
         stored = self.read_config_file()
         self.assertTrue(stored["file_timestamps"])
         self.assertFalse(stored["file_cleanup"])
+
+    def test_timestamps_are_greyed_out_for_a_provider_that_has_none(self):
+        """Unticked on screen, and the stored choice kept for the next provider."""
+        self.write_config({"transcribe_provider": "gemini", "file_timestamps": True,
+                           "file_cleanup": True})
+        window = self.window(cfg.Config())
+        self.assertFalse(window.file_timestamps.isEnabled())
+        self.assertFalse(window.file_timestamps.isChecked())
+        self.assertIn("Google AI Studio", window.file_timestamps.toolTip())
+        window.file_cleanup.setChecked(False)
+        window._save()
+        self.assertTrue(self.read_config_file()["file_timestamps"])
+
+        self.write_config({"transcribe_provider": "openai", "file_timestamps": True})
+        window = self.window(cfg.Config())
+        self.assertTrue(window.file_timestamps.isEnabled())
+        self.assertTrue(window.file_timestamps.isChecked())
+
+    def test_picking_google_ai_studio_says_what_it_cannot_do(self):
+        window = self.window(cfg.Config())
+        window.transcribe_provider.setCurrentIndex(
+            window.transcribe_provider.findData("gemini"))
+        self.assertIn("timestamps", window.transcribe_status.text())
+        self.assertEqual(window.transcribe_model.currentText(),
+                         "gemini-3.5-flash-lite")
+        self.assertFalse(window.refresh_transcribe_models.isHidden())
+        window.transcribe_provider.setCurrentIndex(
+            window.transcribe_provider.findData("openai"))
+        self.assertEqual(window.transcribe_status.text(), "")
+
+    def test_the_timestamp_warning_outlives_a_fetch_of_the_model_list(self):
+        window = self.window(cfg.Config())
+        window.transcribe_provider.setCurrentIndex(
+            window.transcribe_provider.findData("gemini"))
+        window._on_transcribe_models_loaded(["gemini-3.5-flash"], "")
+        self.assertIn("1 models loaded.", window.transcribe_status.text())
+        self.assertIn("timestamps", window.transcribe_status.text())
+        window._on_transcribe_models_loaded([], "denied")
+        self.assertIn("denied", window.transcribe_status.text())
+        self.assertIn("timestamps", window.transcribe_status.text())
+        window.transcribe_provider.setCurrentIndex(
+            window.transcribe_provider.findData("openai"))
+        window._on_transcribe_models_loaded(["whisper-1"], "")
+        self.assertEqual(window.transcribe_status.text(), "1 models loaded.")
+
+    def test_a_list_that_lands_after_the_provider_changed_is_dropped(self):
+        window = self.window(cfg.Config())
+        window.transcribe_provider.setCurrentIndex(
+            window.transcribe_provider.findData("gemini"))
+        with mock.patch.object(settings_ui.threading, "Thread"):
+            REAL_LOAD_TRANSCRIBE_MODELS(window)
+        window.transcribe_provider.setCurrentIndex(
+            window.transcribe_provider.findData("openai"))
+        window._on_transcribe_models_loaded(["gemini-3.5-flash"], "")
+        self.assertEqual(window.transcribe_status.text(), "")
+        self.assertEqual(window.transcribe_model.findText("gemini-3.5-flash"), -1)
+        self.assertTrue(window.refresh_transcribe_models.isEnabled())
+
+    def test_the_gemini_key_is_one_field_for_both_jobs(self):
+        self.write_config({"gemini_api_key": "AIza-mine"})
+        window = self.window(cfg.Config())
+        self.assertIs(window._key_fields["gemini"], window.gemini_key)
+        self.assertEqual(window.gemini_key.text(), "AIza-mine")
+        window.gemini_key.setText("AIza-new")
+        window._save()
+        self.assertEqual(self.read_config_file()["gemini_api_key"], "AIza-new")
 
     def test_loading_the_audio_file_tab_is_not_taken_for_a_change(self):
         self.write_config({"file_timestamps": True, "file_cleanup": False})
@@ -1146,7 +1318,7 @@ class EveryRecordingProtectsTheFront(DikteTest):
         dikte._run_id = 0
         dikte.conf = {"mic_target": "", "max_seconds": 60,
                       "meeting_mic_target": "", "meeting_system_target": "",
-                      "meeting_max_seconds": 60}
+                      "meeting_max_seconds": 60, "transcribe_provider": "local"}
         dikte._the_front.side_effect = lambda: self.order.append("noted") or 4242
         dikte._give_the_front_back.side_effect = (
             lambda pid: self.order.append(f"watching {pid}"))
@@ -1183,6 +1355,56 @@ class EveryRecordingProtectsTheFront(DikteTest):
         dikte.meeting_recorder.active = False
         self.dikte.Dikte.start_meeting(dikte)
         self.assertEqual(self.order, ["noted", "microphone"])
+
+    def test_a_meeting_on_a_provider_with_no_timestamps_is_never_recorded(self):
+        """Said before the hour of recording, not after it."""
+        dikte = self.app(meeting_state=self.dikte.M_IDLE)
+        dikte.conf["transcribe_provider"] = "gemini"
+        self.dikte.Dikte.start_meeting(dikte)
+        self.assertEqual(self.order, [])
+        dikte.meeting_recorder.start.assert_not_called()
+        message = dikte._on_meeting_error.call_args.args[0]
+        self.assertIn("Google AI Studio", message)
+        self.assertIn("timestamps", message)
+
+    def test_a_refused_meeting_leaves_a_running_dictation_alone(self):
+        """The meeting shortcut pressed mid-dictation must not end it."""
+        dikte = self.app(meeting_state=self.dikte.M_IDLE)
+        dikte.conf["transcribe_provider"] = "gemini"
+        dikte._on_meeting_error = mock.Mock(
+            side_effect=lambda message: self.dikte.Dikte._on_meeting_error(
+                dikte, message))
+        for name in ("_on_error", "_report", "_set_state"):
+            setattr(dikte, name, getattr(self.dikte.Dikte, name).__get__(dikte))
+        dikte._transcripts_pending = False
+        dikte.state, dikte.recording = self.dikte.RECORDING, True
+        self.dikte.Dikte.start_meeting(dikte)
+        self.assertEqual(dikte.state, self.dikte.RECORDING)
+        settled = [call.args[0] for call in dikte._settle.call_args_list]
+        self.assertNotIn(self.dikte.DICTATION, settled)
+        self.assertIn(self.dikte.MEETING, settled)
+        dikte.overlay.show_error.assert_not_called()
+        dikte.tray.showMessage.assert_called_once()
+        dikte.cues.play.assert_not_called()
+
+    def refused_meeting(self, state, ask_state):
+        dikte = self.app(meeting_state=self.dikte.M_IDLE, state=state,
+                         ask_state=ask_state, recording=self.dikte.RECORDING in (
+                             state, ask_state))
+        dikte.conf["transcribe_provider"] = "gemini"
+        self.dikte.Dikte._on_meeting_error(dikte, "refused")
+        return dikte
+
+    def test_a_refused_meeting_is_heard_when_no_microphone_is_open(self):
+        for state in (self.dikte.IDLE, self.dikte.BUSY):
+            with self.subTest(state=state):
+                dikte = self.refused_meeting(state, self.dikte.IDLE)
+                dikte.cues.play.assert_called_once_with("failed")
+
+    def test_a_refused_meeting_keeps_its_cue_out_of_a_question(self):
+        dikte = self.refused_meeting(self.dikte.IDLE, self.dikte.RECORDING)
+        dikte.cues.play.assert_not_called()
+        dikte._report.assert_called_once_with("refused", dikte.overlay)
 
 class Overlay(DikteTest):
     def overlay(self, **kwargs):
@@ -1479,6 +1701,11 @@ class LocalModels(DikteTest):
         # "nothing can transcribe" question from its real binary and model.
         self.patch_attr(ggml, "BIN_DIR", self.path("bin"))
         self.patch_attr(ggml, "MODELS_DIR", self.path("models"))
+        # And one with ffmpeg on it would run a real device listing while the
+        # window is built, whose reader threads then collide with the tests
+        # that stand in for threading.Thread.
+        self.enterContext(mock.patch.object(audio, "list_sources",
+                                            return_value=[]))
         # And one with Codex on it would ask it for its model list.
         self.enterContext(mock.patch.object(settings_ui.SettingsWindow,
                                             "_load_codex_models"))
@@ -1868,6 +2095,21 @@ class LocalModels(DikteTest):
                 mock.patch.object(ggml, "accelerator", return_value="Vulkan"):
             self.assertEqual(box._suggested(), ggml.SUGGESTED_WHISPER)
 
+    def test_a_build_without_a_graphics_backend_is_not_recommended_it_either(self):
+        # Upstream's Windows BLAS build is not a fallback, so nothing records
+        # it as the processor build, but its directory has no graphics backend.
+        box = self.window(cfg.Config()).local_whisper
+        with mock.patch.object(ggml, "total_memory", return_value=32 << 30), \
+                mock.patch.object(ggml, "accelerator", return_value="Vulkan"), \
+                mock.patch.object(ggml, "vulkan_missing", return_value=False), \
+                mock.patch.object(ggml, "processor_only", return_value=True):
+            self.assertEqual(box._suggested(), ggml.SUGGESTED_WHISPER)
+        with mock.patch.object(ggml, "total_memory", return_value=32 << 30), \
+                mock.patch.object(ggml, "accelerator", return_value="Vulkan"), \
+                mock.patch.object(ggml, "vulkan_missing", return_value=False), \
+                mock.patch.object(ggml, "processor_only", return_value=False):
+            self.assertEqual(box._suggested(), ggml.ACCURATE_WHISPER)
+
     def test_a_publisher_with_nothing_to_offer_says_why(self):
         # Half of what ggml-org publishes is split across files or past the
         # size cap, and an empty box read as though the click had not landed.
@@ -2018,6 +2260,86 @@ class LocalModels(DikteTest):
         window._set_processing_devices((), ())
         self.assertNotIn("Detected GPU", window.local_whisper.machine_label.text())
         self.assertIn("Graphics card unavailable", window.local_whisper.machine_label.text())
+
+    def test_a_build_without_a_graphics_backend_disables_the_device_choice(self):
+        """Upstream's Windows BLAS archive and the Linux processor build carry
+        no graphics backend, so a device box there would do nothing."""
+        identifier = "vulkan:00112233445566778899aabbccddeeff"
+        device = hardware.GraphicsDevice("Detected GPU", 12 << 30, False, identifier, 0)
+        window = self.window(self.config(local_device="auto"))
+        with mock.patch.object(ggml, "processor_only", return_value=True):
+            window._set_processing_devices((device,), ())
+        text = window.local_whisper.machine_label.text()
+        self.assertFalse(window.local_device.isEnabled())
+        self.assertIn("no graphics card support", text)
+        self.assertNotIn("Automatic may still use a graphics card", text)
+        # The choice is kept for a later download that can use it.
+        self.assertEqual(window.local_device.currentData(), "auto")
+        with mock.patch.object(ggml, "processor_only", return_value=False):
+            window._set_processing_devices((device,), (device,))
+        self.assertTrue(window.local_device.isEnabled())
+        self.assertNotIn("no graphics card support",
+                         window.local_whisper.machine_label.text())
+        self.assertGreaterEqual(window.local_device.findData(identifier), 0)
+
+    def test_a_vulkan_fallback_says_it_runs_on_the_processor_once(self):
+        """The Program line already names the fallback, so the device box
+        is disabled without repeating it under This machine."""
+        window = self.window(self.config(local_device="auto"))
+        with mock.patch.object(ggml, "processor_only", return_value=True), \
+                mock.patch.object(ggml, "vulkan_missing", return_value=True):
+            window._set_processing_devices((), ())
+        self.assertFalse(window.local_device.isEnabled())
+        self.assertNotIn("no graphics card support",
+                         window.local_whisper.machine_label.text())
+
+    def test_disabled_inputs_look_disabled_in_every_theme(self):
+        for name, colors in theme.PALETTES.items():
+            style = theme.stylesheet(name)
+            rule = style.split("QComboBox:disabled", 1)[1].split("}", 1)[0]
+            with self.subTest(theme=name):
+                self.assertIn(colors["disabled_bg"], rule)
+                self.assertIn(colors["disabled_text"], rule)
+                for widget in ("QLineEdit:disabled", "QSpinBox:disabled"):
+                    self.assertIn(widget, style)
+
+    def test_a_saved_card_on_a_processor_build_can_still_be_changed(self):
+        """A card chosen on the Vulkan build fails to start on a processor
+        fallback, so the box must not lock that choice in."""
+        identifier = "vulkan:00112233445566778899aabbccddeeff"
+        window = self.window(self.config(local_device=identifier))
+        with mock.patch.object(ggml, "processor_only", return_value=True):
+            window._set_processing_devices((), ())
+            self.assertTrue(window.local_device.isEnabled())
+            window.local_device.setCurrentIndex(window.local_device.findData("cpu"))
+            self.assertFalse(window.local_device.isEnabled())
+
+    def test_processing_device_tooltip_names_metal(self):
+        window = self.window(cfg.Config())
+        tooltip = window.local_device.toolTip()
+        self.assertIn("Metal", tooltip)
+        self.assertIn("CUDA", tooltip)
+        self.assertIn("Vulkan", tooltip)
+
+    def test_an_unknown_macos_graphics_interface_does_not_claim_cpu_or_metal(self):
+        with mock.patch.object(sys, "platform", "darwin"), \
+                mock.patch.object(ggml, "accelerator", return_value=""), \
+                mock.patch.object(ggml, "total_memory", return_value=0):
+            box = self.window(cfg.Config()).local_whisper
+            box._show_machine()
+        text = box.machine_label.text()
+        self.assertIn("reported after whisper.cpp starts", text)
+        self.assertNotIn("processor", text.lower())
+        self.assertNotIn("Metal", text)
+
+    def test_a_homebrew_program_shows_its_formula_version(self):
+        path = "/opt/homebrew/opt/whisper.cpp/bin/whisper-server"
+        with mock.patch.object(ggml, "program_path", return_value=path), \
+                mock.patch.object(ggml, "system_program", return_value=True), \
+                mock.patch.object(ggml, "homebrew_version", return_value="1.9.4"):
+            box = self.window(cfg.Config()).local_whisper
+        self.assertIn("whisper.cpp 1.9.4", box.program_label.text())
+        self.assertIn(path, box.program_label.text())
 
     def test_explicit_managed_copy_is_labeled_downloaded_even_with_a_system_copy(self):
         binary = self.path("managed-server")
@@ -2571,7 +2893,8 @@ class LocalModels(DikteTest):
 
     def test_a_machine_with_no_card_is_told_it_is_on_the_processor(self):
         box = self.window(cfg.Config()).local_whisper
-        with mock.patch.object(ggml, "accelerator", return_value=""), \
+        with mock.patch.object(sys, "platform", "linux"), \
+                mock.patch.object(ggml, "accelerator", return_value=""), \
                 mock.patch.object(ggml, "total_memory", return_value=8 << 30):
             box._show_machine()
         self.assertIn("processor", box.machine_label.text().lower())

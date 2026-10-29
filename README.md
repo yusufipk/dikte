@@ -93,13 +93,10 @@ itself while it runs. PyQt6 comes from brew rather than pip because Homebrew's
 Python refuses to be installed into, and `DIKTE_PYTHON=…/venv/bin/python
 ./install.sh` points the installer at a virtualenv instead.
 
-Local speech to text is the one piece that has to be built by hand there:
-whisper.cpp publishes no macOS binary and Homebrew's is configured with
-`WHISPER_BUILD_SERVER=OFF`, so it installs `whisper-cli` and not the server
-Dikte talks to. Build it (`cmake -B build -DWHISPER_BUILD_SERVER=ON
--DGGML_METAL=ON && cmake --build build -j`) and put `build/bin/whisper-server` in a directory on your `PATH`, or
-transcribe in the cloud. A meeting needs BlackHole or Loopback
-(`brew install blackhole-2ch`); dictation does not.
+Local speech to text needs whisper.cpp's server, which `brew install
+whisper.cpp` installs, and Dikte finds it even when started from the Finder.
+A meeting needs BlackHole or Loopback (`brew install blackhole-2ch`); dictation
+does not.
 
 Windows works the same way, holding the keys through the system's own hotkey
 service while Dikte runs. The setup on the releases page carries the ffmpeg
@@ -125,8 +122,8 @@ paste the raw transcript.
 
 | Task | Hosted providers | Other options |
 | --- | --- | --- |
-| Speech to text | OpenAI, Groq, OpenRouter, Requesty | Local model |
-| Cleanup | OpenRouter, Requesty, Google AI Studio, DeepSeek, OpenCode Go | Local model; Claude Code, Codex or Antigravity CLI |
+| Speech to text | OpenAI, Groq, OpenRouter, Requesty, Google AI Studio, any OpenAI-compatible server | Local model |
+| Cleanup | OpenRouter, Requesty, Google AI Studio, DeepSeek, OpenCode Go, any OpenAI-compatible server | Local model; Claude Code, Codex or Antigravity CLI |
 
 Choose models and cleanup reasoning effort in Settings. API keys can be entered
 there too; empty keys fall back to `OPENAI_API_KEY`, `GROQ_API_KEY`,
@@ -190,8 +187,9 @@ running.
 - **Misheard words are repaired.** Speech models fail phonetically on proper
   nouns, so the cleanup model is asked to fix those from context, and to leave
   the word alone when the context does not make the intended one clear. The names
-  you list under Cleanup rules go to the transcription model as a hint and to the
-  cleanup model as a glossary, which is what lets it recognise "kuber netis":
+  you list in the Dictionary tab go to the transcription model as a hint and to the
+  cleanup model as a glossary, which is what lets it recognise "kuber netis"
+  (the writing profiles, which set a tone per program or translate, share it):
 
   ```
   raw    ıı bugün şey kuber netis üzerinde çalışan servisleri güncelledim
@@ -215,8 +213,9 @@ running.
   whatever its own allow-rules say. OpenRouter, OpenCode Go or Requesty is
   there as a
   plain question-and-answer fallback for a machine with no CLI on it. Provider,
-  model, permissions and working directory are under Settings → Agent, and
-  commands close together stay in one conversation.
+  model, permissions and working directory are under Settings → Agent, along
+  with an optional key that asks about the selected text, and commands close
+  together stay in one conversation.
 - **Meetings** are recorded from the microphone and the speaker output at the
   same time, which settles who said what by the channel a voice arrived on
   instead of guessing at it. The two sides are transcribed separately and
@@ -227,7 +226,8 @@ running.
   keeps its recording, and a retry resumes from the transcript it already paid
   for.
 - **Audio and video files** run through the same models under Settings → Audio
-  file, optionally with `[mm:ss]` timestamps, chunked through ffmpeg when long,
+  file, optionally with `[mm:ss]` timestamps and, on a model known to diarize,
+  speaker labels, chunked through ffmpeg when long,
   and saved as `.txt` or as `.srt` subtitles; their cleanup follows its own rules,
   written for subtitles, so the lines keep their place and nothing is shortened.
 - **History** of every dictation under Settings → History, with a size limit and

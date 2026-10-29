@@ -75,6 +75,10 @@ QLineEdit, QPlainTextEdit, QListWidget, QComboBox, QSpinBox {
     background: @surface; border: 1px solid @border; border-radius: 5px;
     padding: 5px 7px; selection-background-color: @accent; selection-color: @accent_text;
 }
+QLineEdit:disabled, QPlainTextEdit:disabled, QListWidget:disabled,
+QComboBox:disabled, QSpinBox:disabled {
+    color: @disabled_text; background: @disabled_bg;
+}
 QComboBox { padding-right: 28px; min-height: 18px; }
 QComboBox::drop-down {
     subcontrol-origin: border; subcontrol-position: top right;
@@ -106,6 +110,21 @@ QCheckBox:disabled { color: @disabled_text; }
 QCheckBox::indicator:disabled { background: @disabled_bg; border-color: @disabled_text; }
 QCheckBox::indicator:checked:disabled { background: @disabled_text; }
 QComboBox QAbstractItemView { background: @surface; color: @text; selection-background-color: @border; }
+QTableWidget {
+    background: @surface; color: @text; border: 1px solid @border; border-radius: 5px;
+    gridline-color: @border; alternate-background-color: @hover;
+    selection-background-color: @accent; selection-color: @accent_text;
+}
+QTableWidget:focus { border: 2px solid @accent; }
+QTableWidget::item { padding: 2px 4px; }
+QTableWidget::item:selected { background: @accent; color: @accent_text; }
+QHeaderView { background: @surface; }
+QHeaderView::section {
+    background: @base; color: @muted; border: none;
+    border-right: 1px solid @border; border-bottom: 1px solid @border;
+    padding: 5px 7px; font-weight: 600;
+}
+QTableCornerButton::section { background: @base; border: none; }
 QTabWidget::pane { border: none; }
 QTabBar::tab { background: @surface; padding: 10px; }
 QTabBar::tab:selected { background: @border; }

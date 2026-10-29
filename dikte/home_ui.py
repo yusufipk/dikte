@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
 
 from . import api, assistant, audio, cleanup, config as cfg, ggml
 from .i18n import t
+from .settings_ui import history_marks
 from . import theme
 
 
@@ -87,6 +88,8 @@ def processing_locations(conf, mode="dictation", file_cleanup=None, file_timesta
     timestamps = conf["file_timestamps"] if file_timestamps is None else file_timestamps
     if mode == "meeting" or (mode == "file" and timestamps):
         sound_model = api.timestamp_model(target.provider, target.model, target.file_model)
+    if target.provider == "custom" and not sound_model:
+        sound_model = t("{name} default model", name=target.service)
     sound = _model_location(sound_model, target.provider, local.get("whisper"))
     enabled = conf["cleanup_enabled"]
     if mode == "file":
@@ -99,6 +102,8 @@ def processing_locations(conf, mode="dictation", file_cleanup=None, file_timesta
     model = cleanup.model(conf)
     if provider in ("codex", "agy") and not conf[f"cleanup_{provider}_model"].strip():
         model = t("{name} default model", name="Codex" if provider == "codex" else "Antigravity")
+    elif provider == "custom" and not conf["cleanup_custom_model"].strip():
+        model = t("{name} default model", name=t("Custom server"))
     text = _model_location(model, provider, local.get("llama")) if enabled else t("Editing off")
     location = t("Dictation: {sound} / Cleanup: {text}", sound=sound, text=text)
     if mode == "meeting":
@@ -245,7 +250,13 @@ class HomeWindow(QWidget):
         actions.addWidget(self.latest_time, 1)
         self.copy_button = _button(t("Copy"), lambda: QApplication.clipboard().setText(self.latest_text.toPlainText()))
         self.open_button = _button(t("Open text"), lambda: self._open_text(self.latest_text.toPlainText()))
+        # Shown only under a translation: the text above is not what was said.
+        self.original_button = _button(t("Copy original"), self._copy_original)
+        self.original_button.setToolTip(t(
+            "Copy the transcript as it was heard, before it was translated."))
+        self.original_button.hide()
         actions.addWidget(self.copy_button)
+        actions.addWidget(self.original_button)
         actions.addWidget(self.open_button)
         content.addLayout(actions)
         layout.addWidget(card)
@@ -312,14 +323,20 @@ class HomeWindow(QWidget):
         layout.addWidget(self.settings.task_pages["history"], 1)
         self.settings.task_pages["history"].show()
         actions = self.settings.history_actions
-        actions.insertWidget(actions.count() - 1, _button(t("Open selected text"), self._open_selected))
+        # Beside the other actions on the selected rows, before Delete.
+        actions.insertWidget(actions.indexOf(self.settings.history_original) + 1,
+                             _button(t("Open selected text"), self._open_selected))
         self.settings.history.itemDoubleClicked.connect(self._open_selected)
         return page
+
+    def _copy_original(self):
+        QApplication.clipboard().setText(self._last_result.get("raw", ""))
 
     def _open_selected(self, *_):
         rows = self.settings._selected_rows()
         if rows:
-            self._open_text("\n\n".join(row.get("text", "") for row in rows))
+            self._open_text("\n\n".join(row.get("text", "") for row in rows
+                                         if not row.get("failed")))
 
     def _open_text(self, text):
         if not text:
@@ -360,7 +377,10 @@ class HomeWindow(QWidget):
 
     def refresh_results(self, *_):
         rows = cfg.read_history(self.conf["history_limit"])
-        result = next((row for row in reversed(rows) if row.get("mode") != "ask"), {})
+        # A failed dictation has no text to show; the failure itself is on the
+        # status line, and its retry lives in the history.
+        result = next((row for row in reversed(rows)
+                       if row.get("mode") != "ask" and not row.get("failed")), {})
         answer = next((row for row in reversed(rows) if row.get("mode") == "ask"), {})
         self._set_result(result, answer)
 
@@ -368,7 +388,11 @@ class HomeWindow(QWidget):
         if result != self._last_result:
             self._last_result = dict(result)
             self.latest_text.setPlainText(result.get("text", ""))
-            self.latest_time.setText(result.get("ts", ""))
+            # The same marks the history list carries: which profile, and
+            # whether this is a translation.
+            self.latest_time.setText(result.get("ts", "") + history_marks(result))
+            self.original_button.setVisible(bool(result.get("translate_to")
+                                                 and result.get("raw")))
             self.latest_warning.setText(result.get("cleanup_error", ""))
             self.latest_warning.setVisible(bool(self.latest_warning.text()))
             self.copy_button.setEnabled(bool(result.get("text")))

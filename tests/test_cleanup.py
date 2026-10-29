@@ -200,6 +200,27 @@ class Requesty(DikteTest):
         self.assertEqual(calls, [])
 
 
+class CustomServer(DikteTest):
+    def test_it_is_one_request_to_the_typed_address(self):
+        conf = self.config(cleanup_provider="custom",
+                           custom_base_url="http://localhost:8000/v1",
+                           cleanup_custom_model=" my-model ",
+                           cleanup_reasoning="low")
+        with mock.patch.object(api, "cleanup", return_value="Done.") as call:
+            self.assertEqual(cleanup.run("uh, done", conf, "the rules"), "Done.")
+        text, key, model, prompt = call.call_args.args
+        self.assertEqual((text, key, model, prompt),
+                         ("uh, done", "", "my-model", "the rules"))
+        self.assertEqual(call.call_args.kwargs["provider"], "custom")
+        self.assertEqual(call.call_args.kwargs["base_url"], "http://localhost:8000/v1")
+
+    def test_an_empty_model_is_recorded_as_the_server_s_own(self):
+        conf = self.config(cleanup_provider="custom")
+        self.assertEqual(cleanup.model(conf), "custom")
+        conf = self.config(cleanup_provider="custom", cleanup_custom_model="qwen3")
+        self.assertEqual(cleanup.model(conf), "qwen3")
+
+
 class GoogleAiStudio(DikteTest):
     """Cleanup over Google's OpenAI-compatible endpoint: one request, no CLI."""
 

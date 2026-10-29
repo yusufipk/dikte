@@ -247,6 +247,37 @@ class TranscribeTarget(DikteTest):
         self.assertEqual(target.base_url, "https://router.requesty.ai/v1")
         self.assertEqual(target.model, "openai/gpt-4o-transcribe")
 
+    def test_google_ai_studio_when_it_is_picked(self):
+        conf = self.config(transcribe_provider="gemini", gemini_api_key="AIza-test")
+        target = conf.transcribe_target()
+        self.assertEqual(target.provider, "gemini")
+        self.assertEqual(target.service, "Google AI Studio")
+        self.assertEqual(target.api_key, "AIza-test")
+        self.assertEqual(target.base_url, api.GEMINI_URL)
+        self.assertEqual(target.model, "gemini-3.5-flash-lite")
+        self.assertTrue(conf.transcribe_ready())
+        conf["gemini_api_key"] = ""
+        with mock.patch.dict(os.environ, {"GEMINI_API_KEY": ""}):
+            self.assertFalse(conf.transcribe_ready())
+
+    def test_a_custom_server_when_it_is_picked(self):
+        conf = self.config(transcribe_provider="custom",
+                           custom_base_url=" http://10.0.0.5:8000/v1 ",
+                           custom_transcribe_model="large-v3")
+        target = conf.transcribe_target()
+        self.assertEqual(target.provider, "custom")
+        self.assertEqual(target.service, "Custom server")
+        self.assertEqual(target.api_key, "")
+        self.assertEqual(target.base_url, "http://10.0.0.5:8000/v1")
+        self.assertEqual(target.model, "large-v3")
+
+    def test_a_custom_server_is_ready_on_its_address_alone(self):
+        """Its key is optional, so no key must not read as not set up."""
+        self.assertFalse(self.config(transcribe_provider="custom").transcribe_ready())
+        conf = self.config(transcribe_provider="custom",
+                           custom_base_url="http://localhost:8000/v1")
+        self.assertTrue(conf.transcribe_ready())
+
     def test_openrouter_carries_its_file_model(self):
         conf = self.config(transcribe_provider="openrouter",
                            openrouter_api_key="sk-or-test",
@@ -633,10 +664,14 @@ class Defaults(unittest.TestCase):
         self.assertEqual(cfg.DEFAULTS["opencode_api_key"], "")
         self.assertEqual(cfg.DEFAULTS["requesty_api_key"], "")
 
-    def test_google_ai_studio_is_a_cleanup_provider_and_not_a_transcriber(self):
-        """Its compatible endpoint has no /audio/transcriptions behind it."""
-        self.assertNotIn("gemini", cfg.TRANSCRIBERS)
+    def test_google_ai_studio_both_cleans_up_and_transcribes(self):
+        """With one key, the one the cleanup row has always used."""
         self.assertIn("gemini", cleanup.PROVIDERS)
+        who = cfg.TRANSCRIBERS["gemini"]
+        self.assertEqual(who.key, "gemini_api_key")
+        self.assertEqual(who.url, "gemini_base_url")
+        self.assertEqual(cfg.DEFAULTS[who.model], "gemini-3.5-flash-lite")
+        self.assertNotEqual(cfg.DEFAULTS["transcribe_provider"], "gemini")
 
     def test_deepseek_is_a_cleanup_provider_and_not_a_transcriber(self):
         self.assertNotIn("deepseek", cfg.TRANSCRIBERS)
@@ -744,6 +779,26 @@ class ReadyToRun(DikteTest):
         self.assertEqual(ggml.whisper.settings()["threads"], 4)
         self.assertFalse(ggml.whisper.settings()["gpu"])
         self.assertEqual(ggml.llm.settings()["context"], 4096)
+
+    def test_the_custom_models_directory_reaches_ggml(self):
+        custom = self.path("ASCII-models")
+        conf = self.config(local_models_dir=str(custom))
+        conf.apply_local()
+        self.assertEqual(ggml.MODELS_DIR, custom)
+
+    def test_clearing_the_models_directory_goes_back_to_the_default(self):
+        self.config(local_models_dir=str(self.path("ASCII-models"))).apply_local()
+        self.config(local_models_dir="").apply_local()
+        self.assertEqual(ggml.MODELS_DIR, ggml.DATA_DIR / "models")
+
+    def test_moving_the_models_directory_stops_the_running_servers(self):
+        conf = self.config(local_models_dir=str(self.path("ASCII-models")))
+        with mock.patch.object(ggml.whisper, "stop") as whisper, \
+                mock.patch.object(ggml.llm, "stop") as llm:
+            conf.apply_local()
+            conf.apply_local()
+        whisper.assert_called_once_with()
+        llm.assert_called_once_with()
 
     def test_the_processing_device_reaches_the_whisper_server(self):
         identifier = "vulkan:00112233445566778899aabbccddeeff"

@@ -29,8 +29,8 @@ from . import ggml
 from . import paths
 from .i18n import t
 
-PROVIDERS = ("openrouter", "requesty", "gemini", "deepseek", "opencode", "local", "claude",
-             "codex", "agy")
+PROVIDERS = ("openrouter", "requesty", "gemini", "deepseek", "opencode", "custom", "local",
+             "claude", "codex", "agy")
 
 
 class CleanupError(api.ApiError):
@@ -74,6 +74,9 @@ def model(conf):
         return conf["cleanup_opencode_model"]
     if name == "requesty":
         return conf["cleanup_requesty_model"]
+    if name == "custom":
+        # Empty leaves the choice to the server, the way Codex's does.
+        return conf["cleanup_custom_model"].strip() or "custom"
     return conf["cleanup_model"]
 
 
@@ -118,6 +121,13 @@ def run(text, conf, system_prompt, timeout=180, aborter=None):
             reasoning=conf["cleanup_reasoning"],
             base_url=conf["requesty_base_url"], timeout=timeout,
             provider="requesty", service="Requesty", aborter=aborter,
+        )
+    if name == "custom":
+        return api.cleanup(
+            text, conf.custom_key(), conf["cleanup_custom_model"].strip(), system_prompt,
+            reasoning=conf["cleanup_reasoning"],
+            base_url=conf["custom_base_url"], timeout=timeout,
+            provider="custom", service=t("Custom server"), aborter=aborter,
         )
     if name == "local":
         return _local(text, conf, system_prompt, timeout, aborter)

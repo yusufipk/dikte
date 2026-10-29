@@ -28,6 +28,7 @@ from . import api
 from . import cleanup
 from . import config as cfg
 from . import filetranscribe
+from . import paths
 from . import vad
 from .filetranscribe import Cancelled, format_timestamp
 from .i18n import t
@@ -88,6 +89,11 @@ class MeetingPipeline(QObject):
     def stop(self):
         self._stop.set()
 
+    def wait(self, timeout=None):
+        """Let the run finish its cleanup; see FileTranscriber.wait."""
+        if self._thread is not None:
+            self._thread.join(timeout)
+
     def _check(self):
         if self._stop.is_set():
             raise Cancelled
@@ -106,7 +112,8 @@ class MeetingPipeline(QObject):
             if not transcript:
                 if not wav_path.exists():
                     raise api.ApiError(t("The recording is gone: {path}", path=wav_path))
-                workdir = tempfile.mkdtemp(prefix="dikte-meeting-")
+                workdir = tempfile.mkdtemp(prefix="dikte-meeting-",
+                                           dir=paths.scratch_dir())
                 transcript = self._transcribe(str(wav_path), workdir)
                 if self.conf["meeting_cleanup"]:
                     self._check()

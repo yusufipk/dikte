@@ -37,6 +37,7 @@ CANCEL_DESKTOP_ID = "dikte-cancel.desktop"
 PAUSE_DESKTOP_ID = "dikte-pause.desktop"
 MEETING_DESKTOP_ID = "dikte-meeting.desktop"
 ASK_DESKTOP_ID = "dikte-ask.desktop"
+ASSIST_DESKTOP_ID = "dikte-assist.desktop"
 APPLICATIONS_DIR = pathlib.Path.home() / ".local/share/applications"
 DESKTOP_FILE = APPLICATIONS_DIR / DESKTOP_ID
 SHORTCUTS_FILE = pathlib.Path.home() / ".config/kglobalshortcutsrc"
@@ -45,7 +46,7 @@ GNOME_BINDING_SCHEMA = "org.gnome.settings-daemon.plugins.media-keys.custom-keyb
 
 Shortcut = collections.namedtuple("Shortcut", "verb desktop_id name setting fallback")
 
-# Every global shortcut in one place, because there are five of them and the
+# Every global shortcut in one place, because there are six of them and the
 # command line, the settings window and the installer each used to carry their
 # own copy of the list. `fallback` is what to register when the setting is
 # empty: only the toggle has one, since it is the key the application is
@@ -62,6 +63,9 @@ SHORTCUTS = {
     "meeting": Shortcut("meeting", MEETING_DESKTOP_ID,
                         "Dikte: start/end a meeting recording",
                         "meeting_shortcut", ""),
+    "assist": Shortcut("assist", ASSIST_DESKTOP_ID,
+                       "Dikte: ask about the selected text",
+                       "selection_assist_shortcut", ""),
 }
 
 # The fallbacks above are Linux's. macOS holds Ctrl+Space for the input-source

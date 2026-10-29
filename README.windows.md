@@ -64,6 +64,9 @@ python -m dikte
   through the Windows API (the clipboard, SendInput).
 - Settings live under `%APPDATA%\Dikte`, models and recordings under
   `%LOCALAPPDATA%\Dikte`.
+- If the Windows user folder contains characters that whisper.cpp cannot open,
+  choose an ASCII-only **Model folder** under Settings → API and models, such as
+  `C:\DikteData`. The setting is shared by the local whisper and llama models.
 
 ## Performance
 

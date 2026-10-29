@@ -71,6 +71,7 @@ class _AppKit:
         self.ask_bool = self._as(ctypes.c_bool)
         self.ask_pid = self._as(ctypes.c_int)          # pid_t is an int32
         self.ask_unsigned = self._as(ctypes.c_ulong)   # NSUInteger
+        self.ask_signed = self._as(ctypes.c_long)      # NSInteger
         self.tell_bool = self._as(None, ctypes.c_bool)
         self.tell_unsigned = self._as(None, ctypes.c_ulong)
         self.ask_of_class = self._as(ctypes.c_bool, ctypes.c_void_p)

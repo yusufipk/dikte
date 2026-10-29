@@ -329,6 +329,16 @@ class MacOS(ClipboardContract, DikteTest):
         paste.press(shortcut)
         return self.api.posted
 
+    def test_pbcopy_is_told_the_text_is_utf8(self):
+        """Started from Finder there is no locale, and pbcopy then reads the
+        bytes in the system's legacy encoding: "ç" is pasted as "√ß"."""
+        with only_these_tools(self.here.clipboard), \
+                mock.patch.dict("os.environ", {}, clear=True), \
+                mock.patch.object(subprocess, "run",
+                                  return_value=FakeCompleted()) as run:
+            paste.copy("günaydın")
+        self.assertEqual(run.call_args.kwargs["env"]["LC_ALL"], "en_US.UTF-8")
+
     def test_the_key_goes_in_by_position_with_the_modifiers_on_it(self):
         paste.press("cmd+v")
         self.assertEqual(self.api.made, [(9, True), (9, False)])

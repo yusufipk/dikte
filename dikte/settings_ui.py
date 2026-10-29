@@ -7,14 +7,14 @@ import shutil
 import sys
 import threading
 
-from PyQt6.QtCore import QEvent, QObject, QRect, Qt, QTimer, QUrl, QSignalBlocker, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, QRect, QSize, Qt, QTimer, QUrl, QSignalBlocker, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QGuiApplication, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractItemView, QAbstractSpinBox, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
-    QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit,
+    QLayout, QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit,
     QPushButton, QScrollArea, QSizePolicy, QSpinBox, QTabWidget, QToolButton,
-    QVBoxLayout, QWidget,
+    QVBoxLayout, QWidget, QWidgetItem,
 )
 
 from . import __version__
@@ -32,7 +32,10 @@ from . import i18n
 from . import ipc
 from . import meeting
 from . import paste
+from . import profiles
+from . import profiles_ui
 from . import update
+from . import worker
 from .filetranscribe import FileTranscriber
 from .i18n import t
 from . import theme
@@ -72,6 +75,12 @@ TRANSCRIBE_MODELS = {
         "openai/gpt-4o-transcribe", "openai/gpt-4o-mini-transcribe",
         "openai/whisper-1",
     ],
+    "gemini": [
+        "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash",
+        "gemini-2.5-flash-lite",
+    ],
+    # Nothing to suggest for a server nobody else knows; Fetch asks it.
+    "custom": [],
 }
 CLEANUP_MODELS = [
     "google/gemini-3.5-flash-lite", "google/gemini-3.1-flash-lite",
@@ -96,7 +105,7 @@ AGY_MODELS = [
 CLEANUP_PROVIDERS = [
     ("OpenRouter", "openrouter"), ("Google AI Studio", "gemini"),
     ("DeepSeek", "deepseek"), ("OpenCode Go", "opencode"), ("Requesty", "requesty"),
-    ("This machine (llama.cpp)", "local"), ("Claude Code", "claude"),
+    ("Custom server", "custom"), ("This machine (llama.cpp)", "local"), ("Claude Code", "claude"),
     ("Codex", "codex"), ("Antigravity", "agy"),
 ]
 # Cleaning up a sentence is the lightest thing either of them will ever be
@@ -491,9 +500,15 @@ class LocalModelBox(QGroupBox):
         managed = bool(installed and pathlib.Path(path).resolve()
                        == pathlib.Path(installed).resolve())
         if not managed:
-            self.program_label.setText(
-                t("Using custom build: {path}", path=path) if self.custom_binary else
-                t("Installed on the system: {path}", path=path))
+            if self.custom_binary:
+                self.program_label.setText(t("Using custom build: {path}", path=path))
+            else:
+                version = ggml.homebrew_version(self.program, path)
+                self.program_label.setText(
+                    t("Installed on the system: whisper.cpp {version}\n{path}",
+                      version=version, path=path)
+                    if version else t("Installed on the system: {path}", path=path)
+                )
         elif ggml.vulkan_missing(self.program):
             # The download landed the processor build where the graphics card
             # one belongs, and nothing else on this window would say so.
@@ -540,9 +555,21 @@ class LocalModelBox(QGroupBox):
                 )))
             elif where:
                 parts.append(t("Graphics: {name}.", name=where))
+            elif sys.platform == "darwin":
+                parts.append(t(
+                    "Graphics capability unknown. The active backend is reported "
+                    "after whisper.cpp starts."
+                ))
         elif selection is None:
-            parts.append(t("Graphics: {name}.", name=where) if where
-                         else t("Graphics: Processor only."))
+            if where:
+                parts.append(t("Graphics: {name}.", name=where))
+            elif sys.platform == "darwin":
+                parts.append(t(
+                    "Graphics capability unknown. The active backend is reported "
+                    "after whisper.cpp starts."
+                ))
+            else:
+                parts.append(t("Graphics: Processor only."))
         if memory:
             memory_parts.append(t("{size} system", size=ggml.human_size(memory)))
         if memory_parts:
@@ -672,11 +699,13 @@ class LocalModelBox(QGroupBox):
         if self.program is not ggml.WHISPER:
             return ""
         # A Vulkan loader on the machine is not a card in play when what was
-        # installed is the processor build: recommending the accurate model
-        # off the loader alone would put a 1 GB model on a processor and the
-        # wait for it in front of somebody who asked for a sentence.
-        return ggml.suggested_whisper(
-            graphics="" if ggml.vulkan_missing(self.program) else None)
+        # installed is the processor build, the Linux fallback or upstream's
+        # Windows BLAS one: recommending the accurate model off the loader
+        # alone would put a 1 GB model on a processor and the wait for it in
+        # front of somebody who asked for a sentence.
+        on_processor = (ggml.vulkan_missing(self.program)
+                        or ggml.processor_only(self.program, self._program_path()))
+        return ggml.suggested_whisper(graphics="" if on_processor else None)
 
     def _add_heading(self, text):
         """A row that names the group under it and cannot be chosen."""
@@ -946,6 +975,110 @@ class LocalModelBox(QGroupBox):
             self.status.setText(t("{name} has not been downloaded yet.", name=name))
 
 
+class FlowLayout(QLayout):
+    """Widgets side by side that move on to the next line when the width runs
+    out, so a large font or a long translation wraps a row of buttons rather
+    than cutting their labels short."""
+
+    def __init__(self, parent=None, spacing=6):
+        super().__init__(parent)
+        self._items = []
+        self._gap = spacing
+        self.setContentsMargins(0, 0, 0, 0)
+
+    def addItem(self, item):
+        self._items.append(item)
+
+    def insertWidget(self, index, widget):
+        """As QBoxLayout's, for callers that add a button of their own."""
+        self.addChildWidget(widget)
+        self._items.insert(max(0, min(index, len(self._items))), QWidgetItem(widget))
+        self.invalidate()
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, index):
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index):
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def expandingDirections(self):
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self._arrange(QRect(0, 0, width, 0), move=False)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._arrange(rect, move=True)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def minimumSize(self):
+        # As wide as the widest button: narrower than that, one would be cut.
+        size = QSize()
+        for item in self._items:
+            if not item.isEmpty():
+                size = size.expandedTo(item.sizeHint())
+        margins = self.contentsMargins()
+        return size + QSize(margins.left() + margins.right(),
+                            margins.top() + margins.bottom())
+
+    def _arrange(self, rect, move):
+        """Lay the items out in `rect`, or only measure; the height used."""
+        margins = self.contentsMargins()
+        area = rect.adjusted(margins.left(), margins.top(),
+                             -margins.right(), -margins.bottom())
+        x, y, line = area.x(), area.y(), 0
+        for item in self._items:
+            if item.isEmpty():
+                continue  # a hidden button takes no room
+            size = item.sizeHint()
+            if x > area.x() and x + size.width() > area.right() + 1:
+                x, y, line = area.x(), y + line + self._gap, 0
+            if move:
+                item.setGeometry(QRect(x, y, size.width(), size.height()))
+            x += size.width() + self._gap
+            line = max(line, size.height())
+        return y + line - rect.y() + margins.bottom()
+
+
+def history_marks(row):
+    """What a history row says about its profile and translation, so that a
+    translated text is never mistaken for what was said. Empty for a row
+    written without either."""
+    marks = ""
+    if "profile" in row:
+        marks += t("  ·  profile: {name}", name=row.get("profile") or t("Default"))
+        # Only for a row whose program was asked for: one skipped on purpose
+        # (an override, the switch off, no profile listing one) says nothing.
+        program = row.get("program")
+        if isinstance(program, str):
+            marks += (t(" ({program})", program=program) if program
+                      else t(" (program unknown)"))
+        site = row.get("site")
+        if isinstance(site, str) and site:
+            marks += t("  ·  site: {site}", site=site)
+    code = row.get("translate_to")
+    if isinstance(code, str) and code:
+        language = t(profiles.language_name(code))
+        marks += (t("  ·  translated into {language}", language=language)
+                  if row.get("translated")
+                  else t("  ·  translation into {language} failed", language=language))
+    return marks
+
+
+def _retryable(row):
+    """A failed dictation whose kept recording is still on disk."""
+    return bool(row.get("failed")) and worker.is_kept_recording(row.get("audio"))
+
+
 class SettingsWindow(QDialog):
     applied = pyqtSignal()
     # A save changed the interface language. Every label below is translated
@@ -955,6 +1088,9 @@ class SettingsWindow(QDialog):
     # A newer release this window's own check found, so that the tray icon
     # hears about it from here rather than waiting for its own next check.
     update_found = pyqtSignal(object)
+    # A failed dictation in the history the user asked to try again, as its
+    # row. The owner runs it, since the dictation chain is the owner's.
+    retry_requested = pyqtSignal(dict)
 
     def _sources_once(self):
         """One device listing per window build, shared by every combo.
@@ -970,6 +1106,7 @@ class SettingsWindow(QDialog):
     _deepseek_models_loaded = pyqtSignal(list, str)
     _opencode_models_loaded = pyqtSignal(list, str)
     _requesty_models_loaded = pyqtSignal(list, str)
+    _custom_models_loaded = pyqtSignal(list, str)
     _transcribe_models_loaded = pyqtSignal(list, str)
     _codex_models_loaded = pyqtSignal(list)
     _agy_models_loaded = pyqtSignal(list)
@@ -1026,6 +1163,8 @@ class SettingsWindow(QDialog):
         self.api_tab_index = tabs.addTab(
             self._scrolled(self._api_tab()), t("API and models"))
         tabs.addTab(self._scrolled(self._prompt_tab()), t("Text editing and dictionary"))
+        self.profiles_editor = profiles_ui.ProfilesEditor()
+        tabs.addTab(self._scrolled(self.profiles_editor), t("Profiles"))
         tabs.addTab(self._scrolled(self._assistant_tab()), t("Agent"))
         tabs.addTab(self._scrolled(self._meeting_tab()), t("Meeting"))
         tabs.addTab(self._scrolled(self._shortcut_tab()), t("Shortcuts"))
@@ -1075,6 +1214,7 @@ class SettingsWindow(QDialog):
         self._codex_models_loaded.connect(self._on_codex_models_loaded)
         self._opencode_models_loaded.connect(self._on_opencode_models_loaded)
         self._requesty_models_loaded.connect(self._on_requesty_models_loaded)
+        self._custom_models_loaded.connect(self._on_custom_models_loaded)
         self._agy_models_loaded.connect(self._on_agy_models_loaded)
         self._hosted_models_loaded.connect(self._on_hosted_models_loaded)
         self._test_done.connect(self._on_test_done)
@@ -1097,8 +1237,15 @@ class SettingsWindow(QDialog):
         ]
         for box in compact:
             box.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        # Listed once, in a fixed order. findChildren follows the order of the
+        # children, and showing a tab raises its page to the end of that, so a
+        # list read again after the user moved between tabs would compare its
+        # values against the wrong boxes. The editors' own boxes are left out:
+        # a search or a selection there is not an edit, and the editors say
+        # when something was edited.
+        self._form_boxes = self._boxes()
         self._saved_form = self._form_values()
-        for box in self.tabs.findChildren((QLineEdit, QComboBox, QCheckBox, QSpinBox, QPlainTextEdit)):
+        for box in self._form_boxes:
             if isinstance(box, (QLineEdit, QPlainTextEdit)):
                 box.textChanged.connect(self._show_dirty)
             elif isinstance(box, QComboBox):
@@ -1108,6 +1255,8 @@ class SettingsWindow(QDialog):
             else:
                 box.valueChanged.connect(self._show_dirty)
         self.local_threads.valueChanged.connect(self._local_threads_was_changed)
+        self.dictionary_editor.changed.connect(self._show_dirty)
+        self.profiles_editor.changed.connect(self._show_dirty)
         self.local_whisper.program_changed.connect(self._refresh_processing_devices)
         self.local_whisper.program_changed.connect(self._show_dirty)
         self.local_llm.program_changed.connect(self._show_dirty)
@@ -1119,6 +1268,7 @@ class SettingsWindow(QDialog):
         # for the user ticking them.
         self.file_timestamps.toggled.connect(self._remember_file_choices)
         self.file_cleanup.toggled.connect(self._remember_file_choices)
+        self.file_speakers.toggled.connect(self._remember_file_choices)
         # On a machine where nothing can transcribe yet, this window was opened
         # because of that, so open it on the tab that fixes it.
         if not conf.transcribe_ready():
@@ -1132,9 +1282,15 @@ class SettingsWindow(QDialog):
         self._local_state_timer.timeout.connect(self._show_local_state)
         self._show_local_state()
 
+    def _boxes(self):
+        return [box for box in self.tabs.findChildren(
+                    (QLineEdit, QComboBox, QCheckBox, QSpinBox, QPlainTextEdit))
+                if not profiles_ui.owned(box)]
+
     def _form_values(self):
         values = []
-        for box in self.tabs.findChildren((QLineEdit, QComboBox, QCheckBox, QSpinBox, QPlainTextEdit)):
+        # The editors report their own contents, below.
+        for box in self._form_boxes:
             if isinstance(box, QPlainTextEdit):
                 if not box.isReadOnly():
                     values.append(box.toPlainText())
@@ -1155,6 +1311,8 @@ class SettingsWindow(QDialog):
         values.extend((
             self.local_whisper.custom_binary,
             self.local_llm.custom_binary,
+            self.dictionary_editor.values(),
+            self.profiles_editor.values(),
         ))
         return values
 
@@ -1343,6 +1501,12 @@ class SettingsWindow(QDialog):
         )
         form.addRow("", self.filter_hallucinations)
 
+        self.audio_cues = QCheckBox(t("Play audio cues when recording changes"))
+        self.audio_cues.setToolTip(t(
+            "A short pattern marks recording start, stop, completion and failure."
+        ))
+        form.addRow("", self.audio_cues)
+
         self.keep_audio = QCheckBox(
             t("Keep audio files ({path})", path=str(cfg.RECORDINGS_DIR))
         )
@@ -1453,6 +1617,15 @@ class SettingsWindow(QDialog):
         self.requesty_key = self._key_row(
             keys_form, "requesty", t("(falls back to REQUESTY_API_KEY)"),
             self._test_requesty)
+        # The one provider whose address is not known in advance, so it is the
+        # one with an address field; the others keep theirs in the config.
+        self.custom_url = QLineEdit()
+        self.custom_url.setPlaceholderText(
+            t("OpenAI-compatible, e.g. http://localhost:8000/v1"))
+        keys_form.addRow(t("Custom server address"), self.custom_url)
+        self.custom_key = self._key_row(
+            keys_form, "custom", t("Optional (falls back to CUSTOM_API_KEY)"),
+            self._test_custom, service=t("Custom server"))
         outer.addWidget(keys)
 
         stt = QGroupBox(t("Speech to text"))
@@ -1495,6 +1668,18 @@ class SettingsWindow(QDialog):
             ggml.whisper_models, ggml.whisper_model_path)
         stt_form.addRow(self.local_whisper)
 
+        self.local_models_dir = QLineEdit()
+        self.local_models_dir.setPlaceholderText(str(ggml.DATA_DIR / "models"))
+        self.local_models_dir.setToolTip(t(
+            "The folder shared by the local whisper and llama models. Choose "
+            "an ASCII-only path on Windows if your user folder contains "
+            "characters whisper.cpp cannot open. Empty uses the default."
+        ))
+        choose_models_dir = QPushButton(t("Choose…"))
+        choose_models_dir.clicked.connect(self._choose_models_dir)
+        stt_form.addRow(t("Model folder"), self._row(
+            self.local_models_dir, choose_models_dir))
+
         self.local_device = QComboBox()
         self.local_device.addItem(t("Automatic (whisper.cpp default)"), "auto")
         self.local_device.addItem(t("Processor (CPU)"), "cpu")
@@ -1502,8 +1687,9 @@ class SettingsWindow(QDialog):
         self._selectable_graphics_devices = ()
         LocalModelBox._fit_popup(self.local_device)
         self.local_device.setToolTip(t(
-            "Automatic lets whisper.cpp choose a graphics card when its build "
-            "supports one. Processor keeps all speech recognition on the CPU."
+            "Automatic lets whisper.cpp choose a graphics card through Metal, "
+            "CUDA, ROCm or Vulkan when its build supports one. Processor keeps "
+            "all speech recognition on the CPU."
         ))
         self.local_device.currentIndexChanged.connect(
             self._processing_device_changed
@@ -1632,6 +1818,16 @@ class SettingsWindow(QDialog):
                                                     self.refresh_requesty_models)
         orr_form.addRow(t("Model"), self.cleanup_requesty_model_row)
 
+        self.cleanup_custom_model = QComboBox()
+        self.cleanup_custom_model.setEditable(True)
+        self.cleanup_custom_model.lineEdit().setPlaceholderText(
+            t("Empty: the server's default model"))
+        self.refresh_custom_models = QPushButton(t("Fetch model list"))
+        self.refresh_custom_models.clicked.connect(self._load_custom_models)
+        self.cleanup_custom_model_row = self._row(self.cleanup_custom_model,
+                                                  self.refresh_custom_models)
+        orr_form.addRow(t("Model"), self.cleanup_custom_model_row)
+
         self.cleanup_agy_model = QComboBox()
         self.cleanup_agy_model.setEditable(True)
         self.cleanup_agy_model.addItems([t("Antigravity's own default")] + AGY_MODELS)
@@ -1735,6 +1931,13 @@ class SettingsWindow(QDialog):
               "decide how much it may touch your words."),
             cfg.default_cleanup_prompt,
         )
+        # How a custom instruction and the profiles combine, said where the
+        # instruction is written; Config.cleanup_prompt is the rule itself.
+        self.cleanup_prompt.setToolTip(t(
+            "Your own instruction replaces the built-in one. The dictionary, "
+            "and the style and translation of the profile in use, are still "
+            "added after it. Switch the profile style off under Profiles to "
+            "use your instruction alone."))
         self.file_cleanup_prompt = self._prompt_page(
             inner, t("Audio file"),
             t("Used instead when an audio or video file is cleaned up. It is "
@@ -1742,17 +1945,9 @@ class SettingsWindow(QDialog):
               "shortened, and misheard words are repaired from the context."),
             cfg.default_file_cleanup_prompt,
         )
+        self.dictionary_editor = profiles_ui.DictionaryEditor()
+        inner.addTab(self.dictionary_editor, t("Dictionary"))
         layout.addWidget(inner, 1)
-
-        hint = QLabel(t("Names and terms you say often (optional). They go to the "
-                        "transcription model as a hint, and to the cleanup model as a "
-                        "glossary, so it can repair the ones that still come out wrong."))
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
-        layout.addWidget(QLabel(t("Dictionary")))
-        self.transcribe_prompt = QPlainTextEdit()
-        self.transcribe_prompt.setMaximumHeight(90)
-        layout.addWidget(self.transcribe_prompt)
         return page
 
     def _assistant_tab(self):
@@ -1964,6 +2159,34 @@ class SettingsWindow(QDialog):
         ))
         answer_form.addRow("", self.assistant_cleanup)
         layout.addWidget(answer)
+
+        # Its own switch and its own key, so that turning it on changes
+        # nothing about the spoken command above.
+        selected = QGroupBox(t("Selected text"))
+        selected_form = QFormLayout(selected)
+        selected_form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.selection_assist = QCheckBox(t("Ask about the selected text"))
+        self.selection_assist.setToolTip(t(
+            "Select text, press the shortcut and say what to do with it. The "
+            "answer opens in a window; nothing is pasted until you press "
+            "Apply. The selection goes to the agent with no tools, and Codex "
+            "and Antigravity are not sent it. The history keeps your "
+            "instruction and the reply, not the selection."))
+        selected_form.addRow("", self.selection_assist)
+        box = self._shortcut_row(
+            selected_form, "assist", t("Shortcut"),
+            t("No global shortcut installed."),
+        )
+        # The key does nothing while the feature is off, so it is greyed out,
+        # all but Remove: a key installed earlier can still be taken back.
+        row = box.parentWidget()
+        self._assist_shortcut = [box, selected_form.labelForField(row)] + [
+            button for button in row.findChildren(QPushButton)
+            if button.text() != t("Remove")]
+        self.selection_assist.toggled.connect(self._enable_assist_shortcut)
+        self._enable_assist_shortcut(False)
+        layout.addWidget(selected)
 
         prompt_label = QLabel(t(
             "Told to the agent alongside every command, on top of whatever your "
@@ -2179,11 +2402,20 @@ class SettingsWindow(QDialog):
         layout.addLayout(row)
 
         self.file_timestamps = QCheckBox(t("Add timestamps"))
-        self.file_timestamps.setToolTip(
-            t("Prefixes every segment with [mm:ss]. Uses whisper-1 on whichever "
-              "provider you picked, the only model that returns segment times.")
-        )
+        self._timestamps_tip = t(
+            "Prefixes every segment with [mm:ss]. Uses whisper-1 on whichever "
+            "provider you picked, the only model that returns segment times.")
+        self.file_timestamps.setToolTip(self._timestamps_tip)
         layout.addWidget(self.file_timestamps)
+
+        # Hidden rather than greyed out: most models cannot do it, and a box
+        # that is always off says nothing about the one that is selected.
+        self.file_speakers = QCheckBox(t("Tell the speakers apart"))
+        self.file_speakers.setToolTip(
+            t("Puts who is talking in front of every line. Only offered for the "
+              "models known to label speakers.")
+        )
+        layout.addWidget(self.file_speakers)
 
         self.file_cleanup = QCheckBox(t("Run the cleanup model afterwards"))
         self.file_cleanup.setToolTip(
@@ -2337,6 +2569,7 @@ class SettingsWindow(QDialog):
         delete_key = QShortcut(QKeySequence.StandardKey.Delete, self.history)
         delete_key.setContext(Qt.ShortcutContext.WidgetShortcut)
         delete_key.activated.connect(self._delete_history)
+        self.history.itemSelectionChanged.connect(self._sync_history_actions)
         layout.addWidget(self.history, 1)
 
         self.history_limit = QSpinBox()
@@ -2348,20 +2581,33 @@ class SettingsWindow(QDialog):
             "every time a new one arrives. Set it to 0 to keep everything."
         ))
 
+        self.history_retry = QPushButton(t("Retry"))
+        self.history_retry.setToolTip(t(
+            "Transcribe the kept recording of a failed dictation again. The "
+            "text goes to the clipboard."
+        ))
+        self.history_retry.clicked.connect(self._retry_history)
+        self.history_retry.setEnabled(False)
         copy = QPushButton(t("Copy selected to clipboard"))
         copy.clicked.connect(self._copy_history)
+        # What was heard, for a row whose text is a translation of it.
+        self.history_original = QPushButton(t("Copy original"))
+        self.history_original.setToolTip(t(
+            "Copy the transcript as it was heard, before it was translated."))
+        self.history_original.clicked.connect(self._copy_original)
+        self.history_original.setEnabled(False)
         delete = QPushButton(t("Delete selected"))
         delete.clicked.connect(self._delete_history)
         clear = QPushButton(t("Clear history"))
         clear.clicked.connect(self._clear_history)
         reload_ = QPushButton(t("Reload"))
         reload_.clicked.connect(self._load_history)
-        self.history_actions = row = QHBoxLayout()
-        row.addWidget(copy)
-        row.addWidget(delete)
-        row.addWidget(clear)
-        row.addWidget(reload_)
-        row.addStretch()
+        # Wrapped onto as many lines as the font and the language need: in one
+        # fixed row the labels no longer fit the home window's column.
+        self.history_actions = row = FlowLayout()
+        for button in (self.history_retry, copy, self.history_original,
+                       delete, clear, reload_):
+            row.addWidget(button)
         layout.addLayout(row)
         return page
 
@@ -2432,6 +2678,11 @@ class SettingsWindow(QDialog):
         self._shortcut_rows[which] = (box, status, missing)
         return box
 
+    def _enable_assist_shortcut(self, on):
+        for widget in self._assist_shortcut:
+            if widget is not None:
+                widget.setEnabled(on)
+
     @staticmethod
     def _install_buttons(install_handler, remove_handler):
         """Install and Remove, where this system has somewhere to install into.
@@ -2485,6 +2736,7 @@ class SettingsWindow(QDialog):
         self.skip_silent.setChecked(conf["skip_silent"])
         self.silence_db.setValue(int(conf["silence_db"]))
         self.filter_hallucinations.setChecked(conf["filter_hallucinations"])
+        self.audio_cues.setChecked(conf["audio_cues"])
         self.keep_audio.setChecked(conf["keep_audio"])
         self.update_check.setChecked(conf["update_check"])
         self.start_in_tray.setChecked(conf["start_in_tray"])
@@ -2493,9 +2745,9 @@ class SettingsWindow(QDialog):
         for name, who in cfg.TRANSCRIBERS.items():
             self._key_fields[name].setText(conf[who.key])
             self._models[name] = conf[who.model]
-        self.gemini_key.setText(conf["gemini_api_key"])
         self.deepseek_key.setText(conf["deepseek_api_key"])
         self.opencode_key.setText(conf["opencode_api_key"])
+        self.custom_url.setText(conf["custom_base_url"])
         self._shown_provider = ""
         self._select_data(self.transcribe_provider, conf["transcribe_provider"])
         self._provider_changed()  # selecting index 0 fires no signal
@@ -2511,6 +2763,7 @@ class SettingsWindow(QDialog):
             )
         self._select_data(self.local_device, processing_device)
         self._processing_device_changed()
+        self.local_models_dir.setText(conf["local_models_dir"])
         self.local_preload.setChecked(conf["local_preload"])
         saved_threads = cfg._local_thread_count(conf["local_threads"])
         self.local_threads.setValue(min(saved_threads, self.local_threads.maximum()))
@@ -2541,6 +2794,7 @@ class SettingsWindow(QDialog):
         )
         self.cleanup_opencode_model.setCurrentText(conf["cleanup_opencode_model"])
         self.cleanup_requesty_model.setCurrentText(conf["cleanup_requesty_model"])
+        self.cleanup_custom_model.setCurrentText(conf["cleanup_custom_model"])
         self._select_data(self.cleanup_provider, conf["cleanup_provider"])
         self._cleanup_provider_changed()  # selecting index 0 fires no signal
         self._select_data(self.cleanup_reasoning, conf["cleanup_reasoning"])
@@ -2567,7 +2821,8 @@ class SettingsWindow(QDialog):
         self.file_cleanup_prompt.setPlainText(
             conf["file_cleanup_prompt"] or self._loaded_defaults["file"]
         )
-        self.transcribe_prompt.setPlainText(conf["transcribe_prompt"])
+        self.dictionary_editor.load(conf)
+        self.profiles_editor.load(conf)
 
         self._select_data(self.assistant_provider, conf["assistant_provider"])
         self.assistant_model.setCurrentText(conf["assistant_model"])
@@ -2585,6 +2840,8 @@ class SettingsWindow(QDialog):
         self.assistant_session_minutes.setValue(int(conf["assistant_session_minutes"]))
         self.assistant_paste.setChecked(conf["assistant_paste"])
         self.assistant_cleanup.setChecked(conf["assistant_cleanup"])
+        self.selection_assist.setChecked(conf["selection_assist"])
+        self._enable_assist_shortcut(conf["selection_assist"])
         self.assistant_prompt.setPlainText(
             conf["assistant_prompt"] or self._loaded_defaults["assistant"]
         )
@@ -2605,9 +2862,24 @@ class SettingsWindow(QDialog):
             conf["meeting_prompt"] or self._loaded_defaults["meeting"]
         )
 
-        with QSignalBlocker(self.file_timestamps), QSignalBlocker(self.file_cleanup):
+        with QSignalBlocker(self.file_timestamps), QSignalBlocker(self.file_cleanup), \
+                QSignalBlocker(self.file_speakers):
             self.file_timestamps.setChecked(conf["file_timestamps"])
             self.file_cleanup.setChecked(conf["file_cleanup"])
+            self.file_speakers.setChecked(conf["file_speakers"])
+        # The run reads the saved settings, so the saved model is the one asked.
+        self.file_speakers.setVisible(bool(api.diarize_model(conf.transcribe_target())))
+        # Greyed out rather than hidden, since every other provider can do it,
+        # and shown unticked without the setting being touched, so that going
+        # back to one of those brings the choice back with it.
+        timed = api.gives_times(conf["transcribe_provider"])
+        self.file_timestamps.setEnabled(timed)
+        self.file_timestamps.setToolTip(self._timestamps_tip if timed else t(
+            "{service} returns no timestamps.",
+            service=conf.transcribe_target().service))
+        if not timed:
+            with QSignalBlocker(self.file_timestamps):
+                self.file_timestamps.setChecked(False)
         if not hasattr(self, "file_path"):
             self.file_path = ""
 
@@ -2643,6 +2915,7 @@ class SettingsWindow(QDialog):
         conf["skip_silent"] = self.skip_silent.isChecked()
         conf["silence_db"] = float(self.silence_db.value())
         conf["filter_hallucinations"] = self.filter_hallucinations.isChecked()
+        conf["audio_cues"] = self.audio_cues.isChecked()
         conf["keep_audio"] = self.keep_audio.isChecked()
         conf["update_check"] = self.update_check.isChecked()
         conf["start_in_tray"] = self.start_in_tray.isChecked()
@@ -2655,11 +2928,12 @@ class SettingsWindow(QDialog):
             conf[who.key] = self._key_fields[name].text().strip()
             conf[who.model] = self._models[name].strip() or cfg.DEFAULTS[who.model]
         conf["openrouter_file_model"] = self.file_model.currentText().strip()
-        conf["gemini_api_key"] = self.gemini_key.text().strip()
         conf["deepseek_api_key"] = self.deepseek_key.text().strip()
         conf["opencode_api_key"] = self.opencode_key.text().strip()
+        conf["custom_base_url"] = self.custom_url.text().strip()
         conf["local_binary"] = self.local_whisper.custom_binary
         conf["local_llm_binary"] = self.local_llm.custom_binary
+        conf["local_models_dir"] = self.local_models_dir.text().strip()
         conf["local_model"] = self.local_whisper.selected()
         conf["local_device"] = self.local_device.currentData() or "auto"
         conf["local_gpu"] = conf["local_device"] != "cpu"
@@ -2697,6 +2971,9 @@ class SettingsWindow(QDialog):
             self.cleanup_requesty_model.currentText().strip()
             or cfg.DEFAULTS["cleanup_requesty_model"]
         )
+        # Empty is a choice here rather than a field left blank: the server's
+        # own model.
+        conf["cleanup_custom_model"] = self.cleanup_custom_model.currentText().strip()
         conf["cleanup_reasoning"] = self.cleanup_reasoning.currentData() or ""
         conf["local_llm_model"] = self.local_llm.selected()
         conf["local_llm_repo"] = self.local_llm.repository()
@@ -2718,7 +2995,8 @@ class SettingsWindow(QDialog):
         conf["file_cleanup_prompt"] = ("" if file_prompt in (
             self._loaded_defaults["file"], cfg.default_file_cleanup_prompt())
             else file_prompt)
-        conf["transcribe_prompt"] = self.transcribe_prompt.toPlainText().strip()
+        dictionary_write = self.dictionary_editor.store(conf)
+        self.profiles_editor.store(conf)
 
         conf["assistant_provider"] = self.assistant_provider.currentData() or "claude"
         conf["assistant_model"] = (self.assistant_model.currentText().strip()
@@ -2755,6 +3033,7 @@ class SettingsWindow(QDialog):
         conf["assistant_session_minutes"] = self.assistant_session_minutes.value()
         conf["assistant_paste"] = self.assistant_paste.isChecked()
         conf["assistant_cleanup"] = self.assistant_cleanup.isChecked()
+        conf["selection_assist"] = self.selection_assist.isChecked()
         assistant_prompt = self.assistant_prompt.toPlainText().strip()
         conf["assistant_prompt"] = ("" if assistant_prompt in (
             self._loaded_defaults["assistant"], cfg.default_assistant_prompt())
@@ -2781,8 +3060,10 @@ class SettingsWindow(QDialog):
             self._loaded_defaults["meeting"], cfg.default_meeting_prompt())
             else meeting_prompt)
 
-        conf["file_timestamps"] = self.file_timestamps.isChecked()
+        if self.file_timestamps.isEnabled():
+            conf["file_timestamps"] = self.file_timestamps.isChecked()
         conf["file_cleanup"] = self.file_cleanup.isChecked()
+        conf["file_speakers"] = self.file_speakers.isChecked()
 
         # Left empty, only the toggle falls back to a default: the application
         # is unusable without it. The rest stay empty, which is what turns
@@ -2814,6 +3095,14 @@ class SettingsWindow(QDialog):
                                 t("Could not save the settings: {error}",
                                   error=exc))
             return
+        # After config.json, so that a failed save above leaves the file still
+        # agreeing with the setting (see dictionary.save).
+        try:
+            self.dictionary_editor.commit(dictionary_write)
+        except OSError as exc:
+            QMessageBox.warning(self, "Dikte",
+                                t("Could not save the dictionary: {error}",
+                                  error=exc))
         # A lowered limit should bite now, not on the next dictation.
         try:
             cfg.trim_history(conf["history_limit"])
@@ -2913,12 +3202,33 @@ class SettingsWindow(QDialog):
             self._graphics_devices,
             self._selectable_graphics_devices,
         )
+        binary = ggml.program_path(ggml.WHISPER, self.local_whisper.custom_binary)
+        # A downloaded build with no graphics backend ignores every choice but
+        # the processor, and a box that can be set to a card it will never
+        # reach is a setting that silently does nothing. The saved choice is
+        # left as it is, so a later download that can reach the card picks it
+        # up again. A specific card saved from an earlier build is the
+        # exception: that one fails to start here, so the box stays usable
+        # until it is moved off it.
+        processor_only = ggml.processor_only(ggml.WHISPER, binary)
+        self.local_device.setEnabled(
+            not processor_only
+            or (self.local_device.currentData() or "auto") not in ("auto", "cpu"))
+        if processor_only:
+            # After a Vulkan download fell back, the Program line already says
+            # this build runs on the processor; once is enough.
+            if ggml.vulkan_missing(ggml.WHISPER):
+                return
+            label = self.local_whisper.machine_label
+            label.setText(label.text() + "\n" + t(
+                "This whisper.cpp build has no graphics card support, so it "
+                "always runs on the processor."))
+            return
         selectable = {device.identifier for device in self._selectable_graphics_devices
                       if device.identifier}
         if self._graphics_devices and any(
                 not device.identifier or device.identifier not in selectable
                 for device in self._graphics_devices):
-            binary = ggml.program_path(ggml.WHISPER, self.local_whisper.custom_binary)
             if "GGML_VK_VISIBLE_DEVICES" in os.environ:
                 reason = t("GGML_VK_VISIBLE_DEVICES overrides graphics visibility.")
             elif not ggml.managed_vulkan_in_use(binary):
@@ -2956,9 +3266,23 @@ class SettingsWindow(QDialog):
         self.transcribe_model.clear()
         self.transcribe_model.addItems(TRANSCRIBE_MODELS[provider])
         self.transcribe_model.setCurrentText(self._models[provider])
+        self.transcribe_model.lineEdit().setPlaceholderText(
+            t("Empty: the server's default model") if provider == "custom" else "")
         if provider == "openrouter":
             self._fill_file_models(TRANSCRIBE_MODELS[provider])
-        self.transcribe_status.setText("")
+        self._say_transcribe("")
+
+    def _say_transcribe(self, line):
+        """`line` on the status row, under the warning the provider carries.
+
+        Said where the provider is picked, rather than after a meeting has been
+        recorded for an hour with nothing able to write it up, and kept there
+        through a fetch of the model list rather than replaced by its count.
+        """
+        warning = ("" if api.gives_times(self._shown_provider)
+                   else t("Gives no timestamps, so subtitles and meetings need "
+                          "another provider."))
+        self.transcribe_status.setText("\n".join(x for x in (line, warning) if x))
 
     def _fill_file_models(self, models):
         current = self.file_model.currentText()
@@ -2970,15 +3294,22 @@ class SettingsWindow(QDialog):
         """The model list of whichever provider is selected."""
         provider = self.transcribe_provider.currentData() or "openai"
         self.refresh_transcribe_models.setEnabled(False)
-        self.transcribe_status.setText(t("Fetching model list…"))
+        self._fetching_provider = provider
+        self._say_transcribe(t("Fetching model list…"))
         key, base = self._typed_key(provider)
-        service = cfg.TRANSCRIBERS[provider].service
+        service = t(cfg.TRANSCRIBERS[provider].service)
 
         def work():
             try:
-                models = (api.openrouter_models(key, transcription=True)
-                          if provider == "openrouter"
-                          else api.openai_models(key, base, service))
+                if provider == "openrouter":
+                    models = api.openrouter_models(key, transcription=True)
+                elif provider == "custom":
+                    models = api.custom_models(key, base, service, transcription=True)
+                elif provider == "gemini":
+                    # Unfiltered for audio: the listing names no input types.
+                    models = api.gemini_models(key, base)
+                else:
+                    models = api.openai_models(key, base, service)
                 self._transcribe_models_loaded.emit(models, "")
             except api.ApiError as exc:
                 self._transcribe_models_loaded.emit([], str(exc))
@@ -2987,8 +3318,12 @@ class SettingsWindow(QDialog):
 
     def _on_transcribe_models_loaded(self, models, error):
         self.refresh_transcribe_models.setEnabled(True)
+        # Another provider was picked while the list was on its way, and these
+        # are not its models.
+        if getattr(self, "_fetching_provider", self._shown_provider) != self._shown_provider:
+            return
         if error:
-            self.transcribe_status.setText(t("Could not fetch the list: {error}", error=error))
+            self._say_transcribe(t("Could not fetch the list: {error}", error=error))
             return
         current = self.transcribe_model.currentText()
         self.transcribe_model.clear()
@@ -2996,7 +3331,7 @@ class SettingsWindow(QDialog):
         self.transcribe_model.setCurrentText(current)
         if self._shown_provider == "openrouter":
             self._fill_file_models(models)
-        self.transcribe_status.setText(t("{count} models loaded.", count=len(models)))
+        self._say_transcribe(t("{count} models loaded.", count=len(models)))
 
     def _load_models(self):
         self.refresh_models.setEnabled(False)
@@ -3159,6 +3494,31 @@ class SettingsWindow(QDialog):
             combo.addItems(models)
             combo.setCurrentText(current)
 
+    def _load_custom_models(self):
+        self.refresh_custom_models.setEnabled(False)
+        self.models_label.setText(t("Fetching model list…"))
+        key, base = self._typed_key("custom")
+        service = t("Custom server")
+
+        def work():
+            try:
+                self._custom_models_loaded.emit(api.custom_models(key, base, service), "")
+            except api.ApiError as exc:
+                self._custom_models_loaded.emit([], str(exc))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_custom_models_loaded(self, models, error):
+        self.refresh_custom_models.setEnabled(True)
+        if error:
+            self.models_label.setText(t("Could not fetch the list: {error}", error=error))
+            return
+        current = self.cleanup_custom_model.currentText()
+        self.cleanup_custom_model.clear()
+        self.cleanup_custom_model.addItems(models)
+        self.cleanup_custom_model.setCurrentText(current)
+        self.models_label.setText(t("{count} models loaded.", count=len(models)))
+
     def _load_agy_models(self):
         """Ask Antigravity which models it offers, off the interface thread.
 
@@ -3300,6 +3660,14 @@ class SettingsWindow(QDialog):
             count=len(api.openai_models(key, base, "Requesty")),
         ))
 
+    def _test_custom(self):
+        key, base = self._typed_key("custom")
+        service = t("Custom server")
+        self._test_key("custom", lambda: t(
+            "Connection works. {count} models visible.",
+            count=len(api.custom_models(key, base, service)),
+        ))
+
     def _typed_key(self, provider):
         """(key, base URL) for a provider, preferring what is in the field now."""
         if provider in cfg.TRANSCRIBERS:
@@ -3309,7 +3677,12 @@ class SettingsWindow(QDialog):
             key_setting = f"{provider}_api_key"
             url_setting = f"{provider}_base_url"
         typed = self._key_fields[provider].text().strip()
-        return typed or self.conf.api_key(key_setting), self.conf[url_setting]
+        base = self.conf[url_setting]
+        if provider == "custom":
+            # Its address has a field of its own, and what is typed there now
+            # is the server being asked about.
+            base = self.custom_url.text().strip()
+        return typed or self.conf.api_key(key_setting), base
 
     def _test_key(self, provider, ask):
         """Run `ask` off the interface thread and write its answer under the key.
@@ -3397,8 +3770,11 @@ class SettingsWindow(QDialog):
         file. Everything else on the tab is a button, so there is nothing here
         an unsaved form could be caught by.
         """
-        self.conf["file_timestamps"] = self.file_timestamps.isChecked()
+        # A greyed-out box is unticked for this provider only.
+        if self.file_timestamps.isEnabled():
+            self.conf["file_timestamps"] = self.file_timestamps.isChecked()
         self.conf["file_cleanup"] = self.file_cleanup.isChecked()
+        self.conf["file_speakers"] = self.file_speakers.isChecked()
         try:
             self.conf.save()
         except OSError as exc:
@@ -3416,6 +3792,7 @@ class SettingsWindow(QDialog):
             self.file_path,
             self.file_timestamps.isChecked(),
             self.file_cleanup.isChecked(),
+            self.file_speakers.isChecked(),
         )
 
     def _stop_file(self):
@@ -3545,6 +3922,8 @@ class SettingsWindow(QDialog):
                                         provider == "opencode")
         self.cleanup_form.setRowVisible(self.cleanup_requesty_model_row,
                                         provider == "requesty")
+        self.cleanup_form.setRowVisible(self.cleanup_custom_model_row,
+                                        provider == "custom")
         self.cleanup_form.setRowVisible(self.cleanup_agy_model,
                                         provider == "agy")
         self.cleanup_form.setRowVisible(self.cleanup_reasoning,
@@ -3565,6 +3944,8 @@ class SettingsWindow(QDialog):
             self.models_label.setText(t("Runs on DeepSeek."))
         elif provider == "requesty":
             self.models_label.setText(t("Runs on Requesty."))
+        elif provider == "custom":
+            self.models_label.setText(t("Runs on your custom server."))
         elif not binary:
             self.models_label.setText(t("Runs on OpenRouter."))
         elif found:
@@ -3629,6 +4010,14 @@ class SettingsWindow(QDialog):
         )
         if chosen:
             self.assistant_dir.setText(chosen)
+
+    def _choose_models_dir(self):
+        chosen = QFileDialog.getExistingDirectory(
+            self, t("Model folder"),
+            self.local_models_dir.text().strip() or str(ggml.DATA_DIR / "models"),
+        )
+        if chosen:
+            self.local_models_dir.setText(chosen)
 
     # ---- minutes ---------------------------------------------------------
 
@@ -3711,13 +4100,21 @@ class SettingsWindow(QDialog):
     # ---- history ---------------------------------------------------------
 
     def _load_history(self):
+        # A reload arrives whenever a dictation settles, so whatever was
+        # selected is selected again rather than lost under the user's hand.
+        chosen = {cfg._row_key(row) for row in self._selected_rows()}
         self.history.clear()
         for row in reversed(cfg.read_history(self.conf["history_limit"])):
             text = (row.get("text") or "").replace("\n", " ")
             preview = text[:110] + ("…" if len(text) > 110 else "")
             header = t("{ts}  ({duration} s)",
                        ts=row.get("ts", ""), duration=row.get("duration", 0))
-            if row.get("mode") == "ask":
+            if row.get("failed"):
+                error = (row.get("error") or "").replace("\n", " ")
+                preview = t("Failed: {error}", error=error[:110])
+                if _retryable(row):
+                    preview += "\n" + t("The recording was kept; select it and press Retry.")
+            elif row.get("mode") == "ask":
                 # The text of an answer says nothing about what was asked, and
                 # out of that context half of them read like non sequiturs.
                 asked = (row.get("question") or row.get("raw") or "").replace("\n", " ")
@@ -3727,9 +4124,41 @@ class SettingsWindow(QDialog):
                 header += t("  ·  asked {who}: {question}",
                             who=i18n.name(who, "dative"),
                             question=asked[:60] + ("…" if len(asked) > 60 else ""))
+            header += history_marks(row)
             item = QListWidgetItem(f"{header}\n{preview}")
             item.setData(Qt.ItemDataRole.UserRole, row)
             self.history.addItem(item)
+            if cfg._row_key(row) in chosen:
+                item.setSelected(True)
+        self._sync_history_actions()
+
+    def _retryable_selection(self):
+        """Selected failed dictations whose recording is still there, oldest
+        first, the order they were spoken and should be retried in."""
+        return [row for row in reversed(self._selected_rows()) if _retryable(row)]
+
+    def _sync_history_actions(self):
+        self.history_retry.setEnabled(bool(self._retryable_selection()))
+        self.history_original.setEnabled(bool(self._translated_selection()))
+
+    def _translated_selection(self):
+        return [row for row in self._selected_rows()
+                if row.get("translate_to") and row.get("raw")]
+
+    def _copy_original(self):
+        rows = self._translated_selection()
+        if rows:
+            QGuiApplication.clipboard().setText(
+                "\n\n".join(row["raw"] for row in rows))
+
+    def _retry_history(self):
+        rows = self._retryable_selection()
+        for row in rows:
+            self.retry_requested.emit(row)
+        if rows:
+            # Until the result reloads the list, a second press would queue
+            # what is already queued.
+            self.history_retry.setEnabled(False)
 
     def _selected_rows(self):
         """Selected entries, newest first, the order they are listed in."""
@@ -3740,7 +4169,8 @@ class SettingsWindow(QDialog):
         rows = self._selected_rows()
         if rows:
             QGuiApplication.clipboard().setText(
-                "\n\n".join(row.get("text", "") for row in rows)
+                "\n\n".join(row.get("text", "") for row in rows
+                             if not row.get("failed"))
             )
 
     def _delete_history(self):
@@ -3782,7 +4212,11 @@ class SettingsWindow(QDialog):
         if item is not None and not item.isSelected():
             self.history.setCurrentItem(item)
         menu = QMenu(self)
+        retry = menu.addAction(t("Retry"))
+        retry.setEnabled(bool(self._retryable_selection()))
         copy = menu.addAction(t("Copy selected to clipboard"))
+        original = menu.addAction(t("Copy original"))
+        original.setEnabled(bool(self._translated_selection()))
         delete = menu.addAction(t("Delete selected"))
         menu.addSeparator()
         clear = menu.addAction(t("Clear history"))
@@ -3791,8 +4225,12 @@ class SettingsWindow(QDialog):
         delete.setEnabled(has_selection)
         clear.setEnabled(self.history.count() > 0)
         chosen = menu.exec(self.history.viewport().mapToGlobal(pos))
-        if chosen is copy:
+        if chosen is retry:
+            self._retry_history()
+        elif chosen is copy:
             self._copy_history()
+        elif chosen is original:
+            self._copy_original()
         elif chosen is delete:
             self._delete_history()
         elif chosen is clear:
