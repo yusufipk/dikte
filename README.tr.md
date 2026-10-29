@@ -53,10 +53,10 @@ ve o an yazdığın pencereye yapıştırılır. Linux'ta, macOS'ta ve
 ## Kurulum
 
 [Sürümler sayfasından](../../releases) indir: Linux için AppImage, her Mac için
-bir disk imajı, Windows için kurulum. AppImage yine de aşağıdaki sistem
-paketlerini ister. Mac'te ilk açılış, Sistem Ayarları → Gizlilik ve Güvenlik
-altından **Yine de Aç** diyene kadar reddedilir, kısayol da orada
-`Ctrl+Option+Space`.
+bir disk imajı, Windows için kurulum. AppImage yine de ses, pano ve yapıştırma
+için dağıtımının paketlerini ister, liste [docs/install.tr.md](docs/install.tr.md)'de.
+Mac'te ilk açılış, Sistem Ayarları → Gizlilik ve Güvenlik altından
+**Yine de Aç** diyene kadar reddedilir. Mac'te kısayol `Ctrl+Option+Space`.
 
 Arch'ta kaynaktan kurmak için:
 

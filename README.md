@@ -53,10 +53,11 @@ up and pasted into the window you were typing in. It runs on Linux, macOS and
 ## Install
 
 Download it from the [releases page](../../releases): an AppImage for Linux, a
-disk image for each Mac and a setup for Windows. The AppImage still needs the
-system packages below. On a Mac the first launch is refused until you press
-**Open Anyway** under System Settings → Privacy & Security, and the shortcut
-there is `Ctrl+Option+Space`.
+disk image for each Mac and a setup for Windows. The AppImage still needs your
+distribution's packages for sound, the clipboard and pasting, listed in
+[docs/install.md](docs/install.md). On a Mac the first launch is refused until
+you press **Open Anyway** under System Settings → Privacy & Security. The Mac
+shortcut is `Ctrl+Option+Space`.
 
 To install from source on Arch:
 
