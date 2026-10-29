@@ -76,8 +76,8 @@ python -m dikte
   in about 8 seconds, twice as fast as the processor.
 - A machine with no graphics driver gets the **OpenBLAS build**, about twice
   as fast as the stock one on a plain CPU.
-- Windows on ARM gets the x64 OpenBLAS build under emulation, since
-  whisper.cpp publishes no ARM build, and the cloud is the faster option there.
+- Windows on ARM runs these x64 builds under emulation, since whisper.cpp
+  publishes no ARM build, and the cloud is the faster option there.
 - Setting Settings → API and models → **Threads** near your physical core
   count helps noticeably; the server's own default is 4.
 - If speed matters more than accuracy, `ggml-small` and `ggml-base` are much
