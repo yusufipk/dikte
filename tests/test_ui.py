@@ -1376,7 +1376,7 @@ class EveryRecordingProtectsTheFront(DikteTest):
         for name in ("_on_error", "_report", "_set_state"):
             setattr(dikte, name, getattr(self.dikte.Dikte, name).__get__(dikte))
         dikte._transcripts_pending = False
-        dikte.state = self.dikte.RECORDING
+        dikte.state, dikte.recording = self.dikte.RECORDING, True
         self.dikte.Dikte.start_meeting(dikte)
         self.assertEqual(dikte.state, self.dikte.RECORDING)
         settled = [call.args[0] for call in dikte._settle.call_args_list]
@@ -1385,6 +1385,25 @@ class EveryRecordingProtectsTheFront(DikteTest):
         dikte.overlay.show_error.assert_not_called()
         dikte.tray.showMessage.assert_called_once()
         dikte.cues.play.assert_not_called()
+
+    def refused_meeting(self, state, ask_state):
+        dikte = self.app(meeting_state=self.dikte.M_IDLE, state=state,
+                         ask_state=ask_state, recording=self.dikte.RECORDING in (
+                             state, ask_state))
+        dikte.conf["transcribe_provider"] = "gemini"
+        self.dikte.Dikte._on_meeting_error(dikte, "refused")
+        return dikte
+
+    def test_a_refused_meeting_is_heard_when_no_microphone_is_open(self):
+        for state in (self.dikte.IDLE, self.dikte.BUSY):
+            with self.subTest(state=state):
+                dikte = self.refused_meeting(state, self.dikte.IDLE)
+                dikte.cues.play.assert_called_once_with("failed")
+
+    def test_a_refused_meeting_keeps_its_cue_out_of_a_question(self):
+        dikte = self.refused_meeting(self.dikte.IDLE, self.dikte.RECORDING)
+        dikte.cues.play.assert_not_called()
+        dikte._report.assert_called_once_with("refused", dikte.overlay)
 
 class Overlay(DikteTest):
     def overlay(self, **kwargs):

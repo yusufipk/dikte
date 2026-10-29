@@ -1404,10 +1404,13 @@ class Dikte:
         self._set_meeting_state(M_IDLE)
         self._settle(MEETING, {"ok": False, "error": message})
         # Not _on_error: that one ends a dictation, and the meeting shortcut
-        # can be pressed in the middle of one, whose recorder keeps running
-        # and would take the cue down with the words.
-        if self.state == IDLE:
+        # can be pressed in the middle of one, whose recorder keeps running.
+        # No cue while the microphone is open for either recording, or it is
+        # taken down with the words, and no overlay error over a dictation's
+        # own indicator.
+        if not self.recording:
             self.cues.play("failed")
+        if self.state == IDLE:
             self._report(message, self.overlay)
         else:
             self.tray.showMessage("Dikte", message,
