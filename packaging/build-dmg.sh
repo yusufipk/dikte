@@ -83,22 +83,17 @@ mkdir -p "$stage"
 cp -a "$APP" "$stage/"
 ln -s /Applications "$stage/Applications"
 # On GitHub's Intel runners hdiutil now and then fails with a diskimages-helper
-# left running behind it, and the same build passes on a second try.
-# Not -quiet, so a failure that keeps coming back says why in the log.
-# A volume a failed attempt left attached is let go before the next one.
+# left running behind it, and the same build passes on a rerun. Whether waiting
+# in place is enough is not proven yet, so each failure logs hdiutil's state,
+# and its own output is not -quiet.
 for attempt in 1 2 3; do
-  if hdiutil create -volname "Dikte $VERSION" -srcfolder "$stage" \
-    -ov -format UDZO "$OUT/Dikte-$VERSION-$ARCH.dmg"; then
-    break
-  else
-    status=$?
-  fi
+  hdiutil create -volname "Dikte $VERSION" -srcfolder "$stage" \
+    -ov -format UDZO "$OUT/Dikte-$VERSION-$ARCH.dmg" && break || status=$?
   echo "hdiutil create failed with $status, attempt $attempt of 3" >&2
+  hdiutil info >&2 || true
   if [ "$attempt" = 3 ]; then
     exit "$status"
   fi
-  hdiutil info >&2 || true
-  hdiutil detach "/Volumes/Dikte $VERSION" -force >/dev/null 2>&1 || true
   sleep $((attempt * 15))
 done
 
