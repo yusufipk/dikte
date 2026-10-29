@@ -37,6 +37,7 @@ from . import ipc
 from . import integrate
 from . import meeting
 from . import paste
+from . import profiles
 from . import update
 from . import __version__
 
@@ -45,7 +46,7 @@ NOT_RUNNING = 3
 # Verbs that start the application when none is running, which is what a
 # shortcut registered with the desktop has always relied on: press the key on a
 # fresh login and Dikte comes up recording.
-GUI_VERBS = {"", "home", "settings", "toggle", "ask", "meeting"}
+GUI_VERBS = {"", "home", "settings", "toggle", "ask", "meeting", "assist"}
 
 # Asking a process that is not there to stop, cancel or quit is not a failure;
 # it is already in the state that was asked for.
@@ -563,6 +564,16 @@ def _coerce(key, raw):
         return int(float(raw))
     if isinstance(default, float):
         return float(raw)
+    if isinstance(default, (dict, list)):
+        # The profiles: JSON in, and of the right shape, or the next load would
+        # quietly put the default back.
+        try:
+            value = json.loads(raw)
+        except ValueError:
+            raise ValueError(f"{key} wants JSON, got: {raw}") from None
+        if not isinstance(value, type(default)):
+            raise ValueError(f"{key} wants a JSON {type(default).__name__}")
+        return value
     return raw
 
 
@@ -667,7 +678,9 @@ def cmd_prompt(opts):
     """The prompt a run would really use, defaults and glossary folded in."""
     conf = cfg.Config()
     prompts = {
-        "cleanup": conf.cleanup_prompt(),
+        # As a dictation would send it with no program found in front: the
+        # Default profile, or the one chosen for every dictation.
+        "cleanup": conf.cleanup_prompt(profile=profiles.choose(conf)),
         "subtitles": conf.cleanup_prompt(subtitles=True),
         "meeting": conf.meeting_prompt(),
         "agent": conf.assistant_prompt(),
@@ -1220,6 +1233,9 @@ def build_parser():
 
     for name in ("ask-cancel", "ask-reset"):
         leaf(subs, name).set_defaults(func=cmd_plain)
+    # The key the desktop binds; it does nothing unless switched on in Settings.
+    leaf(subs, "assist", "ask the agent about the selected text"
+         ).set_defaults(func=cmd_plain)
 
     # --- a file -----------------------------------------------------------
     transcribe = leaf(subs, "transcribe", "transcribe an audio or video file")

@@ -16,12 +16,16 @@ from unittest import mock
 from dikte import api
 from dikte import assistant
 from dikte import config as cfg
+from dikte import dictionary
 from dikte import paste
+from dikte import profiles
 from dikte import worker
 from tests.support import DikteTest, make_wav, speech
 
 
-class Chain(DikteTest):
+class ChainBase(DikteTest):
+    """One dictation run, every outside call faked; the tests below drive it."""
+
     def setUp(self):
         super().setUp()
         self.conf = self.config(openai_api_key="sk-test",
@@ -36,7 +40,7 @@ class Chain(DikteTest):
                   cleaned="Book it for Thursday.",
                   cleanup_error=None, answer=("Booked.", ""), rms=None,
                   clipboard=b"what was there before", paste_error=None,
-                  detected="en", focus=None, retry=None):
+                  detected="en", focus=None, retry=None, profile=None):
         pipeline = worker.Pipeline(self.conf)
         done, failures, stages, cancels = [], [], [], []
         pipeline.finished.connect(lambda *args: done.append(args))
@@ -83,10 +87,13 @@ class Chain(DikteTest):
                      "read_clipboard": read_clipboard}
             pipeline._work(self.wav, duration,
                            self.rms if rms is None else rms, ask, paste_override,
-                           focus, retry)
+                           focus, retry, profile)
         return {"done": done, "failures": failures, "stages": stages,
                 "cancelled": cancels, "sleeps": sleeps, **calls}
 
+
+
+class Chain(ChainBase):
     # ---- the ordinary run -------------------------------------------------
 
     def test_a_dictation_is_transcribed_cleaned_copied_and_pasted(self):
@@ -634,6 +641,162 @@ class Busy(DikteTest):
     def test_the_chunk_length_matches_the_level_meter(self):
         """The silence thresholds are read in seconds, so the two must agree."""
         self.assertAlmostEqual(worker.CHUNK_SECONDS, 1024 / 16000)
+
+
+class ProfileChain(ChainBase):
+    """A dictation under a writing profile: the prompt it gets, what a
+    translation does to the paste and the history, and what learning reads."""
+
+    def profiled(self, **values):
+        for key, value in values.items():
+            self.conf[key] = value
+        return profiles.choose(self.conf, "thunderbird", looked=True)
+
+    def test_the_profile_shapes_the_prompt_and_is_named_in_the_history(self):
+        choice = self.profiled(profiles=[{"name": "Email", "apps": ["thunderbird"],
+                                          "style": {"formality": "formal"}}])
+        run = self.run_chain(profile=choice)
+        self.assertIn("formal register", run["cleanup"].call_args.args[3])
+        self.assertIn("Cleaning up (Email)…", run["stages"])
+        row = cfg.read_history()[0]
+        self.assertEqual((row["profile"], row["program"]), ("Email", "thunderbird"))
+
+    def test_the_agent_is_never_shaped_by_a_profile(self):
+        self.conf["assistant_cleanup"] = True
+        choice = self.profiled(profile_default={"style": {"formality": "formal"},
+                                                "translate_to": "de"})
+        run = self.run_chain(ask=True, profile=choice)
+        self.assertNotIn("WRITING STYLE", run["cleanup"].call_args.args[3])
+        self.assertNotIn("translate_to", cfg.read_history()[0])
+
+    def test_a_lookup_is_resolved_on_the_dictation_thread(self):
+        """app.py hands over the lookup itself; the main thread never waits."""
+        choice = self.profiled(profiles=[{"name": "Email", "apps": ["thunderbird"]}])
+        lookup = mock.Mock()
+        lookup.result.return_value = choice
+        self.run_chain(profile=lookup)
+        lookup.result.assert_called_once_with()
+        self.assertEqual(cfg.read_history()[0]["profile"], "Email")
+
+    def test_the_lookup_is_awaited_after_transcription(self):
+        """Transcription needs no profile, so its round trip covers the wait."""
+        choice = self.profiled(profiles=[{"name": "Email", "apps": ["thunderbird"]}])
+        order = []
+        lookup = mock.Mock()
+        lookup.result.side_effect = lambda: order.append("profile") or choice
+        with mock.patch.object(api, "transcribe_detected",
+                               side_effect=lambda *a, **k: order.append("heard")
+                               or ("uh, hi", "en")):
+            pipeline = worker.Pipeline(self.conf)
+            with mock.patch.object(api, "cleanup", return_value="Hi."), \
+                    mock.patch.object(paste, "copy"), mock.patch.object(paste, "press"), \
+                    contextlib.redirect_stderr(io.StringIO()):
+                pipeline._work(self.wav, 2.0, self.rms, False, None, None, None, profile=lookup)
+        self.assertEqual(order, ["heard", "profile"])
+
+    def test_a_failure_before_cleanup_still_resolves_the_profile(self):
+        choice = self.profiled(profiles=[{"name": "Email", "apps": ["thunderbird"]}])
+        lookup = mock.Mock()
+        lookup.result.return_value = choice
+        self.run_chain(profile=lookup, transcribe_error=api.ApiError("bad key"))
+        self.assertEqual(cfg.read_history()[0]["profile"], "Email")
+
+    def test_a_skipped_lookup_names_no_program(self):
+        self.conf["profiles"] = [{"name": "Email", "apps": []}]
+        self.run_chain(profile=profiles.choose(self.conf, ""))
+        row = cfg.read_history()[0]
+        self.assertEqual(row["profile"], "")
+        self.assertNotIn("program", row)
+
+    def test_without_profiles_the_row_is_the_row_it_always_was(self):
+        self.run_chain(profile=profiles.choose(self.conf, "firefox"))
+        row = cfg.read_history()[0]
+        for key in ("profile", "program", "translate_to", "translated"):
+            self.assertNotIn(key, row)
+
+    def test_a_translation_keeps_the_original_beside_it(self):
+        choice = self.profiled(profile_default={"translate_to": "de"})
+        run = self.run_chain(profile=choice, cleaned="Buch es für Donnerstag.")
+        self.assertIn("Translating into German…", run["stages"])
+        self.assertIn("German", run["cleanup"].call_args.args[3])
+        run["press"].assert_called_once()
+        row = cfg.read_history()[0]
+        self.assertEqual(row["raw"], "uh, book it for Thursday")
+        self.assertEqual(row["text"], "Buch es für Donnerstag.")
+        self.assertEqual((row["translate_to"], row["translated"]), ("de", True))
+
+    def test_a_failed_translation_copies_the_original_and_pastes_nothing(self):
+        choice = self.profiled(profile_default={"translate_to": "de"})
+        run = self.run_chain(profile=choice,
+                             cleanup_error=api.ApiError("The model is down."))
+        run["copy"].assert_called_once_with("uh, book it for Thursday")
+        run["press"].assert_not_called()
+        raw, text, warning, _ = run["done"][0]
+        self.assertEqual(text, raw)
+        self.assertIn("Translation failed", warning)
+        self.assertIn("The model is down.", warning)
+        row = cfg.read_history()[0]
+        self.assertIs(row["translated"], False)
+
+    def test_translation_runs_even_with_cleanup_off(self):
+        self.conf["cleanup_enabled"] = False
+        choice = self.profiled(profile_default={"translate_to": "fr"})
+        run = self.run_chain(profile=choice, cleaned="Réserve-le pour jeudi.")
+        self.assertTrue(run["cleanup"].call_args.args[3].startswith(
+            "You translate dictation transcripts"))
+        run["copy"].assert_called_once_with("Réserve-le pour jeudi.")
+
+    def test_a_queued_recording_keeps_the_profile_it_was_started_with(self):
+        pipeline = worker.Pipeline(self.config())
+        seen = []
+        choice = self.profiled(profile_default={"translate_to": "de"})
+        with mock.patch.object(pipeline, "_work",
+                               side_effect=lambda *job: seen.append(job[-2])):
+            pipeline.run("first.wav", 1.0, profile=choice)
+            pipeline._thread.join(5)
+        self.assertEqual(seen, [choice])
+
+    def test_a_failed_row_remembers_its_profile_for_the_retry(self):
+        choice = self.profiled(profiles=[{"name": "Email", "apps": ["thunderbird"]}])
+        self.run_chain(profile=choice, transcribe_error=api.ApiError("bad key"))
+        row = cfg.read_history()[0]
+        self.assertTrue(row["failed"])
+        self.assertEqual((row["profile"], row["program"]), ("Email", "thunderbird"))
+        self.assertTrue(row["profile_id"])
+        # The retry runs under the same profile, into the same program.
+        again = profiles.again(self.conf, row)
+        self.assertEqual((again.name, again.program), ("Email", "thunderbird"))
+
+
+class DictionaryLearningChain(ChainBase):
+    """What the dictionary may learn from, and what it may not."""
+    said = "we shipped it to OpenFrame today"
+    cleaned = "We shipped it to OpenFrame today."
+
+    def three(self, **kwargs):
+        for _ in range(3):
+            self.run_chain(transcript=self.said, cleaned=self.cleaned, **kwargs)
+        return [r["term"] for r in dictionary.records(self.conf)]
+
+    def test_off_by_default(self):
+        self.assertEqual(self.three(), [])
+
+    def test_on_it_learns_from_ordinary_dictations(self):
+        self.conf["dictionary_learning"] = True
+        self.assertEqual(self.three(), ["OpenFrame"])
+
+    def test_never_from_the_agent_a_warning_or_a_translation(self):
+        self.conf["dictionary_learning"] = True
+        self.conf["assistant_cleanup"] = True
+        self.assertEqual(self.three(ask=True), [])
+        self.assertEqual(self.three(paste_error=paste.PasteError("no")), [])
+        choice = profiles.snapshot(self.conf, None)._replace(translate_to="de")
+        self.assertEqual(self.three(profile=choice), [])
+
+    def test_never_from_an_uncleaned_transcript(self):
+        self.conf["dictionary_learning"] = True
+        self.conf["cleanup_enabled"] = False
+        self.assertEqual(self.three(), [])
 
 
 class RetriesAnswerNoWaiter(DikteTest):

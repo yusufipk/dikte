@@ -819,6 +819,21 @@ class Finding(DikteTest):
         cfg.append_history({"ts": "now", "text": "only one"})
         self.assertIsNone(cli._find_history("yesterday"))
 
+    def test_deleting_a_row_sets_an_unreadable_dictionary_aside(self):
+        """The command line rewrites the dictionary file to forget the names
+        the row held; one it cannot read is kept, not replaced."""
+        from dikte import dictionary
+        cfg.append_history({"ts": "now", "raw": "on openframe",
+                            "text": "On OpenFrame."})
+        cfg.CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        dictionary.path().write_text("{not json", encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()):
+            code = cli.cmd_history_delete(Options(which=["1"]))
+        self.assertEqual(code, 0)
+        self.assertEqual(cfg.read_history(), [])
+        self.assertEqual((cfg.CONFIG_DIR / "dictionary.json.broken")
+                         .read_text(encoding="utf-8"), "{not json")
+
     def test_a_meeting_by_its_stem(self):
         for base in ("20260801-100000", "20260802-110000"):
             cfg.save_meeting({"base": base, "status": "done"})
@@ -886,7 +901,7 @@ class WithoutAnInstance(DikteTest):
         launch.assert_called_once_with("toggle")
 
     def test_every_verb_that_opens_a_window_can_start_it(self):
-        for verb in ("home", "settings", "toggle", "ask", "meeting"):
+        for verb in ("home", "settings", "toggle", "ask", "meeting", "assist"):
             with self.subTest(verb=verb):
                 self.assertTrue(self.run_verb([verb])[3].called)
 
