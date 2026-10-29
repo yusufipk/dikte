@@ -46,6 +46,7 @@ from . import audio  # noqa: E402
 from . import cli  # noqa: E402
 from . import config as cfg  # noqa: E402
 from . import cues  # noqa: E402
+from . import frontapp  # noqa: E402
 from . import ggml  # noqa: E402
 from . import hotkey  # noqa: E402
 from . import hub  # noqa: E402
@@ -54,6 +55,7 @@ from . import integrate  # noqa: E402
 from . import ipc  # noqa: E402
 from . import mac_window  # noqa: E402
 from . import meeting  # noqa: E402
+from . import profiles  # noqa: E402
 from . import trayicon  # noqa: E402
 from . import update  # noqa: E402
 from .i18n import t  # noqa: E402
@@ -117,6 +119,82 @@ class UpdateCheck(QObject):
         threading.Thread(target=work, daemon=True).start()
 
 
+class _ProfileLookup:
+    """The profile for one recording, worked out beside it.
+
+    result() is asked for on the dictation thread, never on this one: it may
+    wait for the lookup, and the main thread is what draws the indicator."""
+
+    # Longer than the worst case frontapp can spend, each call capped at its
+    # TIMEOUT of 0.5 s: four calls under KDE, five under GNOME (List, three
+    # Details, GetTitle). Waited on the dictation thread, where it holds up
+    # nothing on screen.
+    WAIT = 3.0
+
+    def __init__(self, conf, front):
+        self._conf = conf
+        self._front = front
+        self._choice = None
+        self._thread = None
+        # Once result() has answered, a lookup finishing late changes nothing:
+        # the dictation has already gone ahead under that answer.
+        self._lock = threading.Lock()
+        self._settled = False
+        try:
+            detect = profiles.wants_detection(conf)
+        except Exception:
+            detect = False
+        if detect:
+            self._thread = threading.Thread(target=self._look, daemon=True)
+            self._thread.start()
+        else:
+            self._choose("", looked=False)
+
+    def _choose(self, program, looked=True, title=""):
+        try:
+            choice = profiles.choose(self._conf, program, looked, title)
+        except Exception as exc:  # a profile is never worth a dictation
+            print(f"dikte: could not choose a profile: {exc}", file=sys.stderr)
+            return
+        with self._lock:
+            if not self._settled:
+                self._choice = choice
+
+    def _look(self):
+        # The title, for a browser, only when some profile lists a site. It
+        # goes into the choice and no further: the Choice keeps the keyword
+        # that matched, never the title.
+        if profiles.wants_titles(self._conf):
+            program, title = frontapp.front(self._front, profiles.is_browser)
+        else:
+            program, title = frontapp.program_name(self._front), ""
+        self._choose(program, title=title)
+
+    def result(self):
+        looked = self._thread is not None
+        if looked:
+            self._thread.join(self.WAIT)
+            self._thread = None
+        with self._lock:
+            missing = self._choice is None
+        fallback = None
+        if missing:
+            # Still asking, or the choice failed: the Default profile, said so
+            # in the history like any other program that could not be found
+            # out. None only when even that cannot be worked out.
+            try:
+                fallback = profiles.choose(self._conf, "", looked)
+            except Exception as exc:  # a profile is never worth a dictation
+                print(f"dikte: could not choose a profile: {exc}",
+                      file=sys.stderr)
+        with self._lock:
+            # Unless the answer landed in the moment since the wait ended.
+            if self._choice is None:
+                self._choice = fallback
+            self._settled = True
+            return self._choice
+
+
 class Dikte:
     def __init__(self, app):
         self.app = app
@@ -172,6 +250,9 @@ class Dikte:
         # _give_the_front_back.
         self.front_before = None
         self._front_watch = None
+        # The writing profile the current dictation was started under, chosen
+        # from the program in front at the same moment as the above.
+        self.profile_before = None
 
         self.overlay = Overlay(self.conf["overlay_corner"],
                                screen_name=self.conf["overlay_screen"],
@@ -751,6 +832,21 @@ class Dikte:
         """
         return mac_window.frontmost_pid() if sys.platform == "darwin" else None
 
+    def _the_profile(self, front):
+        """The writing profile for a dictation about to start, as a lookup
+        whose result() is the snapshot.
+
+        Started at the same moment as _the_front. The looking itself runs on
+        a thread of its own, since on Linux it is up to three subprocesses and
+        the microphone must not wait for them: the first words would be lost.
+        Letting it finish after the indicator is up is safe, because the
+        indicator never takes the focus (it is a tool window that accepts
+        none), and on macOS the answer is read from the process id taken
+        before it appeared. Only looked for at all when the answer could
+        change the profile.
+        """
+        return _ProfileLookup(self.conf, front)
+
     def start(self):
         # Only a held microphone blocks: a previous dictation still being
         # transcribed or cleaned up is the pipeline's business, not the
@@ -761,6 +857,7 @@ class Dikte:
             self.home_messages[DICTATION] = ""
             self.home_messages.pop("dictation_stage", None)
         self.front_before = self._the_front()
+        self.profile_before = self._the_profile(self.front_before)
         self.overlay.show_recording()
         self._begin_recording(DICTATION)
         # A recorder that could not start has already said so, synchronously,
@@ -1134,6 +1231,10 @@ class Dikte:
         owner, self.recorder_owner = self.recorder_owner, None
         wants_paste = self.paste_override.pop(owner, None)
         focus, self.front_before = self.front_before, None
+        # Handed over unresolved: the pipeline asks for the result on its own
+        # thread, so a slow lookup never stalls this one.
+        profile = getattr(self, "profile_before", None)
+        self.profile_before = None
         if owner == ASK:
             self.ask_pipeline.run(wav_path, duration, rms_values, ask=True,
                                   paste=wants_paste, focus=focus)
@@ -1141,7 +1242,7 @@ class Dikte:
             self._transcripts_pending += 1
             self._queued_retries.append(False)
             self.pipeline.run(wav_path, duration, rms_values,
-                              paste=wants_paste, focus=focus)
+                              paste=wants_paste, focus=focus, profile=profile)
 
     def retry_dictation(self, row):
         """Send a failed dictation's kept recording through the chain again.
@@ -1152,9 +1253,15 @@ class Dikte:
         """
         self._transcripts_pending += 1
         self._queued_retries.append(True)
+        # Under the profile it was first spoken under, looked up by name: the
+        # program it was spoken into is not in front now.
+        try:
+            profile = profiles.again(self.conf, row)
+        except Exception:
+            profile = None
         queued = self.pipeline.run(row.get("audio") or "",
                                    float(row.get("duration") or 0),
-                                   paste=False, retry=row)
+                                   paste=False, retry=row, profile=profile)
         if queued is False:
             self._transcripts_pending -= 1
             self._queued_retries.pop()

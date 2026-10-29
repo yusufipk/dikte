@@ -7,14 +7,14 @@ import shutil
 import sys
 import threading
 
-from PyQt6.QtCore import QEvent, QObject, QRect, Qt, QTimer, QUrl, QSignalBlocker, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, QRect, QSize, Qt, QTimer, QUrl, QSignalBlocker, pyqtSignal
 from PyQt6.QtGui import QDesktopServices, QGuiApplication, QKeySequence, QShortcut
 from PyQt6.QtWidgets import (
     QAbstractItemView, QAbstractSpinBox, QCheckBox, QComboBox, QDialog,
     QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
-    QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit,
+    QLayout, QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit,
     QPushButton, QScrollArea, QSizePolicy, QSpinBox, QTabWidget, QToolButton,
-    QVBoxLayout, QWidget,
+    QVBoxLayout, QWidget, QWidgetItem,
 )
 
 from . import __version__
@@ -32,6 +32,8 @@ from . import i18n
 from . import ipc
 from . import meeting
 from . import paste
+from . import profiles
+from . import profiles_ui
 from . import update
 from . import worker
 from .filetranscribe import FileTranscriber
@@ -967,6 +969,105 @@ class LocalModelBox(QGroupBox):
             self.status.setText(t("{name} has not been downloaded yet.", name=name))
 
 
+class FlowLayout(QLayout):
+    """Widgets side by side that move on to the next line when the width runs
+    out, so a large font or a long translation wraps a row of buttons rather
+    than cutting their labels short."""
+
+    def __init__(self, parent=None, spacing=6):
+        super().__init__(parent)
+        self._items = []
+        self._gap = spacing
+        self.setContentsMargins(0, 0, 0, 0)
+
+    def addItem(self, item):
+        self._items.append(item)
+
+    def insertWidget(self, index, widget):
+        """As QBoxLayout's, for callers that add a button of their own."""
+        self.addChildWidget(widget)
+        self._items.insert(max(0, min(index, len(self._items))), QWidgetItem(widget))
+        self.invalidate()
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, index):
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index):
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def expandingDirections(self):
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self._arrange(QRect(0, 0, width, 0), move=False)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._arrange(rect, move=True)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def minimumSize(self):
+        # As wide as the widest button: narrower than that, one would be cut.
+        size = QSize()
+        for item in self._items:
+            if not item.isEmpty():
+                size = size.expandedTo(item.sizeHint())
+        margins = self.contentsMargins()
+        return size + QSize(margins.left() + margins.right(),
+                            margins.top() + margins.bottom())
+
+    def _arrange(self, rect, move):
+        """Lay the items out in `rect`, or only measure; the height used."""
+        margins = self.contentsMargins()
+        area = rect.adjusted(margins.left(), margins.top(),
+                             -margins.right(), -margins.bottom())
+        x, y, line = area.x(), area.y(), 0
+        for item in self._items:
+            if item.isEmpty():
+                continue  # a hidden button takes no room
+            size = item.sizeHint()
+            if x > area.x() and x + size.width() > area.right() + 1:
+                x, y, line = area.x(), y + line + self._gap, 0
+            if move:
+                item.setGeometry(QRect(x, y, size.width(), size.height()))
+            x += size.width() + self._gap
+            line = max(line, size.height())
+        return y + line - rect.y() + margins.bottom()
+
+
+def history_marks(row):
+    """What a history row says about its profile and translation, so that a
+    translated text is never mistaken for what was said. Empty for a row
+    written without either."""
+    marks = ""
+    if "profile" in row:
+        marks += t("  ·  profile: {name}", name=row.get("profile") or t("Default"))
+        # Only for a row whose program was asked for: one skipped on purpose
+        # (an override, the switch off, no profile listing one) says nothing.
+        program = row.get("program")
+        if isinstance(program, str):
+            marks += (t(" ({program})", program=program) if program
+                      else t(" (program unknown)"))
+        site = row.get("site")
+        if isinstance(site, str) and site:
+            marks += t("  ·  site: {site}", site=site)
+    code = row.get("translate_to")
+    if isinstance(code, str) and code:
+        language = t(profiles.language_name(code))
+        marks += (t("  ·  translated into {language}", language=language)
+                  if row.get("translated")
+                  else t("  ·  translation into {language} failed", language=language))
+    return marks
+
+
 def _retryable(row):
     """A failed dictation whose kept recording is still on disk."""
     return bool(row.get("failed")) and worker.is_kept_recording(row.get("audio"))
@@ -1056,6 +1157,8 @@ class SettingsWindow(QDialog):
         self.api_tab_index = tabs.addTab(
             self._scrolled(self._api_tab()), t("API and models"))
         tabs.addTab(self._scrolled(self._prompt_tab()), t("Text editing and dictionary"))
+        self.profiles_editor = profiles_ui.ProfilesEditor()
+        tabs.addTab(self._scrolled(self.profiles_editor), t("Profiles"))
         tabs.addTab(self._scrolled(self._assistant_tab()), t("Agent"))
         tabs.addTab(self._scrolled(self._meeting_tab()), t("Meeting"))
         tabs.addTab(self._scrolled(self._shortcut_tab()), t("Shortcuts"))
@@ -1128,8 +1231,15 @@ class SettingsWindow(QDialog):
         ]
         for box in compact:
             box.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+        # Listed once, in a fixed order. findChildren follows the order of the
+        # children, and showing a tab raises its page to the end of that, so a
+        # list read again after the user moved between tabs would compare its
+        # values against the wrong boxes. The editors' own boxes are left out:
+        # a search or a selection there is not an edit, and the editors say
+        # when something was edited.
+        self._form_boxes = self._boxes()
         self._saved_form = self._form_values()
-        for box in self.tabs.findChildren((QLineEdit, QComboBox, QCheckBox, QSpinBox, QPlainTextEdit)):
+        for box in self._form_boxes:
             if isinstance(box, (QLineEdit, QPlainTextEdit)):
                 box.textChanged.connect(self._show_dirty)
             elif isinstance(box, QComboBox):
@@ -1139,6 +1249,8 @@ class SettingsWindow(QDialog):
             else:
                 box.valueChanged.connect(self._show_dirty)
         self.local_threads.valueChanged.connect(self._local_threads_was_changed)
+        self.dictionary_editor.changed.connect(self._show_dirty)
+        self.profiles_editor.changed.connect(self._show_dirty)
         self.local_whisper.program_changed.connect(self._refresh_processing_devices)
         self.local_whisper.program_changed.connect(self._show_dirty)
         self.local_llm.program_changed.connect(self._show_dirty)
@@ -1164,9 +1276,15 @@ class SettingsWindow(QDialog):
         self._local_state_timer.timeout.connect(self._show_local_state)
         self._show_local_state()
 
+    def _boxes(self):
+        return [box for box in self.tabs.findChildren(
+                    (QLineEdit, QComboBox, QCheckBox, QSpinBox, QPlainTextEdit))
+                if not profiles_ui.owned(box)]
+
     def _form_values(self):
         values = []
-        for box in self.tabs.findChildren((QLineEdit, QComboBox, QCheckBox, QSpinBox, QPlainTextEdit)):
+        # The editors report their own contents, below.
+        for box in self._form_boxes:
             if isinstance(box, QPlainTextEdit):
                 if not box.isReadOnly():
                     values.append(box.toPlainText())
@@ -1187,6 +1305,8 @@ class SettingsWindow(QDialog):
         values.extend((
             self.local_whisper.custom_binary,
             self.local_llm.custom_binary,
+            self.dictionary_editor.values(),
+            self.profiles_editor.values(),
         ))
         return values
 
@@ -1805,6 +1925,13 @@ class SettingsWindow(QDialog):
               "decide how much it may touch your words."),
             cfg.default_cleanup_prompt,
         )
+        # How a custom instruction and the profiles combine, said where the
+        # instruction is written; Config.cleanup_prompt is the rule itself.
+        self.cleanup_prompt.setToolTip(t(
+            "Your own instruction replaces the built-in one. The dictionary, "
+            "and the style and translation of the profile in use, are still "
+            "added after it. Switch the profile style off under Profiles to "
+            "use your instruction alone."))
         self.file_cleanup_prompt = self._prompt_page(
             inner, t("Audio file"),
             t("Used instead when an audio or video file is cleaned up. It is "
@@ -1812,17 +1939,9 @@ class SettingsWindow(QDialog):
               "shortened, and misheard words are repaired from the context."),
             cfg.default_file_cleanup_prompt,
         )
+        self.dictionary_editor = profiles_ui.DictionaryEditor()
+        inner.addTab(self.dictionary_editor, t("Dictionary"))
         layout.addWidget(inner, 1)
-
-        hint = QLabel(t("Names and terms you say often (optional). They go to the "
-                        "transcription model as a hint, and to the cleanup model as a "
-                        "glossary, so it can repair the ones that still come out wrong."))
-        hint.setWordWrap(True)
-        layout.addWidget(hint)
-        layout.addWidget(QLabel(t("Dictionary")))
-        self.transcribe_prompt = QPlainTextEdit()
-        self.transcribe_prompt.setMaximumHeight(90)
-        layout.addWidget(self.transcribe_prompt)
         return page
 
     def _assistant_tab(self):
@@ -2437,19 +2556,24 @@ class SettingsWindow(QDialog):
         self.history_retry.setEnabled(False)
         copy = QPushButton(t("Copy selected to clipboard"))
         copy.clicked.connect(self._copy_history)
+        # What was heard, for a row whose text is a translation of it.
+        self.history_original = QPushButton(t("Copy original"))
+        self.history_original.setToolTip(t(
+            "Copy the transcript as it was heard, before it was translated."))
+        self.history_original.clicked.connect(self._copy_original)
+        self.history_original.setEnabled(False)
         delete = QPushButton(t("Delete selected"))
         delete.clicked.connect(self._delete_history)
         clear = QPushButton(t("Clear history"))
         clear.clicked.connect(self._clear_history)
         reload_ = QPushButton(t("Reload"))
         reload_.clicked.connect(self._load_history)
-        self.history_actions = row = QHBoxLayout()
-        row.addWidget(self.history_retry)
-        row.addWidget(copy)
-        row.addWidget(delete)
-        row.addWidget(clear)
-        row.addWidget(reload_)
-        row.addStretch()
+        # Wrapped onto as many lines as the font and the language need: in one
+        # fixed row the labels no longer fit the home window's column.
+        self.history_actions = row = FlowLayout()
+        for button in (self.history_retry, copy, self.history_original,
+                       delete, clear, reload_):
+            row.addWidget(button)
         layout.addLayout(row)
         return page
 
@@ -2659,7 +2783,8 @@ class SettingsWindow(QDialog):
         self.file_cleanup_prompt.setPlainText(
             conf["file_cleanup_prompt"] or self._loaded_defaults["file"]
         )
-        self.transcribe_prompt.setPlainText(conf["transcribe_prompt"])
+        self.dictionary_editor.load(conf)
+        self.profiles_editor.load(conf)
 
         self._select_data(self.assistant_provider, conf["assistant_provider"])
         self.assistant_model.setCurrentText(conf["assistant_model"])
@@ -2820,7 +2945,8 @@ class SettingsWindow(QDialog):
         conf["file_cleanup_prompt"] = ("" if file_prompt in (
             self._loaded_defaults["file"], cfg.default_file_cleanup_prompt())
             else file_prompt)
-        conf["transcribe_prompt"] = self.transcribe_prompt.toPlainText().strip()
+        dictionary_write = self.dictionary_editor.store(conf)
+        self.profiles_editor.store(conf)
 
         conf["assistant_provider"] = self.assistant_provider.currentData() or "claude"
         conf["assistant_model"] = (self.assistant_model.currentText().strip()
@@ -2917,6 +3043,14 @@ class SettingsWindow(QDialog):
                                 t("Could not save the settings: {error}",
                                   error=exc))
             return
+        # After config.json, so that a failed save above leaves the file still
+        # agreeing with the setting (see dictionary.save).
+        try:
+            self.dictionary_editor.commit(dictionary_write)
+        except OSError as exc:
+            QMessageBox.warning(self, "Dikte",
+                                t("Could not save the dictionary: {error}",
+                                  error=exc))
         # A lowered limit should bite now, not on the next dictation.
         try:
             cfg.trim_history(conf["history_limit"])
@@ -3895,6 +4029,7 @@ class SettingsWindow(QDialog):
                 header += t("  ·  asked {who}: {question}",
                             who=i18n.name(who, "dative"),
                             question=asked[:60] + ("…" if len(asked) > 60 else ""))
+            header += history_marks(row)
             item = QListWidgetItem(f"{header}\n{preview}")
             item.setData(Qt.ItemDataRole.UserRole, row)
             self.history.addItem(item)
@@ -3909,6 +4044,17 @@ class SettingsWindow(QDialog):
 
     def _sync_history_actions(self):
         self.history_retry.setEnabled(bool(self._retryable_selection()))
+        self.history_original.setEnabled(bool(self._translated_selection()))
+
+    def _translated_selection(self):
+        return [row for row in self._selected_rows()
+                if row.get("translate_to") and row.get("raw")]
+
+    def _copy_original(self):
+        rows = self._translated_selection()
+        if rows:
+            QGuiApplication.clipboard().setText(
+                "\n\n".join(row["raw"] for row in rows))
 
     def _retry_history(self):
         rows = self._retryable_selection()
@@ -3974,6 +4120,8 @@ class SettingsWindow(QDialog):
         retry = menu.addAction(t("Retry"))
         retry.setEnabled(bool(self._retryable_selection()))
         copy = menu.addAction(t("Copy selected to clipboard"))
+        original = menu.addAction(t("Copy original"))
+        original.setEnabled(bool(self._translated_selection()))
         delete = menu.addAction(t("Delete selected"))
         menu.addSeparator()
         clear = menu.addAction(t("Clear history"))
@@ -3986,6 +4134,8 @@ class SettingsWindow(QDialog):
             self._retry_history()
         elif chosen is copy:
             self._copy_history()
+        elif chosen is original:
+            self._copy_original()
         elif chosen is delete:
             self._delete_history()
         elif chosen is clear:

@@ -37,6 +37,7 @@ from . import ipc
 from . import integrate
 from . import meeting
 from . import paste
+from . import profiles
 from . import update
 from . import __version__
 
@@ -555,6 +556,16 @@ def _coerce(key, raw):
         return int(float(raw))
     if isinstance(default, float):
         return float(raw)
+    if isinstance(default, (dict, list)):
+        # The profiles: JSON in, and of the right shape, or the next load would
+        # quietly put the default back.
+        try:
+            value = json.loads(raw)
+        except ValueError:
+            raise ValueError(f"{key} wants JSON, got: {raw}") from None
+        if not isinstance(value, type(default)):
+            raise ValueError(f"{key} wants a JSON {type(default).__name__}")
+        return value
     return raw
 
 
@@ -659,7 +670,9 @@ def cmd_prompt(opts):
     """The prompt a run would really use, defaults and glossary folded in."""
     conf = cfg.Config()
     prompts = {
-        "cleanup": conf.cleanup_prompt(),
+        # As a dictation would send it with no program found in front: the
+        # Default profile, or the one chosen for every dictation.
+        "cleanup": conf.cleanup_prompt(profile=profiles.choose(conf)),
         "subtitles": conf.cleanup_prompt(subtitles=True),
         "meeting": conf.meeting_prompt(),
         "agent": conf.assistant_prompt(),
