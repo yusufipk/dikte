@@ -222,10 +222,14 @@ class Pipeline(QObject):
             # Read once, at the start the run: a retry asks the same request
             # again, not whatever the settings have drifted to since.
             language, prompt = conf["language"], conf.dictionary_hint()
+            # Shared by every try, so a dictation sent in pieces does not send
+            # the ones already written down again.
+            heard = api.Heard()
             if auto:
                 raw, detected = self._transcribe(
                     lambda: api.transcribe_detected(
                         target, wav_path, language=language, prompt=prompt,
+                        heard=heard,
                     ),
                     stage,
                 )
@@ -233,6 +237,7 @@ class Pipeline(QObject):
                 raw = self._transcribe(
                     lambda: api.transcribe(
                         target, wav_path, language=language, prompt=prompt,
+                        heard=heard,
                     ),
                     stage,
                 )

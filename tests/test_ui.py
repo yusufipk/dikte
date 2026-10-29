@@ -40,6 +40,7 @@ REAL_LOAD_HOSTED_MODELS = settings_ui.SettingsWindow._load_hosted_models
 REAL_REFRESH_PROCESSING_DEVICES = (
     settings_ui.SettingsWindow._refresh_processing_devices
 )
+REAL_LOAD_TRANSCRIBE_MODELS = settings_ui.SettingsWindow._load_transcribe_models
 
 # One application for the whole run; Qt allows no second one.
 _app = QApplication.instance() or QApplication([])
@@ -75,6 +76,7 @@ CHANGED = {
     "groq_transcribe_model": "whisper-large-v3",
     "openrouter_transcribe_model": "openai/whisper-1",
     "requesty_transcribe_model": "openai/whisper-1",
+    "gemini_transcribe_model": "gemini-3.1-flash-lite",
     "cleanup_enabled": False,
     "cleanup_provider": "local",
     "cleanup_model": "some/other-model",
@@ -886,6 +888,72 @@ class Settings(DikteTest):
         self.assertTrue(stored["file_timestamps"])
         self.assertFalse(stored["file_cleanup"])
 
+    def test_timestamps_are_greyed_out_for_a_provider_that_has_none(self):
+        """Unticked on screen, and the stored choice kept for the next provider."""
+        self.write_config({"transcribe_provider": "gemini", "file_timestamps": True,
+                           "file_cleanup": True})
+        window = self.window(cfg.Config())
+        self.assertFalse(window.file_timestamps.isEnabled())
+        self.assertFalse(window.file_timestamps.isChecked())
+        self.assertIn("Google AI Studio", window.file_timestamps.toolTip())
+        window.file_cleanup.setChecked(False)
+        window._save()
+        self.assertTrue(self.read_config_file()["file_timestamps"])
+
+        self.write_config({"transcribe_provider": "openai", "file_timestamps": True})
+        window = self.window(cfg.Config())
+        self.assertTrue(window.file_timestamps.isEnabled())
+        self.assertTrue(window.file_timestamps.isChecked())
+
+    def test_picking_google_ai_studio_says_what_it_cannot_do(self):
+        window = self.window(cfg.Config())
+        window.transcribe_provider.setCurrentIndex(
+            window.transcribe_provider.findData("gemini"))
+        self.assertIn("timestamps", window.transcribe_status.text())
+        self.assertEqual(window.transcribe_model.currentText(),
+                         "gemini-3.5-flash-lite")
+        self.assertFalse(window.refresh_transcribe_models.isHidden())
+        window.transcribe_provider.setCurrentIndex(
+            window.transcribe_provider.findData("openai"))
+        self.assertEqual(window.transcribe_status.text(), "")
+
+    def test_the_timestamp_warning_outlives_a_fetch_of_the_model_list(self):
+        window = self.window(cfg.Config())
+        window.transcribe_provider.setCurrentIndex(
+            window.transcribe_provider.findData("gemini"))
+        window._on_transcribe_models_loaded(["gemini-3.5-flash"], "")
+        self.assertIn("1 models loaded.", window.transcribe_status.text())
+        self.assertIn("timestamps", window.transcribe_status.text())
+        window._on_transcribe_models_loaded([], "denied")
+        self.assertIn("denied", window.transcribe_status.text())
+        self.assertIn("timestamps", window.transcribe_status.text())
+        window.transcribe_provider.setCurrentIndex(
+            window.transcribe_provider.findData("openai"))
+        window._on_transcribe_models_loaded(["whisper-1"], "")
+        self.assertEqual(window.transcribe_status.text(), "1 models loaded.")
+
+    def test_a_list_that_lands_after_the_provider_changed_is_dropped(self):
+        window = self.window(cfg.Config())
+        window.transcribe_provider.setCurrentIndex(
+            window.transcribe_provider.findData("gemini"))
+        with mock.patch.object(settings_ui.threading, "Thread"):
+            REAL_LOAD_TRANSCRIBE_MODELS(window)
+        window.transcribe_provider.setCurrentIndex(
+            window.transcribe_provider.findData("openai"))
+        window._on_transcribe_models_loaded(["gemini-3.5-flash"], "")
+        self.assertEqual(window.transcribe_status.text(), "")
+        self.assertEqual(window.transcribe_model.findText("gemini-3.5-flash"), -1)
+        self.assertTrue(window.refresh_transcribe_models.isEnabled())
+
+    def test_the_gemini_key_is_one_field_for_both_jobs(self):
+        self.write_config({"gemini_api_key": "AIza-mine"})
+        window = self.window(cfg.Config())
+        self.assertIs(window._key_fields["gemini"], window.gemini_key)
+        self.assertEqual(window.gemini_key.text(), "AIza-mine")
+        window.gemini_key.setText("AIza-new")
+        window._save()
+        self.assertEqual(self.read_config_file()["gemini_api_key"], "AIza-new")
+
     def test_loading_the_audio_file_tab_is_not_taken_for_a_change(self):
         self.write_config({"file_timestamps": True, "file_cleanup": False})
         conf = cfg.Config()
@@ -1249,7 +1317,7 @@ class EveryRecordingProtectsTheFront(DikteTest):
         dikte._run_id = 0
         dikte.conf = {"mic_target": "", "max_seconds": 60,
                       "meeting_mic_target": "", "meeting_system_target": "",
-                      "meeting_max_seconds": 60}
+                      "meeting_max_seconds": 60, "transcribe_provider": "local"}
         dikte._the_front.side_effect = lambda: self.order.append("noted") or 4242
         dikte._give_the_front_back.side_effect = (
             lambda pid: self.order.append(f"watching {pid}"))
@@ -1286,6 +1354,56 @@ class EveryRecordingProtectsTheFront(DikteTest):
         dikte.meeting_recorder.active = False
         self.dikte.Dikte.start_meeting(dikte)
         self.assertEqual(self.order, ["noted", "microphone"])
+
+    def test_a_meeting_on_a_provider_with_no_timestamps_is_never_recorded(self):
+        """Said before the hour of recording, not after it."""
+        dikte = self.app(meeting_state=self.dikte.M_IDLE)
+        dikte.conf["transcribe_provider"] = "gemini"
+        self.dikte.Dikte.start_meeting(dikte)
+        self.assertEqual(self.order, [])
+        dikte.meeting_recorder.start.assert_not_called()
+        message = dikte._on_meeting_error.call_args.args[0]
+        self.assertIn("Google AI Studio", message)
+        self.assertIn("timestamps", message)
+
+    def test_a_refused_meeting_leaves_a_running_dictation_alone(self):
+        """The meeting shortcut pressed mid-dictation must not end it."""
+        dikte = self.app(meeting_state=self.dikte.M_IDLE)
+        dikte.conf["transcribe_provider"] = "gemini"
+        dikte._on_meeting_error = mock.Mock(
+            side_effect=lambda message: self.dikte.Dikte._on_meeting_error(
+                dikte, message))
+        for name in ("_on_error", "_report", "_set_state"):
+            setattr(dikte, name, getattr(self.dikte.Dikte, name).__get__(dikte))
+        dikte._transcripts_pending = False
+        dikte.state, dikte.recording = self.dikte.RECORDING, True
+        self.dikte.Dikte.start_meeting(dikte)
+        self.assertEqual(dikte.state, self.dikte.RECORDING)
+        settled = [call.args[0] for call in dikte._settle.call_args_list]
+        self.assertNotIn(self.dikte.DICTATION, settled)
+        self.assertIn(self.dikte.MEETING, settled)
+        dikte.overlay.show_error.assert_not_called()
+        dikte.tray.showMessage.assert_called_once()
+        dikte.cues.play.assert_not_called()
+
+    def refused_meeting(self, state, ask_state):
+        dikte = self.app(meeting_state=self.dikte.M_IDLE, state=state,
+                         ask_state=ask_state, recording=self.dikte.RECORDING in (
+                             state, ask_state))
+        dikte.conf["transcribe_provider"] = "gemini"
+        self.dikte.Dikte._on_meeting_error(dikte, "refused")
+        return dikte
+
+    def test_a_refused_meeting_is_heard_when_no_microphone_is_open(self):
+        for state in (self.dikte.IDLE, self.dikte.BUSY):
+            with self.subTest(state=state):
+                dikte = self.refused_meeting(state, self.dikte.IDLE)
+                dikte.cues.play.assert_called_once_with("failed")
+
+    def test_a_refused_meeting_keeps_its_cue_out_of_a_question(self):
+        dikte = self.refused_meeting(self.dikte.IDLE, self.dikte.RECORDING)
+        dikte.cues.play.assert_not_called()
+        dikte._report.assert_called_once_with("refused", dikte.overlay)
 
 class Overlay(DikteTest):
     def overlay(self, **kwargs):

@@ -247,6 +247,19 @@ class TranscribeTarget(DikteTest):
         self.assertEqual(target.base_url, "https://router.requesty.ai/v1")
         self.assertEqual(target.model, "openai/gpt-4o-transcribe")
 
+    def test_google_ai_studio_when_it_is_picked(self):
+        conf = self.config(transcribe_provider="gemini", gemini_api_key="AIza-test")
+        target = conf.transcribe_target()
+        self.assertEqual(target.provider, "gemini")
+        self.assertEqual(target.service, "Google AI Studio")
+        self.assertEqual(target.api_key, "AIza-test")
+        self.assertEqual(target.base_url, api.GEMINI_URL)
+        self.assertEqual(target.model, "gemini-3.5-flash-lite")
+        self.assertTrue(conf.transcribe_ready())
+        conf["gemini_api_key"] = ""
+        with mock.patch.dict(os.environ, {"GEMINI_API_KEY": ""}):
+            self.assertFalse(conf.transcribe_ready())
+
     def test_a_custom_server_when_it_is_picked(self):
         conf = self.config(transcribe_provider="custom",
                            custom_base_url=" http://10.0.0.5:8000/v1 ",
@@ -651,10 +664,14 @@ class Defaults(unittest.TestCase):
         self.assertEqual(cfg.DEFAULTS["opencode_api_key"], "")
         self.assertEqual(cfg.DEFAULTS["requesty_api_key"], "")
 
-    def test_google_ai_studio_is_a_cleanup_provider_and_not_a_transcriber(self):
-        """Its compatible endpoint has no /audio/transcriptions behind it."""
-        self.assertNotIn("gemini", cfg.TRANSCRIBERS)
+    def test_google_ai_studio_both_cleans_up_and_transcribes(self):
+        """With one key, the one the cleanup row has always used."""
         self.assertIn("gemini", cleanup.PROVIDERS)
+        who = cfg.TRANSCRIBERS["gemini"]
+        self.assertEqual(who.key, "gemini_api_key")
+        self.assertEqual(who.url, "gemini_base_url")
+        self.assertEqual(cfg.DEFAULTS[who.model], "gemini-3.5-flash-lite")
+        self.assertNotEqual(cfg.DEFAULTS["transcribe_provider"], "gemini")
 
     def test_deepseek_is_a_cleanup_provider_and_not_a_transcriber(self):
         self.assertNotIn("deepseek", cfg.TRANSCRIBERS)

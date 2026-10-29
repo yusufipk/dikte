@@ -41,6 +41,7 @@ from PyQt6.QtGui import QAction, QCursor, QDesktopServices, QIcon  # noqa: E402
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QMenu, QSystemTrayIcon  # noqa: E402
 
+from . import api  # noqa: E402
 from . import assistant  # noqa: E402
 from . import audio  # noqa: E402
 from . import cli  # noqa: E402
@@ -1273,6 +1274,13 @@ class Dikte:
     def start_meeting(self):
         if self.meeting_state != M_IDLE:
             return
+        # A meeting transcript is built out of segment times. Said now rather
+        # than after an hour of recording that nothing can write up.
+        provider = self.conf["transcribe_provider"]
+        if not api.gives_times(provider):
+            self._on_meeting_error(str(api.no_times(
+                t(cfg.TRANSCRIBERS[provider].service))))
+            return
         base = meeting.new_base()
         _, wav_path = cfg.meeting_paths(base)
         # A meeting opens the same capture as a dictation does, and takes the
@@ -1395,7 +1403,18 @@ class Dikte:
             self.overlay.dismiss()
         self._set_meeting_state(M_IDLE)
         self._settle(MEETING, {"ok": False, "error": message})
-        self._on_error(message)
+        # Not _on_error: that one ends a dictation, and the meeting shortcut
+        # can be pressed in the middle of one, whose recorder keeps running.
+        # No cue while the microphone is open for either recording, or it is
+        # taken down with the words, and no overlay error over a dictation's
+        # own indicator.
+        if not self.recording:
+            self.cues.play("failed")
+        if self.state == IDLE:
+            self._report(message, self.overlay)
+        else:
+            self.tray.showMessage("Dikte", message,
+                                  QSystemTrayIcon.MessageIcon.Warning, 8000)
 
     def _on_meeting_warning(self, message):
         """It was recorded and it is being written up, but read this first."""
