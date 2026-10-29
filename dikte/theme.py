@@ -75,6 +75,10 @@ QLineEdit, QPlainTextEdit, QListWidget, QComboBox, QSpinBox {
     background: @surface; border: 1px solid @border; border-radius: 5px;
     padding: 5px 7px; selection-background-color: @accent; selection-color: @accent_text;
 }
+QLineEdit:disabled, QPlainTextEdit:disabled, QListWidget:disabled,
+QComboBox:disabled, QSpinBox:disabled {
+    color: @disabled_text; background: @disabled_bg;
+}
 QComboBox { padding-right: 28px; min-height: 18px; }
 QComboBox::drop-down {
     subcontrol-origin: border; subcontrol-position: top right;

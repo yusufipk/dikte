@@ -1181,6 +1181,7 @@ TR = {
     "Selected: Processor (CPU).": "Seçili: İşlemci (CPU).",
     "Selected: {name}.": "Seçili: {name}.",
     "The program's graphics device mapping could not be verified.": "Programın ekran kartı eşlemesi doğrulanamadı.",
+    "This whisper.cpp build has no graphics card support, so it always runs on the processor.": "Bu whisper.cpp derlemesinde ekran kartı desteği yok, bu yüzden her zaman işlemcide çalışır.",
     "The saved processing device is invalid. Choose a device in Settings.": "Kayıtlı işlem aygıtı geçersiz. Ayarlar'dan bir aygıt seç.",
     "The selected custom or unmanaged program does not provide verified explicit graphics selection.": "Seçilen özel veya Dikte'nin yönetmediği program, doğrulanmış ekran kartı seçimini desteklemiyor.",
     "The selected graphics card is not available. Choose another processing device in Settings.": "Seçilen ekran kartı kullanılamıyor. Ayarlar'dan başka bir işlem aygıtı seç.",

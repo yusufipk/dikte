@@ -8,8 +8,10 @@ when they are told to, which is the only thing the code waits on.
 import contextlib
 import hashlib
 import io
+import json
 import os
 import pathlib
+import shutil
 import signal
 import sys
 import tarfile
@@ -1619,7 +1621,8 @@ ggml_vulkan: 0 = Intel UHD Graphics (Mesa Intel) | uma: 1\nggml_vulkan: 0 = NVID
                 mock.patch.object(ggml.subprocess, "Popen") as launch, \
                 mock.patch.object(server, "_remember"), \
                 mock.patch.object(server, "_wait_ready", return_value=("ready", True)):
-            ggml.managed_vulkan_devices(binary, ())
+            ggml.managed_vulkan_devices(binary, (hardware.GraphicsDevice(
+                "Intel Arc A770", 16 << 30, False, "vulkan:intel"),))
             server._launch(settings)
         expected = str(self.binary.resolve().parent)
         self.assertEqual(probe.call_args.kwargs.get("cwd"), expected)
@@ -1628,6 +1631,17 @@ ggml_vulkan: 0 = Intel UHD Graphics (Mesa Intel) | uma: 1\nggml_vulkan: 0 = NVID
         args = launch.call_args.args[0]
         self.assertEqual(args[0], str(self.binary.resolve()))
         self.assertEqual(args[args.index("-m") + 1], str(pathlib.Path(model).resolve()))
+
+    def test_no_listed_cards_starts_no_probe(self):
+        """Only Linux lists its cards, so on Windows there is nothing for the
+        probe's names to match, and starting the server would be wasted."""
+        with mock.patch.object(ggml, "managed_vulkan_in_use", return_value=True), \
+                mock.patch.dict(os.environ, {}, clear=True), \
+                mock.patch.object(hardware.sys, "platform", "win32"), \
+                mock.patch.object(ggml.subprocess, "run") as probe:
+            self.assertEqual(ggml.managed_vulkan_devices(str(self.binary)), ())
+            self.assertEqual(ggml.managed_vulkan_devices(str(self.binary), ()), ())
+        probe.assert_not_called()
 
     def test_additional_loaded_backends_invalidate_vulkan_local_ordinals(self):
         device = hardware.GraphicsDevice("Intel Arc A770", 16 << 30, False,
@@ -1833,7 +1847,9 @@ ggml_vulkan: 0 = Intel UHD Graphics (Mesa Intel) | uma: 1\nggml_vulkan: 0 = NVID
                 mock.patch.object(
                     ggml.subprocess, "run", return_value=completed
                 ) as probe:
-            ggml.managed_vulkan_devices(str(self.binary))
+            # A listed card, or the probe is skipped on a runner without one.
+            ggml.managed_vulkan_devices(str(self.binary), (hardware.GraphicsDevice(
+                "Intel Arc A770", 16 << 30, False, "vulkan:intel"),))
         self.assertLessEqual(probe.call_args.kwargs["timeout"], 2)
 
     def test_an_external_ggml_vulkan_filter_disables_explicit_choices(self):
@@ -2020,6 +2036,211 @@ class InstallOnWindows(Local):
             with self.assertRaises(ggml.LocalError) as caught:
                 ggml.install_program(ggml.WHISPER)
         self.assertIn("this machine", str(caught.exception))
+
+
+class ManagedWhisperOnWindows(Local):
+    """Dikte's own Vulkan whisper-server for Windows x64, and every way it
+    falls back to upstream's processor builds, the same as on Linux."""
+
+    def setUp(self):
+        super().setUp()
+        self.patch_attr(sys, "platform", "win32")
+        self.patch_attr(ggml, "_arch", lambda: "x64")
+        self.patch_attr(ggml.platform, "machine", lambda: "AMD64")
+        self.patch_attr(ggml, "_has_vulkan", lambda: True)
+        self.enterContext(mock.patch("shutil.which", return_value=None))
+        self.archive = zipball({
+            "whisper-bin-win-vulkan-x64/whisper-server.exe": b"MZ",
+            "whisper-bin-win-vulkan-x64/ggml-vulkan.dll": b"MZ",
+        })
+        self.reviewed = hashlib.sha256(self.archive).hexdigest()
+
+    def release(self, tag, *names, digest=None):
+        digest = self.reviewed if digest is None else digest
+        return {"tag_name": tag, "assets": [
+            {"name": name, "browser_download_url": f"https://example.invalid/{name}",
+             "size": len(self.archive), "digest": "sha256:" + digest}
+            for name in names]}
+
+    def reviewed_digest(self):
+        return mock.patch.object(ggml, "MANAGED_WHISPER_WINDOWS_SHA256",
+                                 self.reviewed)
+
+    def test_the_placeholder_digest_keeps_windows_on_upstream_as_before(self):
+        """Nobody has reviewed a Windows archive yet. Until somebody does,
+        Windows behaves exactly as before: GitHub is not asked for the bundle,
+        the upstream BLAS build lands, and nothing calls it a fallback."""
+        self.assertEqual(ggml.UNREVIEWED_DIGEST,
+                         ggml.MANAGED_WHISPER_WINDOWS_SHA256)
+        self.assertFalse(ggml._reviewed(ggml.UNREVIEWED_DIGEST))
+        self.assertFalse(ggml._managed_whisper(ggml.WHISPER))
+        upstream = self.release("v1.9.5", "whisper-blas-bin-x64.zip")
+        with serving(upstream, self.archive) as calls:
+            path = ggml.install_program(ggml.WHISPER)
+        urls = [call.args[0].full_url for call in calls.call_args_list]
+        self.assertFalse(any("yusufipk/dikte" in url for url in urls))
+        self.assertTrue(urls[-1].endswith("whisper-blas-bin-x64.zip"))
+        self.assertTrue(path.endswith("whisper-server.exe"))
+        self.assertFalse(ggml.vulkan_missing(ggml.WHISPER))
+
+    def test_the_placeholder_digest_writes_no_backend_to_the_record(self):
+        upstream = self.release("v1.9.5", "whisper-blas-bin-x64.zip")
+        with serving(upstream, self.archive):
+            ggml.install_program(ggml.WHISPER)
+        self.assertNotIn("backend", ggml._read_record(ggml.WHISPER))
+
+    def test_an_asset_published_without_a_digest_never_matches_the_placeholder(self):
+        unsigned = self.release(ggml.MANAGED_WHISPER_WINDOWS_RELEASE,
+                                ggml.MANAGED_WHISPER_WINDOWS_VULKAN)
+        unsigned["assets"][0].pop("digest")
+        with fake_urlopen(unsigned):
+            self.assertIsNone(ggml._managed_asset())
+
+    def test_a_reviewed_bundle_is_taken_first_when_there_is_a_loader(self):
+        managed = self.release(ggml.MANAGED_WHISPER_WINDOWS_RELEASE,
+                               "whisper-bin-ubuntu-vulkan-x64.tar.gz",
+                               ggml.MANAGED_WHISPER_WINDOWS_VULKAN)
+        with self.reviewed_digest(), serving(managed, self.archive) as calls:
+            path = ggml.install_program(ggml.WHISPER)
+        urls = [call.args[0].full_url for call in calls.call_args_list]
+        self.assertIn("/repos/yusufipk/dikte/releases/tags/"
+                      + ggml.MANAGED_WHISPER_WINDOWS_RELEASE, urls[0])
+        self.assertTrue(urls[1].endswith(ggml.MANAGED_WHISPER_WINDOWS_VULKAN))
+        self.assertTrue(path.endswith("whisper-server.exe"))
+        self.assertEqual(ggml.MANAGED_WHISPER_WINDOWS_VERSION,
+                         ggml.installed_version(ggml.WHISPER))
+        self.assertFalse(ggml.vulkan_missing(ggml.WHISPER))
+        self.assertTrue(ggml.managed_vulkan_in_use(path))
+
+    def test_without_a_loader_the_bundle_is_not_asked_for(self):
+        self.patch_attr(ggml, "_has_vulkan", lambda: False)
+        upstream = self.release("v1.9.5", "whisper-bin-x64.zip",
+                                "whisper-blas-bin-x64.zip")
+        with self.reviewed_digest(), serving(upstream, self.archive) as calls:
+            ggml.install_program(ggml.WHISPER)
+        urls = [call.args[0].full_url for call in calls.call_args_list]
+        self.assertIn("/repos/ggml-org/whisper.cpp/releases/latest", urls[0])
+        self.assertTrue(urls[1].endswith("whisper-blas-bin-x64.zip"))
+        self.assertFalse(ggml.vulkan_missing(ggml.WHISPER))
+
+    def test_an_unreviewed_digest_falls_back_to_upstream(self):
+        managed = self.release(ggml.MANAGED_WHISPER_WINDOWS_RELEASE,
+                               ggml.MANAGED_WHISPER_WINDOWS_VULKAN,
+                               digest="0" * 64)
+        upstream = self.release("v1.9.5", "whisper-blas-bin-x64.zip")
+        with self.reviewed_digest(), \
+                fake_urlopen(managed, upstream, body(self.archive)) as calls:
+            ggml.install_program(ggml.WHISPER)
+        self.assertEqual(3, len(calls))
+        self.assertTrue(calls[2].full_url.endswith("whisper-blas-bin-x64.zip"))
+        self.assertTrue(ggml.vulkan_missing(ggml.WHISPER))
+
+    def test_a_missing_release_falls_back_to_the_stock_build(self):
+        upstream = self.release("v1.9.5", "whisper-bin-x64.zip")
+        with self.reviewed_digest(), \
+                fake_urlopen(http_error(404), upstream,
+                             body(self.archive)) as calls:
+            path = ggml.install_program(ggml.WHISPER)
+        self.assertTrue(calls[2].full_url.endswith("whisper-bin-x64.zip"))
+        self.assertTrue(os.path.isfile(path))
+        self.assertTrue(ggml.vulkan_missing(ggml.WHISPER))
+
+    def test_an_unreachable_github_falls_back_too(self):
+        upstream = self.release("v1.9.5", "whisper-blas-bin-x64.zip")
+        with self.reviewed_digest(), \
+                fake_urlopen(url_error(), upstream, body(self.archive)) as calls:
+            ggml.install_program(ggml.WHISPER)
+        self.assertTrue(calls[2].full_url.endswith("whisper-blas-bin-x64.zip"))
+
+    def test_an_explicit_version_still_comes_from_upstream(self):
+        upstream = self.release("v1.9.1", "whisper-blas-bin-x64.zip")
+        with self.reviewed_digest(), serving(upstream, self.archive) as calls:
+            ggml.install_program(ggml.WHISPER, tag="v1.9.1")
+        urls = [call.args[0].full_url for call in calls.call_args_list]
+        self.assertIn("/repos/ggml-org/whisper.cpp/releases/tags/v1.9.1",
+                      urls[0])
+
+    def test_each_system_reads_its_own_pinned_bundle(self):
+        self.assertEqual(ggml.MANAGED_WHISPER_WINDOWS_VULKAN,
+                         ggml._managed_bundle().asset)
+        self.patch_attr(sys, "platform", "linux")
+        self.assertEqual(ggml.MANAGED_WHISPER_VULKAN,
+                         ggml._managed_bundle().asset)
+        self.assertEqual(ggml.MANAGED_WHISPER_SHA256,
+                         ggml._managed_bundle().sha256)
+
+    def test_a_zip_cannot_write_outside_the_directory_it_lands_in(self):
+        archive = self.path("escape.zip")
+        archive.write_bytes(zipball({
+            "../outside.txt": b"no",
+            "/absolute.txt": b"no",
+            "C:/drive.txt": b"no",
+            "inside/whisper-server.exe": b"MZ",
+        }))
+        into = self.path("data", "bin", "whisper", "unpacked")
+        ggml._extract(archive, into)
+        landed = list(pathlib.Path(self.path()).rglob("*.txt"))
+        self.assertEqual(3, len(landed))
+        for path in landed:
+            self.assertTrue(ggml._under(path, into), path)
+
+
+class ProcessorOnlyBuilds(Local):
+    """Whether a downloaded build can reach a graphics card at all, read from
+    the backend libraries it carries."""
+
+    def install(self, *files, recorded=True):
+        root = self.path("data", "bin", "whisper", "v1")
+        shutil.rmtree(root, ignore_errors=True)
+        root.mkdir(parents=True)
+        binary = root / "whisper-server"
+        binary.write_bytes(b"server")
+        binary.chmod(0o755)
+        for name in files:
+            (root / name).write_bytes(b"library")
+        record = ggml._install_record(ggml.WHISPER)
+        record.unlink(missing_ok=True)
+        if recorded:
+            record.write_text(json.dumps({"tag": "v1", "binary": str(binary)}),
+                              encoding="utf-8")
+        return str(binary)
+
+    def test_the_windows_blas_archive_is_processor_only(self):
+        binary = self.install("ggml.dll", "ggml-base.dll", "ggml-blas.dll",
+                              "ggml-cpu-haswell.dll", "ggml-cpu-x64.dll",
+                              "whisper.dll", "libopenblas.dll", "SDL2.dll")
+        self.assertTrue(ggml.processor_only(ggml.WHISPER, binary))
+
+    def test_the_linux_processor_archive_is_processor_only(self):
+        binary = self.install("libggml.so.0", "libggml-base.so",
+                              "libggml-cpu-haswell.so", "libwhisper.so.1")
+        self.assertTrue(ggml.processor_only(ggml.WHISPER, binary))
+
+    def test_a_vulkan_backend_is_a_graphics_card_build(self):
+        for vulkan in ("ggml-vulkan.dll", "libggml-vulkan.so"):
+            with self.subTest(vulkan=vulkan):
+                binary = self.install("ggml.dll", "ggml-cpu-x64.dll", vulkan)
+                self.assertFalse(ggml.processor_only(ggml.WHISPER, binary))
+
+    def test_an_unknown_backend_is_not_called_processor_only(self):
+        binary = self.install("ggml-cpu-x64.dll", "ggml-somethingnew.dll")
+        self.assertFalse(ggml.processor_only(ggml.WHISPER, binary))
+
+    def test_backends_linked_in_somewhere_else_are_not_guessed(self):
+        binary = self.install("libggml.so.0", "libwhisper.so.1")
+        self.assertFalse(ggml.processor_only(ggml.WHISPER, binary))
+
+    def test_a_build_dikte_did_not_download_is_never_claimed(self):
+        binary = self.install("ggml-cpu-x64.dll", recorded=False)
+        self.assertFalse(ggml.processor_only(ggml.WHISPER, binary))
+        binary = self.install("ggml-cpu-x64.dll")
+        self.assertFalse(ggml.processor_only(ggml.WHISPER, binary + ".other"))
+        self.assertFalse(ggml.processor_only(ggml.WHISPER, ""))
+
+    def test_an_extra_backend_path_is_not_second_guessed(self):
+        binary = self.install("ggml-cpu-x64.dll")
+        with mock.patch.dict(os.environ, {"GGML_BACKEND_PATH": "/x.so"}):
+            self.assertFalse(ggml.processor_only(ggml.WHISPER, binary))
 
 
 class WindowsOwnership(Local):
