@@ -70,10 +70,12 @@ python -m dikte
 
 ## Performance
 
-- The local install fetches whisper.cpp's **OpenBLAS build**, which
-  transcribes about twice as fast as the stock one on a plain CPU. There is
-  no GPU build to fetch for machines without an NVIDIA card, and none for
-  Windows on ARM either: whisper.cpp publishes x64 only, so a Snapdragon
+- On a machine with a graphics card driver, the local install fetches a
+  **Vulkan build** of whisper.cpp that Dikte publishes itself, and it runs on
+  Intel, AMD and NVIDIA cards alike. An Intel UHD laptop transcribed a minute
+  in about 8 seconds, twice as fast as the processor. Without one it fetches
+  the **OpenBLAS build**, about twice as fast as the stock one on a plain CPU.
+- Windows on ARM gets neither: whisper.cpp publishes x64 only, so a Snapdragon
   machine runs it under emulation and the cloud is the faster option there.
 - Setting Settings → API and models → **Threads** near your physical core
   count helps noticeably; the server's own default is 4.

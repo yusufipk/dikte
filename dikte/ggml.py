@@ -105,15 +105,16 @@ MANAGED_WHISPER_SHA256 = (
 )
 # The Windows x64 bundle comes out of the same workflow and the same pinned
 # source, under a release tag of its own so either platform can be published
-# without the other. Its digest is the empty placeholder until somebody has
-# built that archive and reviewed it, and until then Windows installs exactly
-# what it did before the bundle existed.
+# without the other. A platform whose digest is the empty placeholder installs
+# exactly what it did before its bundle existed.
 UNREVIEWED_DIGEST = ""
 MANAGED_WHISPER_WINDOWS_VERSION = "v1.9.4"
 MANAGED_WHISPER_WINDOWS_RELEASE = (
     f"whisper.cpp-{MANAGED_WHISPER_WINDOWS_VERSION}-windows")
 MANAGED_WHISPER_WINDOWS_VULKAN = "whisper-bin-win-vulkan-x64.zip"
-MANAGED_WHISPER_WINDOWS_SHA256 = UNREVIEWED_DIGEST
+MANAGED_WHISPER_WINDOWS_SHA256 = (
+    "69e5aa03cf88afb40e19a5d75e9dad2e3ee1cdcaa9c3ee662fd7d1115b07fae8"
+)
 
 ManagedBundle = collections.namedtuple("ManagedBundle",
                                        "release version asset sha256")
