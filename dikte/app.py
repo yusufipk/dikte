@@ -2012,6 +2012,8 @@ def _present(window, activate=True):
     """
     if window.isVisible() and not window.isActiveWindow():
         window.hide()
+    if sys.platform == "darwin":
+        mac_window.move_to_active_space(window)
     if window.isMinimized():
         window.setWindowState(window.windowState() & ~Qt.WindowState.WindowMinimized)
     screen = active_screen()
