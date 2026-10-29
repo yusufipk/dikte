@@ -1384,6 +1384,7 @@ class EveryRecordingProtectsTheFront(DikteTest):
         self.assertIn(self.dikte.MEETING, settled)
         dikte.overlay.show_error.assert_not_called()
         dikte.tray.showMessage.assert_called_once()
+        dikte.cues.play.assert_not_called()
 
 class Overlay(DikteTest):
     def overlay(self, **kwargs):
