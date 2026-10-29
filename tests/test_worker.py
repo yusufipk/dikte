@@ -671,7 +671,7 @@ class ProfileChain(ChainBase):
             with mock.patch.object(api, "cleanup", return_value="Hi."), \
                     mock.patch.object(paste, "copy"), mock.patch.object(paste, "press"), \
                     contextlib.redirect_stderr(io.StringIO()):
-                pipeline._work(self.wav, 2.0, self.rms, False, None, None, None, lookup)
+                pipeline._work(self.wav, 2.0, self.rms, False, None, None, None, profile=lookup)
         self.assertEqual(order, ["heard", "profile"])
 
     def test_a_failure_before_cleanup_still_resolves_the_profile(self):
@@ -731,7 +731,7 @@ class ProfileChain(ChainBase):
         seen = []
         choice = self.profiled(profile_default={"translate_to": "de"})
         with mock.patch.object(pipeline, "_work",
-                               side_effect=lambda *job: seen.append(job[-1])):
+                               side_effect=lambda *job: seen.append(job[-2])):
             pipeline.run("first.wav", 1.0, profile=choice)
             pipeline._thread.join(5)
         self.assertEqual(seen, [choice])

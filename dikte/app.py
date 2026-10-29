@@ -55,12 +55,16 @@ from . import integrate  # noqa: E402
 from . import ipc  # noqa: E402
 from . import mac_window  # noqa: E402
 from . import meeting  # noqa: E402
+from . import paste  # noqa: E402
 from . import profiles  # noqa: E402
+from . import selection  # noqa: E402
 from . import trayicon  # noqa: E402
 from . import update  # noqa: E402
 from .i18n import t  # noqa: E402
 from .meeting import MeetingPipeline  # noqa: E402
-from .overlay import Overlay, active_screen  # noqa: E402
+from . import answer_window  # noqa: E402
+from .answer_window import AnswerWindow  # noqa: E402
+from .overlay import LIVE, Overlay, active_screen  # noqa: E402
 from .settings_ui import SettingsWindow  # noqa: E402
 from .home_ui import HomeWindow  # noqa: E402
 from .worker import Pipeline  # noqa: E402
@@ -253,6 +257,16 @@ class Dikte:
         # The writing profile the current dictation was started under, chosen
         # from the program in front at the same moment as the above.
         self.profile_before = None
+        # A question about the selection rides on the agent's run: the same
+        # microphone turn and the same pipeline, plus the selection read at the
+        # key press and the window its answer is shown in.
+        self.assist_grab = None
+        self.answer_window = None
+        # Where answer windows' Apply and Copy threads report, by token. It
+        # outlives every window, so a window can be deleted the moment it is
+        # replaced, and a late failure still has somewhere to be said.
+        self.answer_bridge = answer_window.shared_bridge()
+        self.answer_bridge.apply_finished.connect(self._on_answer_applied)
 
         self.overlay = Overlay(self.conf["overlay_corner"],
                                screen_name=self.conf["overlay_screen"],
@@ -293,6 +307,7 @@ class Dikte:
         self.ask_pipeline.finished.connect(self._on_ask_finished)
         self.ask_pipeline.failed.connect(self._on_ask_error)
         self.ask_pipeline.cancelled.connect(self._on_ask_cancelled)
+        self.ask_pipeline.answered.connect(self._on_assist_answered)
         self.meeting_recorder.levels.connect(self._on_meeting_levels)
         self.meeting_recorder.stopped.connect(self._on_meeting_recorded)
         self.meeting_recorder.died.connect(self._on_meeting_died)
@@ -581,6 +596,9 @@ class Dikte:
     def toggle_meeting(self):
         self._external("meeting", self._toggle_meeting)
 
+    def toggle_assist(self):
+        self._external("assist", self._toggle_assist)
+
     def toggle_pause(self):
         self._external("pause", self._toggle_pause)
 
@@ -611,7 +629,8 @@ class Dikte:
             timer = self.last_evdev[name] = QElapsedTimer()
         timer.restart()
         handlers = {"meeting": self._toggle_meeting, "ask": self._toggle_ask,
-                    "cancel": self._cancel, "pause": self._toggle_pause}
+                    "cancel": self._cancel, "pause": self._toggle_pause,
+                    "assist": self._toggle_assist}
         handlers.get(name, self._toggle)()
 
     def _retire_listener(self):
@@ -649,6 +668,7 @@ class Dikte:
                 "pause": self.toggle_pause,
                 "ask-cancel": self.cancel_ask,
                 "ask-reset": self.reset_conversation,
+                "assist": self.toggle_assist,
                 "meeting-cancel": self.cancel_meeting,
                 "settings": self.open_settings,
                 "home": self.open_home,
@@ -691,9 +711,15 @@ class Dikte:
     def _ask_request(self, request, reply):
         before = self.ask_state
         self.toggle_ask()
-        if "paste" in request and self.ask_state != before:
+        # A stop held for the selection's preview, whether this request held
+        # it or found it held, is a stop that landed: the run it ends is on
+        # its way, and a waiter is told how it went.
+        moved = self.ask_state != before or (
+            before == RECORDING == self.ask_state
+            and getattr(self, "_stop_held_since", None) is not None)
+        if "paste" in request and moved:
             self.paste_override[ASK] = request["paste"]
-        self._answer(ASK, before, self.ask_state, request, reply)
+        self._answer(ASK, before, self.ask_state, request, reply, moved)
 
     def _meeting_request(self, cmd, request, reply):
         before = self.meeting_state
@@ -705,11 +731,13 @@ class Dikte:
             self.stop_meeting()
         self._answer(MEETING, before, self.meeting_state, request, reply)
 
-    def _answer(self, kind, before, after, request, reply):
+    def _answer(self, kind, before, after, request, reply, moved=None):
         """Reply now, or once the run this request set going is over."""
+        if moved is None:
+            moved = after != before
         if not request.get("wait"):
             reply({"ok": True, "state": after})
-        elif after == before:
+        elif not moved:
             # Nothing moved: the microphone is held by the other one, or this
             # one is still working, or there was nothing to stop. Say so rather
             # than wait for a run that was never started.
@@ -811,6 +839,19 @@ class Dikte:
         elif self.ask_state == IDLE:
             self.start_ask()
 
+    def _toggle_assist(self):
+        """The selection shortcut: start a question, or stop the one recording.
+
+        Does nothing at all while the feature is off, whatever the desktop
+        still has bound to the key.
+        """
+        if not self.conf["selection_assist"] or self._repeated("assist"):
+            return
+        if self.ask_state == RECORDING:
+            self.stop_ask()
+        elif self.ask_state == IDLE:
+            self.start_assist()
+
     def _repeated(self, name):
         # Per action, the way last_evdev already is: the window is meant to
         # swallow a duplicate delivery of the same press, not a pause landing
@@ -883,9 +924,133 @@ class Dikte:
         self._set_ask_state(RECORDING)
         self.cues.play("start")
 
+    def start_assist(self):
+        """Read the selection, then record what to do with it."""
+        if (not self.conf["selection_assist"] or self.ask_state != IDLE
+                or self.recording):
+            return
+        if isinstance(getattr(self, "home_messages", None), dict):
+            self.home_messages[ASK] = ""
+            self.home_messages.pop("ask_stage", None)
+        self.front_before = self._the_front()
+        # Before the indicator goes up, while the window holding the selection
+        # still has the keyboard: on macOS and Windows the copy is a key press.
+        # A provider that is never sent selected text gets none read at all.
+        self.assist_grab = (selection.Grab(focus=self.front_before)
+                            if assistant.can_run_tool_free(self.conf)
+                            else selection.NoGrab())
+        self.ask_overlay.show_recording(asking=True)
+        self._begin_recording(ASK)
+        if not self.recorder.active:
+            self._drop_grab()
+            return
+        self._set_ask_state(RECORDING)
+        self.cues.play("start")
+        self._watch_grab(self.assist_grab)
+
+    def _watch_grab(self, grab):
+        """Say under the ribbon what was read, as soon as it has been.
+
+        The read is over in half a second, long before the instruction is,
+        so a selection that was not meant (an old PRIMARY, the current line
+        an editor copies when nothing is selected) can still be cancelled
+        before anything is sent.
+        """
+        timer = getattr(self, "_grab_timer", None)
+        if timer is not None:
+            timer.stop()
+        timer = self._grab_timer = QTimer()
+        timer.setInterval(50)
+        self._stop_held_since = None
+        noted = []
+
+        def look():
+            if self.assist_grab is not grab or self.ask_state != RECORDING:
+                timer.stop()
+                return
+            if not noted:
+                read = grab.peek()
+                if read is not None:
+                    noted.append(read)
+                    self.ask_overlay.set_note(_grab_note(grab, read))
+                    # Never counted as shown, nor a stop let through, in the
+                    # tick that put the note up: it has not been painted yet.
+                    return
+            elif (noted[0].text and grab.reads and not grab.shown.is_set()
+                    and self._note_on_screen()):
+                grab.shown_at = time.monotonic()
+                grab.shown.set()
+                return
+            if getattr(self, "_stop_held_since", None) is not None:
+                self._release_held_stop(grab)
+
+        timer.timeout.connect(look)
+        timer.start()
+        look()
+
+    def _note_on_screen(self):
+        """Whether the indicator is up and drawing a recording, which is the
+        only state its note is painted in. An error shown in its place, say,
+        would leave the note set but unseen."""
+        indicator = self.ask_overlay
+        return bool(getattr(indicator, "showing", False)) and indicator.state in LIVE
+
+    def _preview_pending(self):
+        """Whether the selection has yet to be on screen long enough to send.
+
+        Only a selection that has been shown is sent (see Grab.result): one
+        still being read, or up for less than ASSIST_PREVIEW_SECONDS, keeps a
+        stop waiting.
+        """
+        grab = getattr(self, "assist_grab", None)
+        if grab is None or not getattr(grab, "reads", False):
+            return False
+        read = grab.peek()
+        if read is None:
+            return True
+        if not read.text:
+            return False
+        return (grab.shown_at is None
+                or time.monotonic() - grab.shown_at < ASSIST_PREVIEW_SECONDS)
+
+    def _hold_stop(self):
+        """A stop that waits for the preview: it sounds and the ribbon holds
+        at once, and what is said meanwhile is not recorded. A cancel still
+        throws the whole run away."""
+        self._stop_held_since = time.monotonic()
+        self.cues.play("stop")
+        self._set_paused(True)
+
+    def _release_held_stop(self, grab):
+        """Let a held stop through once the preview has been up long enough.
+
+        A read still unfinished, or not yet on screen, after
+        ASSIST_HOLD_SECONDS is given up on, so nothing it reads is sent. A
+        preview that made it on screen before then always gets its full
+        ASSIST_PREVIEW_SECONDS.
+        """
+        read = grab.peek()
+        held_out = time.monotonic() - self._stop_held_since >= ASSIST_HOLD_SECONDS
+        if read is None or grab.shown_at is None:
+            # Not read, or read but never on screen: waited for until the cap,
+            # then given up on, and Grab.result sends none of it.
+            if not held_out and (read is None or read.text):
+                return
+            grab.cancel()
+        elif self._preview_pending():
+            return
+        self._stop_ask_now(cue=False)
+
+    def _drop_grab(self):
+        """A question that will not run: stop its copy if it has not happened."""
+        grab, self.assist_grab = getattr(self, "assist_grab", None), None
+        if grab is not None:
+            grab.cancel()
+
     def _begin_recording(self, owner):
         """One microphone, so one of the two holds it at a time."""
         self.recorder_owner = owner
+        self._stop_held_since = None
         self._run_id += 1
         self._clear_pause()
         self.elapsed.restart()
@@ -981,7 +1146,17 @@ class Dikte:
     def stop_ask(self):
         if self.ask_state != RECORDING:
             return
-        self.cues.play("stop")
+        if getattr(self, "_stop_held_since", None) is not None:
+            return   # already stopping; see _release_held_stop
+        if self._preview_pending():
+            self._hold_stop()
+            return
+        self._stop_ask_now()
+
+    def _stop_ask_now(self, cue=True):
+        self._stop_held_since = None
+        if cue:
+            self.cues.play("stop")
         self.ticker.stop()
         self._clear_pause()
         self._set_ask_state(BUSY)
@@ -998,7 +1173,15 @@ class Dikte:
         """
         if not self.recording or self._repeated("pause"):
             return
-        self.paused = not self.paused
+        # A stop held for the selection's preview stays paused until it ends.
+        if getattr(self, "_stop_held_since", None) is not None:
+            return
+        self._set_paused(not self.paused)
+
+    def _set_paused(self, paused):
+        if paused == self.paused:
+            return
+        self.paused = paused
         if self.paused:
             self._paused_at = self.elapsed.elapsed()
         else:
@@ -1025,12 +1208,15 @@ class Dikte:
         if not self.recording:
             return
         asking = self.ask_state == RECORDING
+        self._stop_held_since = None
         self.ticker.stop()
         self._clear_pause()
         self.recorder.cancel()
         self.cues.play("failed")
         # The preference dies with the run it was given for.
         self.paste_override.pop(ASK if asking else DICTATION, None)
+        if asking:
+            self._drop_grab()
         self.recorder_owner = None
         # What goes over the socket is read by a program as often as by a
         # person, so it stays in one language; only what a run itself said
@@ -1236,8 +1422,10 @@ class Dikte:
         profile = getattr(self, "profile_before", None)
         self.profile_before = None
         if owner == ASK:
+            grab, self.assist_grab = getattr(self, "assist_grab", None), None
+            extra = {"assist": grab} if grab is not None else {}
             self.ask_pipeline.run(wav_path, duration, rms_values, ask=True,
-                                  paste=wants_paste, focus=focus)
+                                  paste=wants_paste, focus=focus, **extra)
         else:
             self._transcripts_pending += 1
             self._queued_retries.append(False)
@@ -1354,6 +1542,67 @@ class Dikte:
                            "warning": warning, "agent": agent,
                            "speech_language": speech_language})
 
+    def _on_assist_answered(self, payload):
+        """A question about the selection came back: show it, paste nothing."""
+        agent = assistant.display_name(self.conf)
+        warning = payload.get("warning") or ""
+        if warning:
+            self.ask_overlay.show_warning(
+                t("{name} answered, but: {error}",
+                  name=agent, error=warning.splitlines()[0]))
+        else:
+            self.ask_overlay.dismiss()
+        self.cues.play("done")
+        self._set_ask_state(IDLE)
+        self._show_answer(payload, agent)
+        self._settle(ASK, {"ok": True, "answer": payload.get("text", ""),
+                           "question": payload.get("instruction", ""),
+                           "kind": payload.get("kind", ""),
+                           "warning": warning, "agent": agent,
+                           "speech_language": payload.get("speech_language", "")})
+
+    def _show_answer(self, payload, agent):
+        old = getattr(self, "answer_window", None)
+        if old is not None:
+            # Its threads hold the bridge and a token, not the window, so it
+            # can go now; whatever they report later reaches only the app.
+            old.close()
+            old.deleteLater()
+        focus = payload.get("focus")
+        selected = payload.get("selection") or ""
+        # Apply is for an edit of something that was selected, on a desktop
+        # that can press the paste for it. An answer is never offered it.
+        can_apply = (payload.get("kind") == selection.EDIT and bool(selected)
+                     and len(selected) <= selection.MAX_CHARS
+                     and paste.paste_ready())
+        # A provider that is never sent a selection says so, rather than
+        # leave the user wondering why the answer ignored it.
+        note = ("" if payload.get("reads_selection", True)
+                else t("This agent does not read the selection."))
+        if payload.get("selection_dropped"):
+            note = t("The selection was not shown in time, so it was not sent.")
+        window = AnswerWindow(
+            payload.get("instruction", ""), payload.get("text", ""),
+            selected=selected, can_apply=can_apply, agent=agent, note=note,
+            theme_name=self.conf["theme"],
+            apply_fn=lambda text: selection.apply(text, self.conf, focus=focus),
+            bridge=self.answer_bridge,
+        )
+        self.answer_window = window
+        _present(window, activate=False)
+
+    def _on_answer_applied(self, _token, error):
+        """An Apply finished, for the current window or one long replaced."""
+        if not error:
+            return
+        if self.ask_state == RECORDING:
+            # The corner belongs to the question being recorded, and its note
+            # has to stay on screen; the failure goes to the tray instead.
+            self.tray.showMessage("Dikte", error,
+                                  QSystemTrayIcon.MessageIcon.Warning, 8000)
+        else:
+            self._report(error, self.ask_overlay)
+
     def _on_ask_cancelled(self):
         self.cues.play("failed")
         self.ask_overlay.show_done(t("Stopped."), 2000)
@@ -1364,6 +1613,9 @@ class Dikte:
         """The microphone itself could not run, so it belongs to whoever asked."""
         owner, self.recorder_owner = self.recorder_owner, None
         self.paste_override.pop(owner, None)
+        self._stop_held_since = None
+        if owner == ASK:
+            self._drop_grab()
         self.ticker.stop()
         (self._on_ask_error if owner == ASK else self._on_error)(message)
 
@@ -1393,7 +1645,17 @@ class Dikte:
             QSystemTrayIcon.MessageIcon.Warning, 8000,
         )
         if owner == ASK and self.ask_state == RECORDING:
-            self.stop_ask()
+            # Nothing is being recorded to hold for a preview, so a selection
+            # not yet up for its full time is not sent, the same as one never
+            # shown: the user had no time to cancel it.
+            grab = getattr(self, "assist_grab", None)
+            if grab is not None and grab.peek() is None:
+                # Possibly not even pressed yet: the copy must not go on to
+                # press in whatever window has the focus by then.
+                grab.cancel()
+            if grab is not None and self._preview_pending():
+                grab.shown.clear()
+            self._stop_ask_now()
         elif self.state == RECORDING:
             self.stop()
 
@@ -1617,10 +1879,18 @@ class Dikte:
         # not the fallback the setting offers to turn on: it is the only way the
         # keys arrive at all, so it runs whatever the setting says.
         if self.conf["evdev_hotkey"] or not self._registry_shortcuts:
-            self.evdev.start({name: self.conf[spec.setting]
-                              for name, spec in hotkey.SHORTCUTS.items()})
+            self.evdev.start(self._bindings())
         else:
             self.evdev.stop()
+
+    def _bindings(self):
+        """{name: combination} for the listener to hold."""
+        bindings = {name: self.conf[spec.setting]
+                    for name, spec in hotkey.SHORTCUTS.items()}
+        # Switched off, the selection key is not listened for at all.
+        if not self.conf["selection_assist"]:
+            bindings.pop("assist", None)
+        return bindings
 
     def restart(self):
         """Replace this process with a fresh one, picking up code and settings."""
@@ -1673,6 +1943,24 @@ class Dikte:
         self.tray.hide()
 
 
+# How long a selection's preview is up before a stop may send it, and the
+# most a stop is held back waiting for that.
+ASSIST_PREVIEW_SECONDS = 1.0
+ASSIST_HOLD_SECONDS = 3.0
+
+
+def _grab_note(grab, read):
+    """The line under a selection question's ribbon: what goes with it."""
+    if not grab.reads:
+        return t("This agent does not read the selection.")
+    if read is selection.LEFT_ALONE:
+        return t("The clipboard was left alone, so no selection was read.")
+    if not read.text:
+        return t("Nothing selected")
+    return t("Selected ({count} characters): {preview}", count=len(read.text),
+             preview=answer_window.one_line(read.text, 40))
+
+
 def _preview(text):
     line = text.replace("\n", " ")
     return line[:48] + ("…" if len(line) > 48 else "")
@@ -1690,8 +1978,9 @@ def _clock(seconds):
             else f"{minutes}:{secs:02d}")
 
 
-def _present(window):
-    """Show a window where the user is now, raised and focused.
+def _present(window, activate=True):
+    """Show a window where the user is now, raised and, unless told not to,
+    focused.
 
     A window that was shown once keeps its position when it is shown again,
     and one left open stays on the virtual desktop it was left on, so opening
@@ -1717,7 +2006,8 @@ def _present(window):
         window.move(max(frame.left(), area.left()), max(frame.top(), area.top()))
     window.show()
     window.raise_()
-    window.activateWindow()
+    if activate:
+        window.activateWindow()
 
 
 def main():
@@ -1948,5 +2238,7 @@ def run_app(args):
         QTimer.singleShot(0, dikte.toggle_ask)
     elif command == "meeting":
         QTimer.singleShot(0, dikte.toggle_meeting)
+    elif command == "assist":
+        QTimer.singleShot(0, dikte.toggle_assist)
 
     return app.exec()

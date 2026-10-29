@@ -594,7 +594,6 @@ TR = {
     "Start a new conversation now": "Şimdi yeni konuşma başlat",
     "Stop {name}": "{name} durdur",
     "Stopping…": "Durduruluyor…",
-    "Stopped.": "Durduruldu.",
     "{name} starts fresh next time.": "{name} bir sonrakine sıfırdan başlayacak.",
     "Dikte: talking to Claude": "Dikte: ajanla konuşuyor",
     "Dikte: recording for Claude": "Dikte: ajan için kaydediyor",
@@ -1179,6 +1178,53 @@ TR = {
     "{name} ({size} {kind})": "{name} ({size} {kind})",
     "{size} system": "{size} sistem belleği",
     "{size} {kind} graphics": "{size} {kind} ekran kartı belleği",
+
+    # Asking about selected text.
+    "Selected text": "Seçili metin",
+    "Ask about the selected text": "Seçili metin hakkında sor",
+    "Select text, press the shortcut and say what to do with it. The answer "
+    "opens in a window; nothing is pasted until you press Apply. The "
+    "selection goes to the agent with no tools, and Codex and Antigravity are "
+    "not sent it. The history keeps your instruction and the reply, not the "
+    "selection.":
+        "Metni seç, kısayola bas ve onunla ne yapılacağını söyle. Cevap bir "
+        "pencerede açılır; Uygula'ya basmadan hiçbir şey yapıştırılmaz. Seçim "
+        "ajana araçsız gönderilir; Codex ve Antigravity'ye hiç gönderilmez. "
+        "Geçmişte seçim değil, talimatın ve cevap saklanır.",
+    "The clipboard was left alone, so no selection was read.":
+        "Panoya dokunulmadı, bu yüzden seçim okunmadı.",
+    "The selection was not shown in time, so it was not sent.":
+        "Seçim zamanında gösterilemedi, bu yüzden gönderilmedi.",
+    "Nothing was pasted. Use Copy instead.":
+        "Hiçbir şey yapıştırılmadı. Bunun yerine kopyalamayı kullan.",
+    "The clipboard holds an image, files or a password, which could not be "
+    "put back as they were.":
+        "Panoda bir resim, dosya ya da parola var ve bunlar olduğu gibi geri "
+        "konamazdı.",
+    "{tool} is needed to check the clipboard.":
+        "Panoyu denetlemek için {tool} gerekiyor.",
+    "The clipboard could not be read just now. Try again in a moment.":
+        "Pano şu an okunamadı. Birazdan yeniden dene.",
+    "{name} cannot run without tools, so selected text is not sent to it. "
+    "Use Claude Code or a chat provider.":
+        "{name} araçsız çalıştırılamadığı için seçili metin ona gönderilmez. "
+        "Claude Code'u ya da bir sohbet sağlayıcısını kullan.",
+    "Dikte: {name}": "Dikte: {name}",
+    "You said: {text}": "Söylediğin: {text}",
+    "About the selection ({count} characters): {preview}":
+        "Seçim hakkında ({count} karakter): {preview}",
+    "Selected ({count} characters): {preview}": "Seçili ({count} karakter): {preview}",
+    "Nothing selected": "Seçili metin yok",
+    "This agent does not read the selection.": "Bu ajan seçili metni okumaz.",
+    "Apply": "Uygula",
+    "Replaces the selected text in the window it came from. Nothing is pasted "
+    "until you press this.":
+        "Seçili metni geldiği pencerede değiştirir. Buna basmadan hiçbir şey "
+        "yapıştırılmaz.",
+    "Cancel": "Vazgeç",
+    "Closes this and leaves the original text alone.":
+        "Pencereyi kapatır, asıl metne dokunmaz.",
+    "Copy failed": "Kopyalanamadı",
 
 
     # Writing profiles, translation and the personal dictionary.

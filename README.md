@@ -187,7 +187,7 @@ running.
 - **Misheard words are repaired.** Speech models fail phonetically on proper
   nouns, so the cleanup model is asked to fix those from context, and to leave
   the word alone when the context does not make the intended one clear. The names
-  you list under Cleanup rules go to the transcription model as a hint and to the
+  you list in the Dictionary tab go to the transcription model as a hint and to the
   cleanup model as a glossary, which is what lets it recognise "kuber netis"
   (the writing profiles, which set a tone per program or translate, share it):
 
@@ -213,8 +213,9 @@ running.
   whatever its own allow-rules say. OpenRouter, OpenCode Go or Requesty is
   there as a
   plain question-and-answer fallback for a machine with no CLI on it. Provider,
-  model, permissions and working directory are under Settings → Agent, and
-  commands close together stay in one conversation.
+  model, permissions and working directory are under Settings → Agent, along
+  with an optional key that asks about the selected text, and commands close
+  together stay in one conversation.
 - **Meetings** are recorded from the microphone and the speaker output at the
   same time, which settles who said what by the channel a voice arrived on
   instead of guessing at it. The two sides are transcribed separately and

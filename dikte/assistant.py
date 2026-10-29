@@ -148,6 +148,14 @@ def executable(name):
     return {"claude": "claude", "codex": "codex", "agy": "agy"}.get(name, "")
 
 
+def uses_tools(conf):
+    """Whether the configured provider can run commands and reach the web.
+
+    The three CLIs can; the chat requests answer from what the model knows.
+    """
+    return bool(executable(provider(conf)))
+
+
 def model(conf):
     """Which model answered, for the history to record.
 
@@ -252,16 +260,46 @@ def working_dir(conf):
     return os.path.expanduser("~")
 
 
-def ask(prompt, conf, on_stage=None, should_stop=None):
+# The providers a run can be sent to with no tools at all: Claude Code, which
+# takes an empty tool list, and the chat requests, which never had any. Codex
+# and Antigravity keep a shell, MCP servers or a browser whatever they are
+# told for one run, so text the user did not write is never handed to them.
+TOOL_FREE = ("claude", "openrouter", "opencode", "requesty")
+
+
+def can_run_tool_free(conf):
+    return provider(conf) in TOOL_FREE
+
+
+def ask(prompt, conf, on_stage=None, should_stop=None, keep_session=True,
+        tool_free=False, system=None):
     """Run the prompt through the configured agent. Returns (answer, warning).
 
     `warning` is set when the answer arrived but something about the run should
     be seen anyway, a denied tool above all: the reply still reads like a normal
     one, and only the denial explains why it did not do what it was asked to.
+
+    `keep_session` False runs the prompt on its own: no conversation is resumed
+    and none is written back. A question about selected text uses that, so the
+    selection neither joins the spoken conversation nor lands in its file.
+    The CLIs still keep their own transcripts wherever they keep them.
+
+    `tool_free` is for a prompt carrying text the user did not write, so that
+    instructions planted in it have nothing to act with. Claude Code then runs
+    with an empty tool list, no MCP servers and a permission mode that Settings
+    cannot widen; a provider outside TOOL_FREE is refused outright.
+
+    `system` replaces the instruction from Settings for this one run, whose
+    default is written for an answer that gets pasted.
     """
     name = provider(conf)
+    if tool_free and name not in TOOL_FREE:
+        raise AssistantError(t(
+            "{name} cannot run without tools, so selected text is not sent to "
+            "it. Use Claude Code or a chat provider.", name=SERVICES[name]))
     if name in ("openrouter", "opencode", "requesty"):
-        return _ask_chat(name, SERVICES[name], prompt, conf, on_stage)
+        return _ask_chat(name, SERVICES[name], prompt, conf, on_stage,
+                         keep_session, system)
 
     binary = executable(name)
     if not shutil.which(binary):
@@ -271,6 +309,10 @@ def ask(prompt, conf, on_stage=None, should_stop=None):
         ))
 
     run = {"claude": _ask_claude, "codex": _ask_codex, "agy": _ask_agy}[name]
+    if not keep_session or tool_free or system:
+        extra = {"tool_free": True} if tool_free else {}
+        return run(prompt, conf, "", on_stage, should_stop, keep=False,
+                   system=system, **extra)
     session = read_session(name, conf["assistant_session_minutes"] * 60)
     try:
         return run(prompt, conf, session, on_stage, should_stop)
@@ -288,14 +330,25 @@ class _SessionGone(Exception):
 
 # --- Claude Code ----------------------------------------------------------
 
-def _ask_claude(prompt, conf, session, on_stage, should_stop):
+def _ask_claude(prompt, conf, session, on_stage, should_stop, keep=True,
+                tool_free=False, system=None):
+    # A prompt with selected text in it goes in on stdin, which `claude -p`
+    # reads when no prompt is given, so that it stays out of the process list.
     cmd = [
-        "claude", "-p", prompt,
+        "claude", "-p", *([] if tool_free else [prompt]),
         "--output-format", "stream-json", "--verbose",
         "--model", conf["assistant_model"],
-        "--permission-mode", conf["assistant_permission_mode"],
-        "--append-system-prompt", conf.assistant_prompt(),
+        # dontAsk rather than the configured mode, which may be
+        # bypassPermissions: with no tools there is nothing to permit anyway.
+        "--permission-mode",
+        "dontAsk" if tool_free else conf["assistant_permission_mode"],
+        "--append-system-prompt", system or conf.assistant_prompt(),
     ]
+    if tool_free:
+        # An empty list removes every built-in tool; --strict-mcp-config with
+        # no --mcp-config leaves no MCP server either. Nothing is saved to
+        # Claude's own session files.
+        cmd += ["--tools", "", "--strict-mcp-config", "--no-session-persistence"]
     effort = CLAUDE_EFFORT.get(conf["assistant_reasoning"], "")
     if effort:
         cmd += ["--effort", effort]
@@ -321,8 +374,12 @@ def _ask_claude(prompt, conf, session, on_stage, should_stop):
                 found["answer"] = answer
             found["warning"] = _denial_warning(event)
 
-    code, stderr = _stream(cmd, conf, on_event, should_stop)
-    return _conclude(found, code, stderr, session, "claude")
+    if tool_free:
+        code, stderr = _stream(cmd, conf, on_event, should_stop,
+                               stdin_text=prompt)
+    else:
+        code, stderr = _stream(cmd, conf, on_event, should_stop)
+    return _conclude(found, code, stderr, session, "claude", keep)
 
 
 def _claude_label(block):
@@ -349,10 +406,11 @@ def _denial_warning(event):
 
 # --- Codex ----------------------------------------------------------------
 
-def _ask_codex(prompt, conf, session, on_stage, should_stop):
+def _ask_codex(prompt, conf, session, on_stage, should_stop, keep=True,
+               system=None):
     # Codex takes no system prompt of its own, so the instruction rides along in
     # front of the command, kept apart from it so the two are not read as one.
-    body = f"{conf.assistant_prompt()}\n\n---\n\n{prompt}"
+    body = f"{system or conf.assistant_prompt()}\n\n---\n\n{prompt}"
     settings = [
         "-c", f'sandbox_mode="{conf["assistant_codex_sandbox"]}"',
         "-c", 'approval_policy="never"',   # there is nobody here to approve
@@ -390,7 +448,7 @@ def _ask_codex(prompt, conf, session, on_stage, should_stop):
                                 else str(error)) or t("Codex ended with an error.")
 
     code, stderr = _stream(cmd, conf, on_event, should_stop)
-    return _conclude(found, code, stderr, session, "codex")
+    return _conclude(found, code, stderr, session, "codex", keep)
 
 
 def _codex_label(item):
@@ -431,11 +489,12 @@ def codex_models():
 
 # --- Antigravity ----------------------------------------------------------
 
-def _ask_agy(prompt, conf, session, on_stage, should_stop):
+def _ask_agy(prompt, conf, session, on_stage, should_stop, keep=True,
+             system=None):
     # Antigravity takes no system prompt of its own either, so the instruction
     # rides in front of the command, kept apart from it so the two are not read
     # as one.
-    body = f"{conf.assistant_prompt()}\n\n---\n\n{prompt}"
+    body = f"{system or conf.assistant_prompt()}\n\n---\n\n{prompt}"
     cmd = [
         "agy", "-p", body,
         "--output-format", "stream-json",
@@ -479,7 +538,7 @@ def _ask_agy(prompt, conf, session, on_stage, should_stop):
                                                service="Antigravity")
 
     code, stderr = _stream(cmd, conf, on_event, should_stop)
-    return _conclude(found, code, stderr, session, "agy")
+    return _conclude(found, code, stderr, session, "agy", keep)
 
 
 def _agy_label(step):
@@ -522,7 +581,7 @@ def agy_models():
 
 # --- OpenRouter, OpenCode Go and Requesty ---------------------------------
 
-def _ask_chat(name, service, prompt, conf, on_stage):
+def _ask_chat(name, service, prompt, conf, on_stage, keep=True, system=None):
     """A plain question and answer, over a chat provider's key.
 
     No tools, no files, no calendar. It is the fallback for a machine with
@@ -532,7 +591,8 @@ def _ask_chat(name, service, prompt, conf, on_stage):
     """
     if on_stage:
         on_stage(t("Thinking…"))
-    history = read_messages(name, conf["assistant_session_minutes"] * 60)
+    history = (read_messages(name, conf["assistant_session_minutes"] * 60)
+               if keep else [])
     messages = history + [{"role": "user", "content": prompt}]
     # Each of them keeps its model, address and key under its own name.
     model = conf[f"assistant_{name}_model"]
@@ -540,24 +600,26 @@ def _ask_chat(name, service, prompt, conf, on_stage):
     key = conf.api_key(f"{name}_api_key")
     try:
         answer = api.chat(
-            messages, key, model, conf.assistant_prompt(),
+            messages, key, model, system or conf.assistant_prompt(),
             reasoning=conf["assistant_reasoning"], base_url=base_url,
             timeout=conf["assistant_timeout"], provider=name, service=service,
         )
     except api.ApiError as exc:
         raise AssistantError(str(exc)) from exc
-    write_session(name,
-                  messages=messages + [{"role": "assistant", "content": answer}])
+    if keep:
+        write_session(name, messages=messages
+                      + [{"role": "assistant", "content": answer}])
     return answer, ""
 
 
 # --- running a CLI --------------------------------------------------------
 
-def _stream(cmd, conf, on_event, should_stop):
+def _stream(cmd, conf, on_event, should_stop, stdin_text=None):
     """Run cmd, hand every JSON line it prints to on_event.
 
     Returns (exit code, stderr). Raises Cancelled when the stop was asked for,
-    and AssistantError when the clock ran out.
+    and AssistantError when the clock ran out. `stdin_text`, when given, is
+    written to the process's stdin, which is otherwise closed.
     """
     # stderr lands in a file rather than a pipe: nobody drains it while stdout
     # is being read, and a CLI chatty enough on stderr would fill the pipe's
@@ -569,7 +631,8 @@ def _stream(cmd, conf, on_event, should_stop):
     grouped = {"start_new_session": True} if os.name == "posix" else {}
     try:
         proc = subprocess.Popen(
-            cmd, cwd=working_dir(conf), stdin=subprocess.DEVNULL,
+            cmd, cwd=working_dir(conf),
+            stdin=subprocess.DEVNULL if stdin_text is None else subprocess.PIPE,
             stdout=subprocess.PIPE, stderr=stderr_file,
             text=True, encoding="utf-8", errors="replace", bufsize=1,
             creationflags=paths.NO_WINDOW,
@@ -591,6 +654,11 @@ def _stream(cmd, conf, on_event, should_stop):
         daemon=True,
     )
     watchdog.start()
+    if stdin_text is not None:
+        # From the side, so a pipe smaller than the prompt cannot stall the
+        # read below while the CLI waits for the rest of its input.
+        threading.Thread(target=_feed, args=(proc.stdin, stdin_text),
+                         daemon=True).start()
 
     try:
         for line in proc.stdout:
@@ -627,7 +695,7 @@ _API_TROUBLE = re.compile(
     r"\b(401|403|429|5\d\d)\b")
 
 
-def _conclude(found, code, stderr, session, name):
+def _conclude(found, code, stderr, session, name, keep=True):
     """Turn what the stream said into an answer, or into the reason there is none."""
     service = SERVICES.get(name, name)
     if code != 0 and not found["answer"]:
@@ -647,9 +715,21 @@ def _conclude(found, code, stderr, session, name):
         raise AssistantError(found["failure"])
     if not found["answer"]:
         raise AssistantError(t("{service} answered with nothing.", service=service))
-    if found["session"]:
+    if found["session"] and keep:
         write_session(name, found["session"])
     return found["answer"], found["warning"]
+
+
+def _feed(pipe, text):
+    try:
+        pipe.write(text)
+    except (OSError, ValueError):
+        pass   # the process is gone; the stream says why
+    finally:
+        try:
+            pipe.close()
+        except (OSError, ValueError):
+            pass
 
 
 def _watch(proc, deadline, should_stop, ended):
