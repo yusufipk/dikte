@@ -1366,6 +1366,25 @@ class EveryRecordingProtectsTheFront(DikteTest):
         self.assertIn("Google AI Studio", message)
         self.assertIn("timestamps", message)
 
+    def test_a_refused_meeting_leaves_a_running_dictation_alone(self):
+        """The meeting shortcut pressed mid-dictation must not end it."""
+        dikte = self.app(meeting_state=self.dikte.M_IDLE)
+        dikte.conf["transcribe_provider"] = "gemini"
+        dikte._on_meeting_error = mock.Mock(
+            side_effect=lambda message: self.dikte.Dikte._on_meeting_error(
+                dikte, message))
+        for name in ("_on_error", "_report", "_set_state"):
+            setattr(dikte, name, getattr(self.dikte.Dikte, name).__get__(dikte))
+        dikte._transcripts_pending = False
+        dikte.state = self.dikte.RECORDING
+        self.dikte.Dikte.start_meeting(dikte)
+        self.assertEqual(dikte.state, self.dikte.RECORDING)
+        settled = [call.args[0] for call in dikte._settle.call_args_list]
+        self.assertNotIn(self.dikte.DICTATION, settled)
+        self.assertIn(self.dikte.MEETING, settled)
+        dikte.overlay.show_error.assert_not_called()
+        dikte.tray.showMessage.assert_called_once()
+
 class Overlay(DikteTest):
     def overlay(self, **kwargs):
         widget = overlay_module.Overlay(**kwargs)

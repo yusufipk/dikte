@@ -1403,7 +1403,14 @@ class Dikte:
             self.overlay.dismiss()
         self._set_meeting_state(M_IDLE)
         self._settle(MEETING, {"ok": False, "error": message})
-        self._on_error(message)
+        self.cues.play("failed")
+        # Not _on_error: that one ends a dictation, and the meeting shortcut
+        # can be pressed in the middle of one, whose recorder keeps running.
+        if self.state == IDLE:
+            self._report(message, self.overlay)
+        else:
+            self.tray.showMessage("Dikte", message,
+                                  QSystemTrayIcon.MessageIcon.Warning, 8000)
 
     def _on_meeting_warning(self, message):
         """It was recorded and it is being written up, but read this first."""
