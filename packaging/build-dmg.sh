@@ -85,14 +85,20 @@ ln -s /Applications "$stage/Applications"
 # On GitHub's Intel runners hdiutil now and then fails with a diskimages-helper
 # left running behind it, and the same build passes on a second try.
 # Not -quiet, so a failure that keeps coming back says why in the log.
+# A volume a failed attempt left attached is let go before the next one.
 for attempt in 1 2 3; do
   if hdiutil create -volname "Dikte $VERSION" -srcfolder "$stage" \
     -ov -format UDZO "$OUT/Dikte-$VERSION-$ARCH.dmg"; then
     break
+  else
+    status=$?
   fi
+  echo "hdiutil create failed with $status, attempt $attempt of 3" >&2
   if [ "$attempt" = 3 ]; then
-    exit 1
+    exit "$status"
   fi
+  hdiutil info >&2 || true
+  hdiutil detach "/Volumes/Dikte $VERSION" -force >/dev/null 2>&1 || true
   sleep $((attempt * 15))
 done
 
