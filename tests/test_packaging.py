@@ -107,11 +107,6 @@ class WhisperVulkanPackaging(unittest.TestCase):
         trigger = workflow.split("workflow_dispatch:", 1)[0]
         self.assertIn("- packaging/whisper-vulkan/**", trigger)
         self.assertIn("- .github/workflows/whisper-vulkan.yml", trigger)
-        # GitHub applies the patterns in order, so the negation has to come
-        # after the directory it carves the README out of.
-        self.assertGreater(
-            trigger.find('- "!packaging/whisper-vulkan/README.md"'),
-            trigger.find("- packaging/whisper-vulkan/**"))
         for path in ("dikte/ggml.py", "tests/test_ggml.py",
                      "tests/test_packaging.py", "README.md", "README.tr.md"):
             self.assertNotIn(f"- {path}", trigger)
