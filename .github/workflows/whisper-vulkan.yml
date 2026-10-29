@@ -69,8 +69,7 @@ env:
   WHISPER_COMMIT: ${{ inputs.whisper_commit || '927cfce34f31707e17f2bff35c349632fb9e2c3a' }}
   REVIEWED_WHISPER_VERSION: "1.9.4"
   REVIEWED_WHISPER_SHA256: 381ec8f07071d616e243b94d275e29763d6d2b4c7204017c166caf389e1f2349
-  # No Windows archive has been reviewed yet. Fill both in, together with
-  # MANAGED_WHISPER_WINDOWS_SHA256 in dikte/ggml.py, once one has.
+  # Changed together with MANAGED_WHISPER_WINDOWS_SHA256 in dikte/ggml.py.
   REVIEWED_WHISPER_WINDOWS_VERSION: "1.9.4"
   REVIEWED_WHISPER_WINDOWS_SHA256: 69e5aa03cf88afb40e19a5d75e9dad2e3ee1cdcaa9c3ee662fd7d1115b07fae8
 
