@@ -1,14 +1,16 @@
 name: whisper.cpp Vulkan bundle
 
 # Only what the bundle is built from. Compiling the Vulkan shaders takes
-# tens of minutes, and a README typo is not worth one. The dependency bundle
-# can be reviewed and published before the installer switches to it; both
-# contracts are covered by tests/test_packaging.py.
+# tens of minutes, and a README typo is not worth one. That goes for the
+# bundle's own README too, which the negated path after the others leaves out.
+# The dependency bundle can be reviewed and published before the installer
+# switches to it; both contracts are covered by tests/test_packaging.py.
 on:
   pull_request:
     paths:
       - packaging/whisper-vulkan/**
       - .github/workflows/whisper-vulkan.yml
+      - "!packaging/whisper-vulkan/README.md"
   workflow_dispatch:
     inputs:
       whisper_version:
@@ -69,10 +71,9 @@ env:
   WHISPER_COMMIT: ${{ inputs.whisper_commit || '927cfce34f31707e17f2bff35c349632fb9e2c3a' }}
   REVIEWED_WHISPER_VERSION: "1.9.4"
   REVIEWED_WHISPER_SHA256: 381ec8f07071d616e243b94d275e29763d6d2b4c7204017c166caf389e1f2349
-  # No Windows archive has been reviewed yet. Fill both in, together with
-  # MANAGED_WHISPER_WINDOWS_SHA256 in dikte/ggml.py, once one has.
-  REVIEWED_WHISPER_WINDOWS_VERSION: ""
-  REVIEWED_WHISPER_WINDOWS_SHA256: ""
+  # Changed together with MANAGED_WHISPER_WINDOWS_SHA256 in dikte/ggml.py.
+  REVIEWED_WHISPER_WINDOWS_VERSION: "1.9.4"
+  REVIEWED_WHISPER_WINDOWS_SHA256: 69e5aa03cf88afb40e19a5d75e9dad2e3ee1cdcaa9c3ee662fd7d1115b07fae8
 
 jobs:
   build:

@@ -2003,6 +2003,9 @@ class InstallOnWindows(Local):
         # win32 from another system, Python 3.12's Windows branch of which()
         # reaches for the nt module that is not there.
         self.enterContext(mock.patch("shutil.which", return_value=None))
+        # Upstream's own builds are what is chosen here. A Vulkan loader on
+        # the machine running the tests would put the reviewed bundle first.
+        self.patch_attr(ggml, "_has_vulkan", lambda: False)
         self.archive = zipball({
             "Release/whisper-server.exe": b"MZ not really a program",
             "Release/whisper.dll": b"not really a library",
@@ -2066,12 +2069,15 @@ class ManagedWhisperOnWindows(Local):
         return mock.patch.object(ggml, "MANAGED_WHISPER_WINDOWS_SHA256",
                                  self.reviewed)
 
+    def unreviewed_digest(self):
+        return mock.patch.object(ggml, "MANAGED_WHISPER_WINDOWS_SHA256",
+                                 ggml.UNREVIEWED_DIGEST)
+
     def test_the_placeholder_digest_keeps_windows_on_upstream_as_before(self):
-        """Nobody has reviewed a Windows archive yet. Until somebody does,
-        Windows behaves exactly as before: GitHub is not asked for the bundle,
-        the upstream BLAS build lands, and nothing calls it a fallback."""
-        self.assertEqual(ggml.UNREVIEWED_DIGEST,
-                         ggml.MANAGED_WHISPER_WINDOWS_SHA256)
+        """With no reviewed Windows archive, Windows behaves as it did before
+        the bundle existed: GitHub is not asked for it, the upstream BLAS
+        build lands, and nothing calls it a fallback."""
+        self.enterContext(self.unreviewed_digest())
         self.assertFalse(ggml._reviewed(ggml.UNREVIEWED_DIGEST))
         self.assertFalse(ggml._managed_whisper(ggml.WHISPER))
         upstream = self.release("v1.9.5", "whisper-blas-bin-x64.zip")
@@ -2084,6 +2090,7 @@ class ManagedWhisperOnWindows(Local):
         self.assertFalse(ggml.vulkan_missing(ggml.WHISPER))
 
     def test_the_placeholder_digest_writes_no_backend_to_the_record(self):
+        self.enterContext(self.unreviewed_digest())
         upstream = self.release("v1.9.5", "whisper-blas-bin-x64.zip")
         with serving(upstream, self.archive):
             ggml.install_program(ggml.WHISPER)

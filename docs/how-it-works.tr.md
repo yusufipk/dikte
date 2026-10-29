@@ -26,8 +26,9 @@ olmasını ister.
   makinenin belleğine ve ekran kartına uyan satır işaretlenir. Derleme
   destekliyorsa ekran kartına CUDA, ROCm ya da Vulkan
   üzerinden ulaşılır. Anahtar yok, hesap yok, makineden çıkan bir şey yok.
-  x86_64 Linux'ta aynı düğme, whisper-server'ın Dikte'nin kendi yayınladığı
-  Vulkan derlemesini indirir; upstream'in Linux arşivi yalnızca işlemci için.
+  x86_64 Linux'ta ve ekran kartı sürücüsü kurulu Windows'ta aynı düğme,
+  whisper-server'ın Dikte'nin kendi yayınladığı Vulkan derlemesini indirir;
+  upstream ikisi için de Vulkan derlemesi yayınlamıyor.
 - **Sessizlik API'ye gitmez.** Sessize yakın bir ses verildiğinde model boş dize
   döndürmez, bir cümle uydurur ("Altyazı M.K.", "Thanks for watching"). *O
   kaydın kendi* gürültü tabanının 10 dB üstüne en az 0,3 saniye çıkan bir şey
