@@ -1847,7 +1847,9 @@ ggml_vulkan: 0 = Intel UHD Graphics (Mesa Intel) | uma: 1\nggml_vulkan: 0 = NVID
                 mock.patch.object(
                     ggml.subprocess, "run", return_value=completed
                 ) as probe:
-            ggml.managed_vulkan_devices(str(self.binary))
+            # A listed card, or the probe is skipped on a runner without one.
+            ggml.managed_vulkan_devices(str(self.binary), (hardware.GraphicsDevice(
+                "Intel Arc A770", 16 << 30, False, "vulkan:intel"),))
         self.assertLessEqual(probe.call_args.kwargs["timeout"], 2)
 
     def test_an_external_ggml_vulkan_filter_disables_explicit_choices(self):
