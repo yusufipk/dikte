@@ -1,14 +1,16 @@
 name: whisper.cpp Vulkan bundle
 
 # Only what the bundle is built from. Compiling the Vulkan shaders takes
-# tens of minutes, and a README typo is not worth one. The dependency bundle
-# can be reviewed and published before the installer switches to it; both
-# contracts are covered by tests/test_packaging.py.
+# tens of minutes, and a README typo is not worth one. That goes for the
+# bundle's own README too, which the negated path after the others leaves out.
+# The dependency bundle can be reviewed and published before the installer
+# switches to it; both contracts are covered by tests/test_packaging.py.
 on:
   pull_request:
     paths:
       - packaging/whisper-vulkan/**
       - .github/workflows/whisper-vulkan.yml
+      - "!packaging/whisper-vulkan/README.md"
   workflow_dispatch:
     inputs:
       whisper_version:
