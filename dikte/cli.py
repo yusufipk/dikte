@@ -46,7 +46,7 @@ NOT_RUNNING = 3
 # Verbs that start the application when none is running, which is what a
 # shortcut registered with the desktop has always relied on: press the key on a
 # fresh login and Dikte comes up recording.
-GUI_VERBS = {"", "home", "settings", "toggle", "ask", "meeting"}
+GUI_VERBS = {"", "home", "settings", "toggle", "ask", "meeting", "assist"}
 
 # Asking a process that is not there to stop, cancel or quit is not a failure;
 # it is already in the state that was asked for.
@@ -1225,6 +1225,9 @@ def build_parser():
 
     for name in ("ask-cancel", "ask-reset"):
         leaf(subs, name).set_defaults(func=cmd_plain)
+    # The key the desktop binds; it does nothing unless switched on in Settings.
+    leaf(subs, "assist", "ask the agent about the selected text"
+         ).set_defaults(func=cmd_plain)
 
     # --- a file -----------------------------------------------------------
     transcribe = leaf(subs, "transcribe", "transcribe an audio or video file")

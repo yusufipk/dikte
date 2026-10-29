@@ -609,6 +609,12 @@ DEFAULTS = {
     "assistant_paste": True,        # paste the answer, not just copy it
     "assistant_session_minutes": 30,  # 0 -> every command starts fresh
     "assistant_timeout": 240,
+
+    # --- asking about selected text -------------------------------------------
+    # Off until switched on: it reads the selection, and on macOS and Windows
+    # that means pressing the copy shortcut in somebody else's window.
+    "selection_assist": False,
+    "selection_assist_shortcut": "",   # empty -> no key
 }
 
 # Saving the settings window used to write the whole default prompt into the
