@@ -82,7 +82,18 @@ stage="$BUILD/stage"
 mkdir -p "$stage"
 cp -a "$APP" "$stage/"
 ln -s /Applications "$stage/Applications"
-hdiutil create -volname "Dikte $VERSION" -srcfolder "$stage" \
-  -ov -format UDZO -quiet "$OUT/Dikte-$VERSION-$ARCH.dmg"
+# On GitHub's Intel runners hdiutil now and then fails with a diskimages-helper
+# left running behind it, and the same build passes on a second try.
+# Not -quiet, so a failure that keeps coming back says why in the log.
+for attempt in 1 2 3; do
+  if hdiutil create -volname "Dikte $VERSION" -srcfolder "$stage" \
+    -ov -format UDZO "$OUT/Dikte-$VERSION-$ARCH.dmg"; then
+    break
+  fi
+  if [ "$attempt" = 3 ]; then
+    exit 1
+  fi
+  sleep $((attempt * 15))
+done
 
 echo "dist/Dikte-$VERSION-$ARCH.dmg"
