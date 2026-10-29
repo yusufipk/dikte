@@ -25,9 +25,9 @@ running.
   grouped by model rather than by file size, and the row this machine's memory
   and graphics can take is marked. The graphics card is
   reached through CUDA, ROCm or Vulkan where the build allows. No key, no
-  account, nothing leaving the machine. On x86_64 Linux the same button fetches
-  a Vulkan build of whisper-server that Dikte publishes itself, because
-  upstream's Linux archive is processor-only.
+  account, nothing leaving the machine. On x86_64 Linux, and on Windows with a
+  graphics driver, the same button fetches a Vulkan build of whisper-server
+  that Dikte publishes itself, because upstream publishes none for either.
 - **Silence never reaches the API.** Handed near-silence, a transcription model
   invents a sentence instead of returning nothing ("Thanks for watching", or in
   Turkish "Altyazı M.K."). A recording is dropped when nothing rose 10 dB above
