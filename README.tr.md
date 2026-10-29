@@ -1,13 +1,8 @@
 # Dikte
 
-`Ctrl+Space`'e bas, konuş, tekrar bas. Ses varsayılan olarak bu makinede yazıya
-çevrilir, bir model transkripti temizler (ıı'lar, tekrarlar, eksik noktalama),
-sonuç panoya kopyalanır ve o an yazdığın pencereye yapıştırılır.
-
-KDE Plasma 6 / Wayland için yazıldı; GNOME X11'de, macOS'ta,
-[Windows](README.windows.md)'ta ve klavyeyi okumasına izin veren diğer Linux
-masaüstlerinde de çalışır. Sistem paketleri dışında bağımlılığı yok: sadece
-Python standart kütüphanesi (3.11 veya üstü) ve PyQt6.
+`Ctrl+Space`'e bas, konuş, tekrar bas. Söylediğin yazıya çevrilir, temizlenir
+ve o an yazdığın pencereye yapıştırılır. Linux'ta, macOS'ta ve
+[Windows](README.windows.md)'ta çalışır, varsayılan olarak bu makinede.
 
 *[English README](README.md)*
 
@@ -27,109 +22,55 @@ Python standart kütüphanesi (3.11 veya üstü) ve PyQt6.
 | <img src="docs/settings-agent.webp" width="410" alt="Ajan"> | <img src="docs/settings-meeting.webp" width="410" alt="Toplantı"> |
 | <img src="docs/settings-audio-file.webp" width="410" alt="Ses dosyası"> | <img src="docs/settings-shortcuts.webp" width="410" alt="Kısayollar"> |
 
+## Özellikler
+
+- **Sesi yazıya çevirme kendi bilgisayarında**, varsayılan olarak; modeli
+  ayarlar penceresi senin yerine indirir. Temizleme de orada çalışabilir.
+- **İstersen bulutta**, kendi anahtarınla OpenAI, Groq, OpenRouter, Google AI
+  Studio ve diğerleriyle. Temizleme, başkasını seçene kadar OpenRouter'ı kullanır.
+- **Temiz sonuç.** Dolgu sözcükleri, yarıda kalan cümleler, eksik noktalama ve
+  modelin yanlış duyduğu isimler düzeltilir:
+
+  ```
+  ham    ıı bugün şey kuber netis üzerinde çalışan servisleri güncelledim
+         yani sonra grafanada bir panel açtım hani ve pay kut ile arayüzü
+         şey bitirdim işte
+
+  sonuç  Bugün Kubernetes üzerinde çalışan servisleri güncelledim. Sonra
+         Grafana'da bir panel açtım ve PyQt ile arayüzü bitirdim.
+  ```
+- **Yazım profilleri.** Her program için ayrı üslup, çeviri ve kullandığın
+  isimlerin bir sözlüğü; istersen düzelttikçe öğrenir.
+- **Sesli komut.** Claude Code'a, Codex'e ya da Antigravity'ye bir iş söyle,
+  cevabı yapıştırılsın; ya da seçtiğin metin hakkında sor.
+- **Toplantılar.** Mikrofonun ve karşı taraf birlikte kaydedilir, yazıya
+  çevrilir ve tutanağa dönüşür. Windows'ta henüz yok.
+- **Ses ve video dosyaları** metne ya da `.srt` altyazıya çevrilir.
+- **Geçmiş** bütün diktelerini tutar, pencerenin yaptığı her şeyin bir de
+  `dikte` komutu var.
+- Türkçe ve İngilizce arayüz.
+
 ## Kurulum
 
-[Sürümler sayfasında](../../releases) bir AppImage, her Mac mimarisi için
-birer disk imajı, bir de Windows kurulumu var. İlk ikisi ilk çalıştıklarında
-kendi menü girdisini, oturum açılışını ve `dikte` komutunu yazar, makinede
-zaten duran bir kuruluma dokunmazlar; `dikte integrate --remove` yazdıklarını
-geri alır. AppImage yine de aşağıdaki sistem paketlerini ister: ses sunucusu,
-pano ve klavye onlardan gelir. Disk imajı bir Apple sertifikasıyla imzalı
-değil, bu yüzden ilk açılış reddedilir, Sistem Ayarları → Gizlilik ve Güvenlik
-altından **Yine de Aç** demek gerekir; macOS her güncellemeden sonra mikrofonu
-ve Erişilebilirliği yeniden sorar, checkout'tan kurmak bundan kurtarır.
-Windows kurulumu yalnızca kendi hesabına kurar ve yanında bir ffmpeg taşır.
+[Sürümler sayfasından](../../releases) indir: Linux için AppImage, her Mac için
+bir disk imajı, Windows için kurulum. AppImage yine de ses, pano ve yapıştırma
+için dağıtımının paketlerini ister, liste [docs/install.tr.md](docs/install.tr.md)'de.
+Mac'te ilk açılış, Sistem Ayarları → Gizlilik ve Güvenlik altından
+**Yine de Aç** diyene kadar reddedilir. Mac'te kısayol `Ctrl+Option+Space`.
+
+Arch'ta kaynaktan kurmak için:
 
 ```sh
 sudo pacman -S --needed pipewire-audio wl-clipboard ydotool ffmpeg python-pyqt6
-systemctl --user enable --now ydotool     # otomatik yapıştırma için
-
-./install.sh                 # ya da:  ./install.sh "Meta+Space" "Meta+Shift+Space"
-dikte                        # ilk açılışta ayarlar penceresi gelir
+systemctl --user enable --now ydotool
+./install.sh
+dikte
 ```
 
-Fedora'da paket adları farklı, Fedora'nın kendi depolarındaki `ffmpeg-free`
-yetiyor çünkü Dikte video dosyasının yalnızca ses izini alıyor, `ydotool` da
-bir adım fazla istiyor: sistem servisi olarak geliyor, soketi de root'a ait
-kalıp oturumun erişemediği yerde durduğu için servis çalışırken bile otomatik
-yapıştırma tutmuyor. Soketi istemcinin zaten baktığı yola al ve sahipliğini
-devret:
-
-```sh
-sudo dnf install pipewire-utils wl-clipboard ydotool ffmpeg-free python3-pyqt6
-sudo mkdir -p /etc/systemd/system/ydotool.service.d
-printf '[Service]\nExecStart=\nExecStart=/usr/bin/ydotoold --socket-path=%s/.ydotool_socket --socket-own=%s:%s\n' \
-  "$XDG_RUNTIME_DIR" "$(id -u)" "$(id -g)" \
-  | sudo tee /etc/systemd/system/ydotool.service.d/override.conf >/dev/null
-sudo systemctl daemon-reload
-sudo systemctl enable --now ydotool
-```
-
-Ubuntu/GNOME X11 için kayıt PulseAudio üzerinden, pano ve yapıştırma ise X11
-araçlarıyla çalışır:
-
-```sh
-sudo apt install pulseaudio-utils xclip xdotool ffmpeg
-```
-
-macOS'ta da aynı `./install.sh` çalışır, işi `scripts/install-mac.sh`'a devreder;
-`~/Applications` içine bir `Dikte.app`, `dikte` komutunu ve bir LaunchAgent
-kurar:
-
-```sh
-brew install pyqt ffmpeg   # pyqt Apple'ın 3.9'undan yeni bir Python'ı da getirir
-
-./install.sh               # ya da:  ./install.sh "Ctrl+Option+Space" "Ctrl+Option+D"
-open -a Dikte
-```
-
-macOS **Mikrofon** ve **Erişilebilirlik** izinlerini uygulama paketinin kimliğine
-yazıyor, ikisini de ilk gerektiğinde soruyor. Varsayılan kısayol orada
-`Ctrl+Option+Space`, çünkü `Ctrl+Space` giriş kaynağını değiştirmeye ayrılmış; ve
-hiçbir şey için oturumu kapatman gerekmez, kombinasyonu Dikte çalışırken kendisi
-tutar. PyQt6 pip'ten değil brew'dan geliyor, Homebrew'un Python'u içine
-kurulmayı reddediyor; sanal ortam kullanacaksan
-`DIKTE_PYTHON=…/venv/bin/python ./install.sh`.
-
-Yerel transkripsiyon için whisper.cpp'nin sunucusu gerekiyor, onu
-`brew install whisper.cpp` kuruyor ve Dikte Finder'dan açılsa bile buluyor.
-Toplantı için BlackHole veya Loopback gerekiyor
-(`brew install blackhole-2ch`); dikte için gerekmiyor.
-
-Windows da aynı şekilde çalışıyor, Dikte açıkken kombinasyonu sistemin kendi
-kısayol servisi üzerinden tutuyor. Sürümler sayfasındaki kurulum kaydın
-istediği ffmpeg'i de taşıyor ve yönetici istemiyor; checkout'tan ise `winget
-install Gyan.FFmpeg`, `pip install PyQt6`, sonra `python -m dikte`, Başlat
-Menüsü girdisi ve `dikte` komutu için de isteğe bağlı `install.ps1`. Orada
-toplantı kaydı henüz yok, ayrıntılar [Windows README](README.windows.md)'sinde.
-
-`install.sh` `dikte` komutunu, menü girdisini, oturum açılışında otomatik
-başlatmayı ve iki global kısayolu kurar; tuşları iki argümanı, argüman
-verilmezse ayarlarında duranlar. `./scripts/update.sh` son sürümü çeker ve
-bunları yerine koyar; `./scripts/uninstall.sh` hepsini geri alır, `--purge`
-demedikçe ayarlarına ve diktelerine dokunmaz. Dikte sürüm sayfasına günde bir
-kez bakar ve yeni sürüm çıkmışsa tepsi menüsüne bir satır koyar; o satır bir şey
-kurmaz, sayfayı açar. Genel sekmesi bu denetimi kapatır ya da anında çalıştırır.
-
-Sesi yazıya çevirme ve temizleme sağlayıcılarını Ayarlar'dan ayrı ayrı seç.
-Sesi yazıya çevirme varsayılan olarak yerelde, temizleme ise bulutta çalışır.
-Temizleme için yerel bir model veya kurulu bir CLI da kullanabilirsin.
-Temizlemeyi kapatırsan ham transkript yapıştırılır.
-
-| İşlem | Bulut sağlayıcıları | Diğer seçenekler |
-| --- | --- | --- |
-| Sesi yazıya çevirme | OpenAI, Groq, OpenRouter, Requesty, Google AI Studio, OpenAI uyumlu herhangi bir sunucu | Yerel model |
-| Temizleme | OpenRouter, Requesty, Google AI Studio, DeepSeek, OpenCode Go, OpenAI uyumlu herhangi bir sunucu | Yerel model; Claude Code, Codex veya Antigravity CLI |
-
-Modelleri ve temizleme için düşünme seviyesini Ayarlar'dan seçebilirsin. API
-anahtarlarını da buraya girebilirsin; boş bırakılan anahtarlar için
-`OPENAI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`, `REQUESTY_API_KEY`,
-`GEMINI_API_KEY`, `DEEPSEEK_API_KEY` ve `OPENCODE_API_KEY` kullanılır.
-
-Ayarlar ve uygulamaya girdiğin anahtarlar `config.json` dosyasına kaydedilir:
-Linux'ta `~/.config/dikte` (tanımlıysa `$XDG_CONFIG_HOME/dikte`), macOS'ta
-`~/Library/Application Support/Dikte`, Windows'ta `%APPDATA%\Dikte` altında.
-Linux ve macOS'ta dosya 600 izinleriyle yazılır.
+Fedora, Ubuntu, macOS ve Windows'un adımları
+[docs/install.tr.md](docs/install.tr.md)'de. KDE'de kısayollar bir sonraki
+oturum açışında çalışmaya başlar; o zamana kadar Ayarlar → Kısayollar'dan
+yerleşik dinleyiciyi aç, bunun için kullanıcının `input` grubunda olması gerekir.
 
 ## Kullanım
 
@@ -145,142 +86,8 @@ Linux ve macOS'ta dosya 600 izinleriyle yazılır.
 | Güncelleme sonrası yeniden yükle | Tepsi menüsü → *Yeniden başlat*, ya da `dikte restart` |
 | Çık | Tepsi menüsü → *Çık*, ya da `dikte quit` |
 
-Ekranın köşesindeki gösterge kırmızı kayıt noktasını, canlı ses dalgasını ve
-süreyi, ardından hangi aşamada olduğunu gösterir. Odak almaz. Önceki dikte daha
-temizlenirken `Ctrl+Space`'e tekrar basmak yenisini başlatır; o da sırası
-gelince, öndekinin ardından yazılıp yapıştırılır. Dikte ile ajana
-verilen komut yalnızca mikrofon için birbirini bekler, o da tek aygıt olduğu
-için; başka hiçbir şeyde beklemezler. Her birinin kendi göstergesi var, ikisi
-birden ekrandayken ikincisi birincinin üstüne yerleşir.
-
-Ayarlar penceresindeki her şeyin bir de komutu var; bir betik ya da bir ajan
-yazılımın tamamını çalıştırabilsin diye: `dikte record --seconds 8` söyleneni
-geri verir, `dikte transcribe konusma.mp4 --srt` altyazıyı yazar, ayarlar,
-geçmiş ve toplantılar da yanlarında durur. Hepsini `dikte --help` sayar, hepsi
-`--json` kabul eder, yalnızca mikrofona ihtiyacı olanlar uygulamanın açık
-olmasını ister.
-
-## Neler yapıyor
-
-- **Her şey varsayılan olarak bu makinede çalışır.** Sesi yazıya çevirme
-  whisper.cpp, temizleme llama.cpp üzerinde; ikisini de önceden kurman gerekmez:
-  ayarlar penceresi programı ve modeli indirir, sha256'sını doğrular,
-  checksum'suz yayınlanmış bir indirmeyi reddeder, sen dikte ettikçe sunucuyu
-  ayakta tutar ve on dakika kullanılmayan modelin belleğini geri verir. Model
-  listesi dosya boyutuna değil modele göre gruplanır ve bu
-  makinenin belleğine ve ekran kartına uyan satır işaretlenir. Derleme
-  destekliyorsa ekran kartına CUDA, ROCm ya da Vulkan
-  üzerinden ulaşılır. Anahtar yok, hesap yok, makineden çıkan bir şey yok.
-  x86_64 Linux'ta aynı düğme, whisper-server'ın Dikte'nin kendi yayınladığı
-  Vulkan derlemesini indirir; upstream'in Linux arşivi yalnızca işlemci için.
-- **Sessizlik API'ye gitmez.** Sessize yakın bir ses verildiğinde model boş dize
-  döndürmez, bir cümle uydurur ("Altyazı M.K.", "Thanks for watching"). *O
-  kaydın kendi* gürültü tabanının 10 dB üstüne en az 0,3 saniye çıkan bir şey
-  yoksa kayıt atılır; ne kadar yüksek olursa olsun sabit fanı ya da cızırtıyı
-  eleyen de budur. Kaydın gürültülü ucu -55 dBFS altındaysa da atılır. Gösterge
-  ölçtüğü seviyeyi yazar, eşiği ona bakarak ayarlarsın.
-- **Yanlış duyulan kelimeler düzeltilir.** Konuşma modelleri özel isimlerde sesçe
-  benzer bir şeye kayıyor; temizleme modelinden bunları bağlamdan onarması,
-  bağlam netleştirmiyorsa dokunmaması isteniyor. Sözlük sekmesine
-  yazdığın isimler transkripsiyon modeline ipucu, temizleme modeline sözlük
-  olarak gidiyor; "kuber netis"i tanımasını sağlayan da bu (programa göre üslup
-  seçen ya da çeviri yapan yazım profilleri de aynı sözlüğü kullanıyor):
-
-  ```
-  ham    ıı bugün şey kuber netis üzerinde çalışan servisleri güncelledim
-         yani sonra grafanada bir panel açtım hani ve pay kut ile arayüzü
-         şey bitirdim işte
-
-  sonuç  Bugün Kubernetes üzerinde çalışan servisleri güncelledim. Sonra
-         Grafana'da bir panel açtım ve PyQt ile arayüzü bitirdim.
-  ```
-- **Başarısız temizleme sessizce geçmez.** Dikte kaybolmasın diye ham transkript
-  yine yapıştırılır ama gösterge kehribar rengine döner ve nedenini söyler,
-  normal bir çalışma gibi görünmez.
-- **Dikte bunun yerine bir komut da olabilir.** Kendi kısayolu transkripti
-  yapıştırmak yerine Claude Code'a (`claude -p`) gönderir ve oradan döneni
-  yapıştırır: cevabı ya da ne yapıldığını söyleyen bir cümle. Kendi açacağın
-  oturumun aynısıdır, yani skill'lerin ve bağlı servislerin oradadır; "bunu
-  perşembe üçe takvime koy" cümlesini Claude olmayan bir pencerede söyleyebilir
-  olmanı sağlayan da budur. Codex (`codex exec`) ile Antigravity (`agy -p`) da
-  aynı şekilde çalışır; ama Antigravity'ye Dikte bir izin kipi ya da sandbox
-  veremiyor, sormadan ne yapabileceğini kendi allow-rule'ları belirliyor.
-  OpenRouter, OpenCode Go ya da Requesty ise hiçbiri kurulu olmayan bir
-  makinede düz soru
-  cevap için duruyor. Sağlayıcı, model, izinler ve çalışma dizini, seçili metin
-  hakkında soran isteğe bağlı kısayolla birlikte Ayarlar → Ajan sekmesinde; arka
-  arkaya verilen komutlar tek bir konuşmada kalır.
-- **Toplantılar** mikrofonla hoparlör çıkışından aynı anda kaydedilir; kimin ne
-  dediği tahmin edilmez, sesin hangi kanaldan geldiğiyle belli olur. İki taraf
-  ayrı ayrı yazıya çevrilip tek bir zaman damgalı transkriptte birleştirilir,
-  ardından Ayarlar → Toplantı sekmesinden seçtiğin ikinci bir model kendi
-  talimatıyla bunu tutanağa çevirir: kararlar, aksiyonlar, açık sorular. Sonuç
-  `~/.local/share/dikte/meetings` altına ve Ayarlar → Tutanaklar sekmesine
-  düşer. Yarıda kalan bir işlem ses kaydını saklar, yeniden denemede parası
-  ödenmiş transkriptin üstünden devam eder.
-- **Ses ve video dosyaları** Ayarlar → Ses dosyası sekmesinde aynı modellerden
-  geçer; istersen `[dd:ss]` zaman damgalarıyla, konuşmacı ayırabilen bir modelde
-  konuşmacı etiketleriyle, uzun dosyalar ffmpeg ile
-  parçalanarak, sonuç `.txt` ya da `.srt` altyazı olarak kaydedilerek; temizleme
-  burada kendi kurallarıyla, altyazı için yazılmış haliyle çalışır: satırlar
-  yerinde kalır, hiçbir şey kısaltılmaz.
-- **Geçmiş** Ayarlar → Geçmiş sekmesinde; boyut sınırı var, sağ tıklayıp
-  silebilirsin.
-- **Konuşma dili seçilmez, algılanır.** Varsayılan otomatiktir: bu makinedeki
-  whisper ne duyduğunu söyler, bulut sağlayıcılar söylenmeden de hangi dilde
-  konuşuluyorsa o dilde yazar; algılanan dil geçmişe düşer ve bir kaydın hangi
-  temizleme promptunu alacağını belirler (Türkçe mi, dile duyarsız olanı mı).
-  Sabit bir dil yine de bunun önüne geçer.
-- **Türkçe ve İngilizce arayüz**, varsayılan olarak sistem dilini izler.
-
-## Global kısayollar ve KDE'nin istediği oturum kapatma
-
-KWin `kglobalshortcutsrc` dosyasını yalnızca açılışta okur, yani `install.sh`'ın
-yazdığı kısayollar oturumu yeniden açana kadar tetiklenmez. O zamana kadar Ayarlar →
-Kısayollar → **yerleşik dinleyici** `/dev/input` üzerinden kombinasyonu kendisi
-yakalar. Tek farkı: tuşu yutmaz, yani `Ctrl+Space` odaktaki uygulamaya da iletilir
-(bazı editörlerde otomatik tamamlama açılabilir). Dinleyici kullanıcının `input`
-grubunda olmasını gerektirir: `sudo usermod -aG input $USER`. GNOME'da kısayol
-kurulduğu anda çalışır; hiç kayıt defteri tutmayan masaüstlerinde (i3, XFCE,
-sway ve çoğu diğeri) dinleyici mekanizmanın kendisidir: hiçbir şey kurulmaz,
-oturum kapatmak gerekmez, tuşları masaüstünün sahiplenmesini istersen Ayarlar →
-Kısayollar sekmesi bağlanacak komutu gösterir.
-
-## Dosyalar
-
-Aşağıdakilerin hepsi `dikte` paketinin içinde: `python3 -m dikte` bunu çalıştırır,
-içindeki `__main__.py` de her başlatıcının ve kısayolun adlandırdığı dosyadır.
-`scripts/` altında install-mac.sh, update.sh, uninstall.sh ve release.sh var;
-`packaging/` release.sh'ın attığı etiketin yayımladığı AppImage'i, disk imajını
-ve Windows kurulumunu derler; install.sh en üstte kalır, `tests/` içinde de her
-modülün bir dosyası.
-
-```
-app.py            giriş noktası, tepsi simgesi, durum makinesi
-cli.py            komut satırı: bütün fiiller ve verdikleri cevap
-ipc.py            yerel sokette bir istek, bir cevap
-audio.py          PCM kaydı: diktede pw-record, toplantıda ffmpeg
-meeting.py        kanal ayırma, konuşmacı etiketi, temizleme, tutanak
-assistant.py      dikteyi Claude Code, Codex, agy ya da sohbet modelinden geçirme
-api.py            transkript ve temizleme istekleri (yalnız stdlib)
-cleanup.py        transkripti kim temizler: bulutta bir model, burası, bir CLI
-ggml.py           whisper.cpp ve llama.cpp'yi indirip burada çalıştırma
-hub.py            GitHub ve Hugging Face'te bugün ne olduğu
-update.py         yeni sürüm çıkmış mı, çıkmışsa hangi sayfada
-worker.py         transkript → temizleme → pano → yapıştırma
-vad.py            kayıtta gerçekten konuşma var mı kararı
-filetranscribe.py dosyadan transkript: ffmpeg, parçalama, zaman damgaları
-overlay.py        köşedeki gösterge
-settings_ui.py    ayarlar penceresi
-hotkey.py         masaüstünün kısayol kaydı, evdev dinleyici, Mac'te Carbon
-paste.py          wl-clipboard ve ydotool sarmalayıcıları, pbcopy ve CoreGraphics
-trayicon.py       tepsi simgeleri, ikon teması olmayan yerler için çizilmiş
-integrate.py      indirilen bir yapının indiği masaüstüne yazdıkları
-i18n.py           metin tablosu
-```
-
-Gösterge XWayland üzerinden çizilir; Wayland'da bir pencereyi belirli bir köşeye
-yerleştirmenin yolu yok, `app.py` bu yüzden `QT_QPA_PLATFORM=xcb` ayarlar.
+Her parçanın nasıl çalıştığı ve kodunun nerede durduğu
+[docs/how-it-works.tr.md](docs/how-it-works.tr.md)'de.
 
 ## Lisans
 

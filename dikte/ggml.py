@@ -886,8 +886,8 @@ def install_program(program, tag="", on_progress=None, should_stop=None,
             raise LocalError(t(
                 "No macOS server download is available here. Install it with "
                 "`brew install whisper.cpp`, then reopen Settings. Dikte detects "
-                "Homebrew's whisper-server automatically. See the README for "
-                "custom builds."
+                "Homebrew's whisper-server automatically. A build of your own "
+                "goes in with `dikte config set local_binary <path>`."
             ))
         raise LocalError(t("{repo} {tag} has no build for this machine.",
                            repo=program.repo, tag=tag))

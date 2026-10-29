@@ -88,13 +88,13 @@ if [[ "${XDG_SESSION_TYPE:-}" != "x11" ]] && command -v ydotool >/dev/null; then
     ok "ydotoold is running (auto-paste ready)"
   elif systemctl is-active --quiet ydotool 2>/dev/null; then
     warn "ydotoold's socket is not yours to write to, so auto-paste will fail"
-    say  "Hand it over with the drop-in in the README's Fedora section."
+    say  "Hand it over with the drop-in in docs/install.md's Fedora section."
   elif alive; then
     warn "ydotoold is running, but it did not put its socket at $socket"
     say  "Point Dikte at the one it did make: export YDOTOOL_SOCKET=..."
   else
     warn "ydotoold is not running, auto-paste will not work"
-    say  "systemctl --user enable --now ydotool   (on Fedora: see the README)"
+    say  "systemctl --user enable --now ydotool   (on Fedora: see docs/install.md)"
   fi
 fi
 
