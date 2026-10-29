@@ -236,11 +236,12 @@ TR = {
         "Sistemde kurulu: whisper.cpp {version}\n{path}",
     "No macOS server download is available here. Install it with "
     "`brew install whisper.cpp`, then reopen Settings. Dikte detects "
-    "Homebrew's whisper-server automatically. See the README for custom builds.":
+    "Homebrew's whisper-server automatically. A build of your own goes in with "
+    "`dikte config set local_binary <path>`.":
         "Buradan indirilebilen bir macOS sunucusu yok. "
         "`brew install whisper.cpp` ile kur, ardından Ayarlar'ı yeniden aç. "
         "Dikte, Homebrew'un whisper-server programını otomatik bulur. "
-        "Özel derlemeler için README'ye bak.",
+        "Kendi derlemeni `dikte config set local_binary <yol>` ile verebilirsin.",
 
     # --- settings: tabs and general ------------------------------------
     "Dikte Settings": "Dikte Ayarları",
