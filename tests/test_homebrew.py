@@ -11,6 +11,25 @@ from unittest import mock
 from dikte import ggml
 
 
+def _can_symlink():
+    """Whether this account may create symlinks at all.
+
+    On Windows that takes a privilege a standard account does not hold unless
+    Developer Mode is on, while CI runners have it; the keg tests below build
+    real symlinks, so on such a machine they can only be skipped, not run.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        try:
+            pathlib.Path(directory, "probe").symlink_to("target")
+        except OSError:
+            return False
+    return True
+
+
+_SYMLINKS = _can_symlink()
+_NO_SYMLINKS = "creating symlinks needs a privilege this account does not hold"
+
+
 class HomebrewDiscovery(unittest.TestCase):
     @contextlib.contextmanager
     def machine(self, arch="arm64", platform="darwin", files=(), executable=True,
@@ -50,6 +69,7 @@ class HomebrewDiscovery(unittest.TestCase):
             with mock.patch.object(ggml, "_HOMEBREW_PREFIXES", (prefix,)):
                 yield link, target, prefix
 
+    @unittest.skipUnless(_SYMLINKS, _NO_SYMLINKS)
     def test_real_opt_symlinks_report_plain_and_revisioned_versions(self):
         for expected in ("1.9.4", "1.9.4_1"):
             with self.subTest(version=expected), \
@@ -78,6 +98,7 @@ class HomebrewDiscovery(unittest.TestCase):
                         )
                 self.assertEqual(ggml.homebrew_version(ggml.LLAMA, paths[0]), "")
 
+    @unittest.skipUnless(_SYMLINKS, _NO_SYMLINKS)
     def test_non_executable_keg_target_has_no_formula_version(self):
         with self.keg(executable=False) as (link, _, _):
             # Windows does not derive X_OK from POSIX mode bits. Pin the
@@ -85,6 +106,7 @@ class HomebrewDiscovery(unittest.TestCase):
             with mock.patch.object(ggml.os, "access", return_value=False):
                 self.assertEqual(ggml.homebrew_version(ggml.WHISPER, link), "")
 
+    @unittest.skipUnless(_SYMLINKS, _NO_SYMLINKS)
     def test_broken_and_looping_opt_symlinks_have_no_formula_version(self):
         with tempfile.TemporaryDirectory() as directory:
             prefix = pathlib.Path(directory, "homebrew")
