@@ -938,6 +938,38 @@ class WinListener(DikteTest):
                               | hotkey.WIN_MOD_NOREPEAT, 0x20)})
 
 
+    def test_duplicate_registration_is_reported(self):
+        # Simulate Windows behavior: first RegisterHotKey succeeds, second fails.
+        call_counter = {'cnt': 0}
+        # Keep a reference to the original method so we can restore it after the test.
+        original_register = self.api.RegisterHotKey
+        def register_once(hwnd, identifier, modifiers, key):
+            call_counter['cnt'] += 1
+            if call_counter['cnt'] == 1:
+                # first call succeeds – record as real API would
+                self.api.registered[identifier] = (modifiers, key)
+                return 1
+            # second (duplicate) call fails
+            return 0
+        # Override the method for the duration of the test.
+        self.api.RegisterHotKey = register_once
+        try:
+            started = self.listener.start({
+                "toggle": "Ctrl+Space",
+                "duplicate": "Ctrl+Space",
+            })
+            self.assertTrue(started)
+            # Only one registration should succeed.
+            self.assertEqual(self.listener._count, 1)
+            self.assertEqual(len(self.api.registered), 1)
+            failures = self.settles(self.failures)
+            self.assertEqual(len(failures), 1)
+            self.assertIn("Ctrl+Space", failures[0])
+        finally:
+            # Restore the original RegisterHotKey to avoid side‑effects on other tests.
+            self.api.RegisterHotKey = original_register
+
+
 class WindowsChooser(DikteTest):
     def setUp(self):
         super().setUp()
