@@ -441,6 +441,11 @@ TR = {
     "lines keep their place and nothing is shortened.":
         "Kendi kurallarıyla, Temizleme kuralları sekmesinin altında: altyazı için "
         "yazılmıştır, satırlar yerinde kalır ve hiçbir şey kısaltılmaz.",
+    "Break long subtitle lines": "Uzun altyazı satırlarını böl",
+    "Splits a cue longer than 42 characters into balanced lines in the .srt. "
+    "The text and timing stay the same.":
+        "'.srt' dosyasında 42 karakterden uzun altyazıyı dengeli satırlara böler. "
+        "Metin ve zamanlama aynı kalır.",
     "Transcribe": "Yazıya çevir",
     "Stop": "Durdur",
     "Copy": "Panoya kopyala",

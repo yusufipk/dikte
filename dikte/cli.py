@@ -342,7 +342,9 @@ def cmd_transcribe(opts):
         return fail(opts, result["error"])
 
     text, segments = result["text"], result["segments"]
-    srt = filetranscribe.to_srt(text, segments) if opts.srt else ""
+    srt = (filetranscribe.to_srt(text, segments,
+                                 _pick(opts.wrap, conf["file_wrap_lines"]))
+           if opts.srt else "")
     if opts.srt and not srt:
         return fail(opts, "no timestamped lines to turn into subtitles")
 
@@ -1137,6 +1139,7 @@ EPILOG = """\
 examples:
   dikte record --seconds 8 --json
   dikte transcribe talk.mp4 --srt -o talk.srt
+  dikte transcribe talk.mp4 --srt --wrap -o talk.srt
   dikte ask "put that in my calendar on Thursday at three"
   dikte config set cleanup_model google/gemini-3.5-flash
   dikte history show 1
@@ -1243,6 +1246,9 @@ def build_parser():
     transcribe.add_argument("-o", "--out", help="write here instead of stdout")
     transcribe.add_argument("--srt", action="store_true",
                             help="subtitles rather than plain text")
+    transcribe.add_argument("--wrap", action=argparse.BooleanOptionalAction,
+                            default=None, help="break long subtitle lines "
+                            "into balanced lines (with --srt)")
     transcribe.add_argument("--timestamps", action=argparse.BooleanOptionalAction,
                             default=None, help="[mm:ss] in front of every line")
     transcribe.add_argument("--cleanup", action=argparse.BooleanOptionalAction,

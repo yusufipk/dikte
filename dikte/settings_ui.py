@@ -1269,6 +1269,7 @@ class SettingsWindow(QDialog):
         self.file_timestamps.toggled.connect(self._remember_file_choices)
         self.file_cleanup.toggled.connect(self._remember_file_choices)
         self.file_speakers.toggled.connect(self._remember_file_choices)
+        self.file_wrap.toggled.connect(self._remember_file_choices)
         # On a machine where nothing can transcribe yet, this window was opened
         # because of that, so open it on the tab that fixes it.
         if not conf.transcribe_ready():
@@ -2424,6 +2425,13 @@ class SettingsWindow(QDialog):
         )
         layout.addWidget(self.file_cleanup)
 
+        self.file_wrap = QCheckBox(t("Break long subtitle lines"))
+        self.file_wrap.setToolTip(
+            t("Splits a cue longer than 42 characters into balanced lines in "
+              "the .srt. The text and timing stay the same.")
+        )
+        layout.addWidget(self.file_wrap)
+
         self.file_run = QPushButton(t("Transcribe"))
         self.file_run.clicked.connect(self._run_file)
         self.file_stop = QPushButton(t("Stop"))
@@ -2863,10 +2871,11 @@ class SettingsWindow(QDialog):
         )
 
         with QSignalBlocker(self.file_timestamps), QSignalBlocker(self.file_cleanup), \
-                QSignalBlocker(self.file_speakers):
+                QSignalBlocker(self.file_speakers), QSignalBlocker(self.file_wrap):
             self.file_timestamps.setChecked(conf["file_timestamps"])
             self.file_cleanup.setChecked(conf["file_cleanup"])
             self.file_speakers.setChecked(conf["file_speakers"])
+            self.file_wrap.setChecked(conf["file_wrap_lines"])
         # The run reads the saved settings, so the saved model is the one asked.
         self.file_speakers.setVisible(bool(api.diarize_model(conf.transcribe_target())))
         # Greyed out rather than hidden, since every other provider can do it,
@@ -3064,6 +3073,7 @@ class SettingsWindow(QDialog):
             conf["file_timestamps"] = self.file_timestamps.isChecked()
         conf["file_cleanup"] = self.file_cleanup.isChecked()
         conf["file_speakers"] = self.file_speakers.isChecked()
+        conf["file_wrap_lines"] = self.file_wrap.isChecked()
 
         # Left empty, only the toggle falls back to a default: the application
         # is unusable without it. The rest stay empty, which is what turns
@@ -3775,6 +3785,7 @@ class SettingsWindow(QDialog):
             self.conf["file_timestamps"] = self.file_timestamps.isChecked()
         self.conf["file_cleanup"] = self.file_cleanup.isChecked()
         self.conf["file_speakers"] = self.file_speakers.isChecked()
+        self.conf["file_wrap_lines"] = self.file_wrap.isChecked()
         try:
             self.conf.save()
         except OSError as exc:
@@ -3828,7 +3839,8 @@ class SettingsWindow(QDialog):
 
     def _save_subtitles(self):
         srt = filetranscribe.to_srt(self.file_output.toPlainText(),
-                                    getattr(self, "file_segments", []))
+                                    getattr(self, "file_segments", []),
+                                    self.file_wrap.isChecked())
         if not srt:
             self.file_status.setText(t("No timestamped lines to turn into subtitles."))
             return

@@ -575,6 +575,7 @@ DEFAULTS = {
     "file_timestamps": False,
     "file_cleanup": True,
     "file_speakers": False,         # only offered where api.diarize_model() finds one
+    "file_wrap_lines": False,       # long SRT cues broken into balanced lines
     "file_cleanup_prompt": "",      # empty -> language-specific default
     "file_last_dir": "",
 
