@@ -889,6 +889,13 @@ class Settings(DikteTest):
         self.assertTrue(stored["file_timestamps"])
         self.assertFalse(stored["file_cleanup"])
 
+    def test_the_line_break_switch_loads_and_is_kept(self):
+        self.write_config({"file_wrap_lines": True})
+        window = self.window(cfg.Config())
+        self.assertTrue(window.file_wrap.isChecked())
+        window.file_wrap.setChecked(False)
+        self.assertFalse(self.read_config_file()["file_wrap_lines"])
+
     def test_timestamps_are_greyed_out_for_a_provider_that_has_none(self):
         """Unticked on screen, and the stored choice kept for the next provider."""
         self.write_config({"transcribe_provider": "gemini", "file_timestamps": True,

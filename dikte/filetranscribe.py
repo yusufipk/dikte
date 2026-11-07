@@ -32,6 +32,7 @@ from . import api
 from . import cleanup
 from . import ggml
 from . import paths
+from . import srtwrap
 from .i18n import t
 
 UPLOAD_LIMIT = 24 * 1024 * 1024  # the APIs take 25 MB; leave the form its room
@@ -391,14 +392,15 @@ def srt_timestamp(seconds):
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
 
-def to_srt(text, segments):
+def to_srt(text, segments, wrap=False):
     """Turn the timestamped transcript into SRT cues.
 
     The text is the authority on wording, so cleanup edits survive; the segments
     are the authority on timing. They meet at the [mm:ss] prefix, which cleanup
     is told to leave alone: a line's whole-second stamp finds the segment it came
     from, and with it the fractional start and the end time whisper reported. A
-    line whose stamp finds nothing runs until the next line starts.
+    line whose stamp finds nothing runs until the next line starts. With wrap,
+    a cue too long for one subtitle line is broken into balanced lines.
     """
     cues = []
     for line in text.splitlines():
@@ -438,7 +440,8 @@ def to_srt(text, segments):
             cue[1] = cue[0] + MIN_SUBTITLE_SECONDS
 
     blocks = [
-        f"{number}\n{srt_timestamp(start)} --> {srt_timestamp(end)}\n{body}"
+        f"{number}\n{srt_timestamp(start)} --> {srt_timestamp(end)}\n"
+        f"{srtwrap.wrap(body) if wrap else body}"
         for number, (start, end, body) in enumerate(cues, start=1)
     ]
     return "\n\n".join(blocks) + "\n" if blocks else ""
