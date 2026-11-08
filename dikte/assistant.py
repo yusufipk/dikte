@@ -236,10 +236,14 @@ def clear_session():
         pass
 
 
-def stored_provider():
-    """Whose conversation is on disk, whatever the setting says now."""
+def stored_provider(conf=None):
+    """The stored owner, or custom when the selected endpoint can resume it."""
     name = str(_read_session().get("provider", ""))
-    return "custom" if name.startswith("custom:") else name
+    if conf is not None and provider(conf) == "custom":
+        legacy = name in ("requesty", "opencode") and name == conf.custom_preset("assistant")
+        if name == chat_session(conf) or legacy:
+            return "custom"
+    return name
 
 
 def session_age():
@@ -605,7 +609,7 @@ def _ask_chat(name, service, prompt, conf, on_stage, keep=True, system=None):
     owner = chat_session(conf)
     history = read_messages(owner, conf["assistant_session_minutes"] * 60) if keep else []
     # The first run after migrating a gateway can carry its existing chat on.
-    if keep and name == "custom" and stored_provider() == target.preset:
+    if keep and name == "custom" and target.preset in ("requesty", "opencode") and stored_provider() == target.preset:
         history = read_messages(target.preset, conf["assistant_session_minutes"] * 60)
     messages = history + [{"role": "user", "content": prompt}]
     try:

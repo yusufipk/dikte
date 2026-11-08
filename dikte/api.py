@@ -48,7 +48,6 @@ from .i18n import t
 APP_URL = "https://github.com/yusufipk/dikte"
 USER_AGENT = f"dikte/1.0 (+{APP_URL})"
 OPENAI_URL = "https://api.openai.com/v1"
-GROQ_URL = PRESETS["groq"].base_url
 OPENROUTER_URL = "https://openrouter.ai/api/v1"
 REQUESTY_URL = PRESETS["requesty"].base_url
 GEMINI_URL = PRESETS["gemini"].base_url

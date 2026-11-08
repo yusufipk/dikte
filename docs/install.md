@@ -87,17 +87,14 @@ or runs it on the spot.
 
 ## Providers and keys
 
-Choose speech-to-text and cleanup providers separately in Settings. Speech to
-text runs locally by default; cleanup uses a hosted provider by default, but
-can also run on a local model or through an installed CLI. Turn cleanup off to
-paste the raw transcript.
+Choose speech-to-text and cleanup providers, models and reasoning effort in Settings. Speech to text runs locally by default; cleanup uses a hosted provider by default, but can also run on a local model or through an installed CLI. Turn cleanup off to paste the raw transcript.
 
 | Task | Hosted providers | Other options |
 | --- | --- | --- |
 | Speech to text | OpenAI, OpenRouter, Custom server presets | Local model |
 | Cleanup and agent | OpenRouter, Custom server presets | Local cleanup; Claude Code, Codex or Antigravity CLI |
 
-Gateway presets keep existing keys, model settings and environment variables. Old provider names remain CLI aliases and migrate to Custom server on load. Other uses `CUSTOM_API_KEY` and an editable address.
+Empty key fields use `OPENAI_API_KEY`, `OPENROUTER_API_KEY` or the preset variable (`GROQ_API_KEY`, `REQUESTY_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `OPENCODE_API_KEY`). Gateway presets keep existing keys and model settings. Old provider names remain CLI aliases and migrate to Custom server on load. Other uses `CUSTOM_API_KEY` and an editable address.
 
 Settings and any keys entered in the app are saved in `config.json`: under
 `~/.config/dikte` on Linux (or `$XDG_CONFIG_HOME/dikte` when set),

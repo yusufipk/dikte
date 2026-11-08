@@ -300,7 +300,7 @@ class TranscribeTarget(DikteTest):
         self.assertEqual(target.preset, "groq")
         self.assertEqual(target.service, "Groq")
         self.assertEqual(target.api_key, "gsk-test")
-        self.assertEqual(target.base_url, api.GROQ_URL)
+        self.assertEqual(target.base_url, cfg.PRESETS["groq"].base_url)
         self.assertEqual(target.model, "whisper-large-v3")
 
     def test_a_provider_this_version_has_never_heard_of(self):

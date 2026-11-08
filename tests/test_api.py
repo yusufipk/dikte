@@ -37,7 +37,7 @@ from tests.support import (
 )
 
 OPENAI = api.Target("openai", "OpenAI", "sk-test", api.OPENAI_URL, "gpt-4o-transcribe")
-GROQ = api.Target("groq", "Groq", "gsk-test", api.GROQ_URL, "whisper-large-v3-turbo")
+GROQ = api.Target("groq", "Groq", "gsk-test", api.PRESETS["groq"].base_url, "whisper-large-v3-turbo")
 OPENROUTER = api.Target("openrouter", "OpenRouter", "sk-or-test",
                         api.OPENROUTER_URL, "openai/gpt-4o-transcribe")
 REQUESTY = api.Target("requesty", "Requesty", "rqsty-test",
@@ -1014,13 +1014,13 @@ class ModelLists(DikteTest):
     def test_the_same_list_read_from_groq(self):
         with fake_urlopen({"data": [{"id": "llama-3.3-70b"},
                                     {"id": "whisper-large-v3"}]}) as calls:
-            models = api.openai_models("gsk-test", api.GROQ_URL, "Groq")
+            models = api.openai_models("gsk-test", api.PRESETS["groq"].base_url, "Groq")
         self.assertEqual(calls[0].full_url, "https://api.groq.com/openai/v1/models")
         self.assertEqual(models, ["whisper-large-v3"])
 
     def test_a_missing_groq_key_says_groq(self):
         with self.assertRaises(api.ApiError) as caught:
-            api.openai_models("", api.GROQ_URL, "Groq")
+            api.openai_models("", api.PRESETS["groq"].base_url, "Groq")
         self.assertIn("Groq", str(caught.exception))
 
     def test_malformed_catalogs_raise_the_recoverable_api_error(self):

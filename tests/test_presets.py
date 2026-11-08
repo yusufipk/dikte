@@ -35,8 +35,15 @@ class Migration(DikteTest):
             for name in cfg.ALIASES:
                 with self.subTest(role=role, preset=name):
                     opts = cli.build_parser().parse_args(["config", "set", f"{role}_provider", name])
-                    with captured(), mock.patch.object(cli.ipc, "send"):
-                        self.assertEqual(opts.func(opts), 0)
+                    unsupported = role == "transcribe" and not cfg.PRESETS[name].transcription
+                    before = cfg.Config().data.copy()
+                    with captured() as (out, err), mock.patch.object(cli.ipc, "send") as reload:
+                        self.assertEqual(opts.func(opts), 2 if unsupported else 0)
+                    if unsupported:
+                        self.assertIn("does not support transcription", err.getvalue())
+                        self.assertEqual(cfg.Config().data, before)
+                        reload.assert_not_called()
+                        continue
                     conf = cfg.Config()
                     self.assertEqual(conf[f"{role}_provider"], "custom")
                     self.assertEqual(conf[f"{role}_custom_preset"], name)
@@ -73,6 +80,49 @@ class Migration(DikteTest):
                     self.assertEqual(opts.func(opts), 0)
                 self.assertEqual(fetch.call_args.args[0], name)
                 self.assertEqual(cfg.Config()["cleanup_provider"], "openrouter")
+
+    def test_custom_cli_catalogs_always_target_other(self):
+        self.write_config({"cleanup_provider": "requesty", "transcribe_provider": "groq",
+                           "custom_api_key": "own-key", "custom_base_url": "https://example.invalid/v1"})
+        for args in (["models", "--provider", "custom"],
+                     ["models", "--provider", "custom", "--transcription"],
+                     ["test-key", "custom"]):
+            with self.subTest(args=args):
+                opts = cli.build_parser().parse_args(args)
+                with captured(), mock.patch.object(api, "preset_models", return_value=["model"]) as fetch:
+                    self.assertEqual(opts.func(opts), 0)
+                self.assertEqual(fetch.call_args.args[:3],
+                                 ("other", "own-key", "https://example.invalid/v1"))
+        self.assertEqual(cfg.Config().custom_preset("cleanup"), "requesty")
+
+    def test_test_key_all_checks_each_gateway_once_and_skips_unconfigured_other(self):
+        self.write_config({"cleanup_provider": "groq", "groq_api_key": "gateway-key"})
+        opts = cli.build_parser().parse_args(["test-key", "all"])
+        with captured(), mock.patch.object(cli, "_catalog", return_value=["model"]) as fetch, \
+                mock.patch.object(api, "openrouter_key_status", return_value="works"):
+            self.assertEqual(opts.func(opts), 0)
+        names = [call.args[1] for call in fetch.call_args_list]
+        self.assertNotIn("custom", names)
+        self.assertEqual(names.count("groq"), 1)
+
+    def test_session_status_matches_chat_resumption(self):
+        for name in ("other", "requesty", "opencode"):
+            conf = self.config(assistant_provider="custom", assistant_custom_preset=name,
+                               custom_base_url="http://localhost:8000/v1")
+            conf.save()
+            for owner in (assistant.chat_session(conf), "requesty", "opencode",
+                          "custom:other:another-endpoint"):
+                with self.subTest(preset=name, owner=owner):
+                    assistant.write_session(owner, messages=[{"role": "user", "content": "earlier"}])
+                    opts = cli.build_parser().parse_args(["session"])
+                    with captured() as (out, _):
+                        opts.func(opts)
+                    resumes = owner == assistant.chat_session(conf) or owner == name and name in ("requesty", "opencode")
+                    self.assertEqual("last used" in out.getvalue(), resumes)
+                    with mock.patch.object(api, "chat", return_value="answer") as chat:
+                        assistant.ask("next", conf)
+                    messages = chat.call_args.args[0]
+                    self.assertEqual(any(m["content"] == "earlier" for m in messages), resumes)
 
     def test_profiles_do_not_store_provider_selection(self):
         conf = self.config(profiles=[{"name": "Chat", "apps": ["chat"],
@@ -171,7 +221,7 @@ class WireCompatibility(DikteTest):
         with fake_urlopen({"choices": [{"message": {"content": "answer"}}]}) as calls:
             assistant.ask("next", conf)
         self.assertEqual(sent_json(calls[0])["messages"][1]["content"], "earlier")
-        self.assertEqual(assistant.stored_provider(), "custom")
+        self.assertEqual(assistant.stored_provider(conf), "custom")
 
     def test_router_chat_preserves_explicit_reasoning_off(self):
         for provider, preset in (("openrouter", ""), ("custom", "opencode")):
@@ -189,4 +239,4 @@ class WireCompatibility(DikteTest):
             assistant.ask("third", conf)
         self.assertEqual(len(sent_json(calls[1])["messages"]), 4)
         self.assertEqual(len(sent_json(calls[2])["messages"]), 2)
-        self.assertEqual(assistant.stored_provider(), "custom")
+        self.assertEqual(assistant.stored_provider(conf), "custom")

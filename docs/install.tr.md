@@ -84,17 +84,14 @@ kurmaz, sayfayı açar. Genel sekmesi bu denetimi kapatır ya da anında çalı�
 
 ## Sağlayıcılar ve anahtarlar
 
-Sesi yazıya çevirme ve temizleme sağlayıcılarını Ayarlar'dan ayrı ayrı seç.
-Sesi yazıya çevirme varsayılan olarak yerelde, temizleme ise bulutta çalışır.
-Temizleme için yerel bir model veya kurulu bir CLI da kullanabilirsin.
-Temizlemeyi kapatırsan ham transkript yapıştırılır.
+Sesi yazıya çevirme ve temizleme sağlayıcılarını, modelleri ve düşünme düzeyini Ayarlar'dan seç. Sesi yazıya çevirme varsayılan olarak yerelde, temizleme ise bulutta çalışır. Temizleme için yerel bir model veya kurulu bir CLI da kullanabilirsin. Temizlemeyi kapatırsan ham transkript yapıştırılır.
 
 | İşlem | Bulut sağlayıcıları | Diğer seçenekler |
 | --- | --- | --- |
 | Sesi yazıya çevirme | OpenAI, OpenRouter, Özel sunucu hazır ayarları | Yerel model |
 | Temizleme ve ajan | OpenRouter, Özel sunucu hazır ayarları | Yerel temizleme; Claude Code, Codex veya Antigravity CLI |
 
-Hazır ayarlar mevcut anahtarları, model ayarlarını ve ortam değişkenlerini korur. Eski sağlayıcı adları komut satırında çalışır ve yüklemede Özel sunucuya taşınır. Diğer seçeneği, `CUSTOM_API_KEY` ve düzenlenebilir bir adres kullanır.
+Boş anahtar alanları `OPENAI_API_KEY`, `OPENROUTER_API_KEY` veya hazır ayarın değişkenini (`GROQ_API_KEY`, `REQUESTY_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, `OPENCODE_API_KEY`) kullanır. Hazır ayarlar mevcut anahtarları ve model ayarlarını korur. Eski sağlayıcı adları komut satırında çalışır ve yüklemede Özel sunucuya taşınır. Diğer seçeneği, `CUSTOM_API_KEY` ve düzenlenebilir bir adres kullanır.
 
 Ayarlar ve uygulamaya girdiğin anahtarlar `config.json` dosyasına kaydedilir:
 Linux'ta `~/.config/dikte` (tanımlıysa `$XDG_CONFIG_HOME/dikte`), macOS'ta

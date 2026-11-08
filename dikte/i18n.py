@@ -345,8 +345,6 @@ TR = {
     "Runs on your custom server.": "Özel sunucunda çalışır.",
     "Connection works. {count} audio models visible.":
         "Bağlantı tamam. {count} ses modeli görünüyor.",
-    "Connection works. {count} models visible.":
-        "Bağlantı tamam. {count} model görünüyor.",
     "Clean the transcript with a model": "Transkripti bir modelle temizle",
     "{binary} is not on your PATH, so cleanup would fail and the raw transcript "
     "would be pasted. Install it, or pick another one above.":
@@ -670,26 +668,6 @@ TR = {
     "in your calendar. Working directory and permissions above mean nothing "
     "here.":
         "Elindeki OpenRouter anahtarı üzerinden düz bir soru ve düz bir cevap. "
-        "Komut çalıştırmaz, dosya açmaz, servislerinin hiçbirine erişmez; yani "
-        "Peru'nun başkentini söyler ama takviminde ne olduğunu söyleyemez. "
-        "Yukarıdaki çalışma dizini ve izinler burada bir şey ifade etmez.",
-    "Needs no program installed, only the OpenRouter key.":
-        "Kurulu bir programa değil, yalnızca OpenRouter anahtarına ihtiyaç duyar.",
-    "A plain question and a plain answer, over the OpenCode Go key you already "
-    "have. It runs no commands, opens no files and reaches none of your "
-    "services, so it can tell you what the capital of Peru is but not what is "
-    "in your calendar. Working directory and permissions above mean nothing "
-    "here.":
-        "Elindeki OpenCode Go anahtarı üzerinden düz bir soru ve düz bir cevap. "
-        "Komut çalıştırmaz, dosya açmaz, servislerinin hiçbirine erişmez; yani "
-        "Peru'nun başkentini söyler ama takviminde ne olduğunu söyleyemez. "
-        "Yukarıdaki çalışma dizini ve izinler burada bir şey ifade etmez.",
-    "A plain question and a plain answer, over the Requesty key you already "
-    "have. It runs no commands, opens no files and reaches none of your "
-    "services, so it can tell you what the capital of Peru is but not what is "
-    "in your calendar. Working directory and permissions above mean nothing "
-    "here.":
-        "Elindeki Requesty anahtarı üzerinden düz bir soru ve düz bir cevap. "
         "Komut çalıştırmaz, dosya açmaz, servislerinin hiçbirine erişmez; yani "
         "Peru'nun başkentini söyler ama takviminde ne olduğunu söyleyemez. "
         "Yukarıdaki çalışma dizini ve izinler burada bir şey ifade etmez.",

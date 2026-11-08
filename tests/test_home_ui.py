@@ -39,6 +39,13 @@ class Home(DikteTest):
         self.window.show()
         QApplication.processEvents()
 
+    def test_empty_gateway_model_is_not_called_a_custom_server_default(self):
+        conf = self.fixture.config(cleanup_provider="groq", cleanup_groq_model="", cleanup_enabled=True)
+        location = home_ui.processing_locations(conf)
+        self.assertNotIn("Custom server default model", location)
+        conf["cleanup_custom_preset"] = "other"
+        self.assertIn("Custom server default model", home_ui.processing_locations(conf))
+
     def test_daily_tasks_are_reachable_outside_configuration(self):
         for mode in ("dictation", "file", "meeting", "ask", "history"):
             self.window.show_mode(mode)

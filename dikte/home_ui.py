@@ -88,7 +88,7 @@ def processing_locations(conf, mode="dictation", file_cleanup=None, file_timesta
     timestamps = conf["file_timestamps"] if file_timestamps is None else file_timestamps
     if mode == "meeting" or (mode == "file" and timestamps):
         sound_model = api.timestamp_model(target.provider, target.model, target.file_model, target.preset)
-    if target.provider == "custom" and not sound_model:
+    if target.provider == "custom" and target.preset == "other" and not sound_model:
         sound_model = t("{name} default model", name=target.service)
     sound = _model_location(sound_model, target.provider, local.get("whisper"))
     enabled = conf["cleanup_enabled"]
@@ -102,7 +102,7 @@ def processing_locations(conf, mode="dictation", file_cleanup=None, file_timesta
     model = cleanup.model(conf)
     if provider in ("codex", "agy") and not conf[f"cleanup_{provider}_model"].strip():
         model = t("{name} default model", name="Codex" if provider == "codex" else "Antigravity")
-    elif provider == "custom" and not conf.custom_target("cleanup").model:
+    elif provider == "custom" and conf.custom_preset("cleanup") == "other" and not conf.custom_target("cleanup").model:
         model = t("{name} default model", name=t("Custom server"))
     text = _model_location(model, provider, local.get("llama")) if enabled else t("Editing off")
     location = t("Dictation: {sound} / Cleanup: {text}", sound=sound, text=text)

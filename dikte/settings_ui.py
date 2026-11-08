@@ -70,8 +70,6 @@ TRANSCRIBE_MODELS = {
         "openai/whisper-large-v3-turbo", "mistralai/voxtral-mini-transcribe",
         "deepgram/nova-3", "google/chirp-3",
     ],
-    # Nothing to suggest for a server nobody else knows; Fetch asks it.
-    "custom": [],
 }
 CLEANUP_MODELS = [
     "google/gemini-3.5-flash-lite", "google/gemini-3.1-flash-lite",
@@ -1107,7 +1105,7 @@ class SettingsWindow(QDialog):
         self._shortcut_rows = {}
         # Each provider keeps its own transcription model, so switching the
         # provider back and forth never overwrites the other one's.
-        self._models = dict.fromkeys(cfg.TRANSCRIBERS, "")
+        self._models = dict.fromkeys((name for name in cfg.TRANSCRIBERS if name != "custom"), "")
         self._custom_values = dict(conf.data)
         self._preset_shown = {}
         self._preset_widgets = {}
@@ -1604,7 +1602,9 @@ class SettingsWindow(QDialog):
         widgets = self._preset_widgets[role]
         self._custom_values[cfg.PRESETS[name].key] = widgets["key"].text().strip()
         if role != "transcribe" or self._shown_provider == "custom":
-            self._custom_values[cfg.model_setting(role, name)] = self._preset_model(role).currentText().strip()
+            setting = cfg.model_setting(role, name)
+            model = self._preset_model(role).currentText().strip()
+            self._custom_values[setting] = model or (cfg.DEFAULTS[setting] if name != "other" else "")
         if name == "other":
             self._custom_values["custom_base_url"] = widgets["url"].text().strip()
 
@@ -1642,7 +1642,11 @@ class SettingsWindow(QDialog):
         combo = self._preset_model(role)
         combo.clear()
         combo.setCurrentText(self._custom_values[cfg.model_setting(role, name)])
-        combo.lineEdit().setPlaceholderText(t("Empty: the server's default model"))
+        combo.lineEdit().setPlaceholderText(
+            t("Empty: the server's default model") if name == "other"
+            else cfg.DEFAULTS[cfg.model_setting(role, name)])
+        if role == "transcribe":
+            self.refresh_transcribe_models.setVisible(name != "requesty")
 
     def _load_preset_models(self, role):
         self._share_preset_key(role)
@@ -2919,7 +2923,7 @@ class SettingsWindow(QDialog):
         conf["start_in_tray"] = self.start_in_tray.isChecked()
 
         provider = self.transcribe_provider.currentData() or "local"
-        if provider in self._models and provider != "custom":
+        if provider in self._models:
             self._models[provider] = self.transcribe_model.currentText().strip()
         conf["transcribe_provider"] = provider
         for name, who in cfg.TRANSCRIBERS.items():
@@ -3123,7 +3127,8 @@ class SettingsWindow(QDialog):
     @staticmethod
     def _select_data(combo, value):
         index = combo.findData(value)
-        combo.setCurrentIndex(index if index >= 0 else 0)
+        fallback = combo.findData("other")
+        combo.setCurrentIndex(index if index >= 0 else max(fallback, 0))
 
     # ---- api helpers -----------------------------------------------------
 
@@ -3228,11 +3233,12 @@ class SettingsWindow(QDialog):
         """Swap the model box over to the newly chosen provider's own model."""
         if self._shown_provider == "custom":
             self._stash_preset("transcribe")
-        if self._shown_provider in TRANSCRIBE_MODELS and self._shown_provider != "custom":
+        if self._shown_provider in TRANSCRIBE_MODELS:
             self._models[self._shown_provider] = self.transcribe_model.currentText().strip()
         provider = self.transcribe_provider.currentData() or "local"
         self._shown_provider = provider
         local = provider == "local"
+        self.refresh_transcribe_models.setVisible(True)
         self.transcribe_custom_box.setVisible(provider == "custom")
         self.stt_form.setRowVisible(self.transcribe_model_row, not local)
         self.stt_form.setRowVisible(self.file_model_row, provider == "openrouter")
@@ -3250,8 +3256,7 @@ class SettingsWindow(QDialog):
         self.transcribe_model.clear()
         self.transcribe_model.addItems(TRANSCRIBE_MODELS[provider])
         self.transcribe_model.setCurrentText(self._models[provider])
-        self.transcribe_model.lineEdit().setPlaceholderText(
-            t("Empty: the server's default model") if provider == "custom" else "")
+        self.transcribe_model.lineEdit().setPlaceholderText("")
         if provider == "openrouter":
             self._fill_file_models(TRANSCRIBE_MODELS[provider])
         self._say_transcribe("")
@@ -3400,19 +3405,20 @@ class SettingsWindow(QDialog):
     def _load_hosted_models(self):
         """Fetch the hosted model lists at open, without being asked.
 
-        The Fetch buttons stay: they are the retry, and the place a failure is
-        worth explaining. Here nobody asked, so an error changes nothing on
-        screen and the built-in lists remain, and a provider whose key has not
-        been given yet is not called at all.
+        Only selected gateway presets are fetched. Errors leave the current
+        suggestions unchanged; Fetch buttons allow an explicit retry.
         """
         jobs = []
         openrouter_key = self.conf.openrouter_key()
         if openrouter_key:
             jobs.append(("openrouter",
                          lambda: api.openrouter_models(openrouter_key)))
+        selected = {self.conf.custom_preset(role)
+                    for role in self._preset_widgets
+                    if self.conf[f"{role}_provider"] == "custom"}
         for name, who in cfg.PRESETS.items():
             key = self.conf.api_key(who.key)
-            if name != "other" and key:
+            if name != "other" and name in selected and key:
                 base = self.conf.get(f"{name}_base_url", who.base_url)
                 jobs.append((name, lambda name=name, key=key, base=base:
                              api.preset_models(name, key, base)))
@@ -3433,7 +3439,7 @@ class SettingsWindow(QDialog):
                 if role != "transcribe" and widgets["preset"].currentData() == provider:
                     self._on_preset_models_loaded(role, provider, models, "")
             return
-        combos = (self.cleanup_model, self.meeting_model, self.assistant_openrouter_model)
+        combos = (self.cleanup_model, self.meeting_model)
         for combo in combos:
             current = combo.currentText()
             combo.clear()

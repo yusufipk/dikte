@@ -7,6 +7,7 @@ import os
 import sys
 import threading
 import time
+from types import SimpleNamespace
 
 from . import api
 from .presets import ALIASES, PRESETS, model_setting
@@ -597,7 +598,7 @@ DEFAULTS = {
 
     # --- speaking a command to an agent -------------------------------------
     "assistant_shortcut": "",       # empty -> tray only
-    "assistant_provider": "claude",  # claude | codex | agy | openrouter
+    "assistant_provider": "claude",  # claude | codex | agy | openrouter | custom
     "assistant_model": "sonnet",    # Claude Code: an alias, or a full model id
     "assistant_permission_mode": "auto",
     "assistant_codex_model": "",    # empty -> whatever Codex is set to
@@ -655,8 +656,7 @@ TRANSCRIBERS = {
                           "transcribe_model"),
     "openrouter": Transcriber("OpenRouter", "openrouter_api_key",
                               "openrouter_base_url", "openrouter_transcribe_model"),
-    "custom": Transcriber("Custom server", "custom_api_key", "custom_base_url",
-                          "custom_transcribe_model"),
+    "custom": SimpleNamespace(service="Custom server"),
 }
 
 # One lock for the history file and the meeting index both, rather than one

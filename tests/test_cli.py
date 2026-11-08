@@ -9,6 +9,7 @@ socket is faked, and everything that runs locally runs for real.
 import contextlib
 import io
 import json
+import os
 import sys
 import unittest
 import webbrowser
@@ -520,6 +521,13 @@ class Providers(DikteTest):
         self.assertEqual(output.strip(), "deepseek-flash")
         self.assertEqual(calls[0].full_url, "https://example.invalid/v1/models")
         self.assertEqual(calls[0].get_header("Authorization"), "Bearer test-only")
+
+    def test_doctor_names_missing_gateway_transcription_keys(self):
+        for name in ("groq", "requesty", "gemini"):
+            self.write_config({"transcribe_provider": name})
+            with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(ipc, "send", return_value=None):
+                _, output, _ = self.run_cmd(cli.cmd_doctor)
+            self.assertIn(f"✗ {cfg.PRESETS[name].service} key, transcribing on", output)
 
     def test_deepseek_has_no_transcription_model_catalog(self):
         code, output, _ = self.run_cmd(cli.cmd_models, provider="deepseek", transcription=True)

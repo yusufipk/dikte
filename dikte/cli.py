@@ -282,7 +282,7 @@ def cmd_session(opts):
     minutes = None if age is None else int(age // 60)
     # The conversation on disk belongs to whoever was asked last, which is not
     # always whoever would be asked next; none of them can pick up another's.
-    owner = assistant.stored_provider()
+    owner = assistant.stored_provider(conf)
     told = f"{assistant.display_name(conf)}: "
     if minutes is None:
         told += "no conversation going."
@@ -552,6 +552,8 @@ def _mask(key, value):
 
 def _coerce(key, raw):
     """A value off the command line, in the type the setting is stored as."""
+    if key == "transcribe_provider" and raw in cfg.ALIASES and not cfg.PRESETS[raw].transcription:
+        raise ValueError(f"{cfg.PRESETS[raw].service} does not support transcription.")
     default = cfg.DEFAULTS[key]
     if isinstance(default, bool):
         lowered = raw.strip().lower()
@@ -726,8 +728,7 @@ def _catalog(conf, name, transcription=False, test_key=False):
         return api.openrouter_models(conf.openrouter_key(), transcription=transcription)
     if name == "custom" or name in cfg.ALIASES:
         role = "transcribe" if transcription else "cleanup"
-        if name != "custom":
-            conf[f"{role}_provider"] = name
+        conf[f"{role}_custom_preset"] = "other" if name == "custom" else name
         target = conf.custom_target(role)
         # Reject a chat-only alias before role validation falls back to Other.
         if transcription and name in cfg.ALIASES and not cfg.PRESETS[name].transcription:
@@ -755,7 +756,7 @@ def cmd_test_key(opts):
     for name in (*cfg.TRANSCRIBERS, *cfg.ALIASES):
         if opts.which not in (name, "all"):
             continue
-        if name == "custom" and opts.which == "all" and not conf.custom_target("cleanup").base_url:
+        if name == "custom" and opts.which == "all" and not conf["custom_base_url"].strip():
             continue
         try:
             if name == "openrouter":
@@ -1042,7 +1043,7 @@ def cmd_doctor(opts):
     if target.provider == "local":
         transcribe_line = (f"{'✓' if transcribe_ready else '✗'} {target.service}, "
                            f"transcribing on {target.model or 'no model yet'}")
-    elif target.provider == "custom":
+    elif target.provider == "custom" and target.preset == "other":
         transcribe_line = (f"{'✓' if transcribe_ready else '✗'} Custom server "
                            f"{target.base_url or '(no address)'}, transcribing on "
                            f"{target.model or 'its default model'}")

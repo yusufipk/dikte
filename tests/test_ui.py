@@ -569,6 +569,50 @@ class Settings(DikteTest):
         self.assertEqual(stored["requesty_api_key"], "test-only")
         self.assertEqual(stored["assistant_requesty_model"], "assistant-requesty")
 
+    def test_empty_preset_models_save_defaults_only_for_gateways(self):
+        window = self.window(self.config(transcribe_provider="custom"))
+        for role in ("transcribe", "cleanup", "assistant"):
+            widgets = window._preset_widgets[role]
+            for name, who in cfg.PRESETS.items():
+                if role == "transcribe" and not who.transcription:
+                    continue
+                with self.subTest(role=role, preset=name):
+                    window._select_data(widgets["preset"], name)
+                    combo = window._preset_model(role)
+                    self.assertEqual("server's default" in combo.lineEdit().placeholderText(), name == "other")
+                    combo.setCurrentText("   ")
+                    window._save()
+                    setting = cfg.model_setting(role, name)
+                    self.assertEqual(window.conf[setting], "" if name == "other" else cfg.DEFAULTS[setting])
+
+    def test_unknown_speech_preset_falls_back_to_other(self):
+        window = self.window(self.config(transcribe_provider="custom", transcribe_custom_preset="deepseek"))
+        combo = window._preset_widgets["transcribe"]["preset"]
+        self.assertEqual(combo.currentData(), "other")
+        window._select_data(combo, "unknown-preset")
+        self.assertEqual(combo.currentData(), "other")
+        window._save()
+        self.assertEqual(window.conf.custom_preset("transcribe"), "other")
+
+    def test_requesty_speech_hides_fetch_without_affecting_other_presets(self):
+        window = self.window(self.config(transcribe_provider="requesty"))
+        self.assertTrue(window.refresh_transcribe_models.isHidden())
+        window._select_data(window._preset_widgets["transcribe"]["preset"], "groq")
+        self.assertFalse(window.refresh_transcribe_models.isHidden())
+        window._select_data(window.transcribe_provider, "openai")
+        self.assertFalse(window.refresh_transcribe_models.isHidden())
+
+    def test_selected_gateway_catalog_is_fetched_once_at_open(self):
+        window = self.window(self.config(transcribe_provider="groq", cleanup_provider="groq",
+                                         groq_api_key="gateway-key", requesty_api_key="unused-key"))
+        with mock.patch.dict(os.environ, {}, clear=True), \
+                mock.patch.object(settings_ui.threading, "Thread") as thread, \
+                mock.patch.object(settings_ui.api, "preset_models", return_value=[]) as fetch:
+            REAL_LOAD_HOSTED_MODELS(window)
+            self.assertEqual(thread.call_count, 1)
+            thread.call_args.kwargs["target"]()
+        self.assertEqual(fetch.call_args.args[0], "groq")
+
     def test_preset_catalogs_refill_only_the_matching_chat_boxes(self):
         window = self.window(self.config(cleanup_model="keep-me"))
         for name in cfg.PRESETS:
@@ -604,7 +648,9 @@ class Settings(DikteTest):
                 offered = [combo.itemText(i) for i in range(combo.count())]
                 self.assertEqual(offered, ["a/one", "b/two"])
         self.assertEqual(window.cleanup_model.currentText(), "my/own-model")
-
+        combo = window.assistant_openrouter_model
+        self.assertEqual([combo.itemText(i) for i in range(combo.count())],
+                         settings_ui.ASSISTANT_OR_MODELS)
 
     def test_no_key_no_call_home_at_open(self):
         """Opening Settings is not consent to be talked about to two vendors."""
@@ -614,7 +660,7 @@ class Settings(DikteTest):
             REAL_LOAD_HOSTED_MODELS(window)
         thread.assert_not_called()
 
-    def test_a_key_on_file_is_fetched_with_at_open(self):
+    def test_unused_gateway_keys_are_not_fetched_at_open(self):
         window = self.window(self.config(openrouter_api_key="sk-or-x",
                                          gemini_api_key="AIza-x",
                                          deepseek_api_key="sk-deepseek-x",
@@ -622,7 +668,7 @@ class Settings(DikteTest):
                                          requesty_api_key="rqsty-x"))
         with mock.patch.object(settings_ui.threading, "Thread") as thread:
             REAL_LOAD_HOSTED_MODELS(window)
-        self.assertEqual(thread.call_count, 5)
+        self.assertEqual(thread.call_count, 1)
 
     def test_the_update_line_names_the_version_that_is_running(self):
         window = self.window(cfg.Config())
