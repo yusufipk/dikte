@@ -1934,7 +1934,9 @@ class App(DikteTest):
         release = threading.Event()
 
         def slow(text):
-            release.wait(5)
+            # Long enough that a slow runner cannot finish it before the
+            # window is deleted; the test sets it free itself.
+            release.wait(60)
             raise paste.PasteError("late")
 
         target = self.controller(True)

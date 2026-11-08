@@ -352,7 +352,7 @@ class Home(HomeFixture):
         self.conf["assistant_provider"] = "requesty"
         self.conf["openrouter_api_key"] = "sk-or-test"
         self.conf["requesty_api_key"] = ""
-        with mock.patch.dict("os.environ", {}, clear=True):
+        with mock.patch.dict("os.environ", {"PATH": os.environ.get("PATH", "")}, clear=True):
             self.assertFalse(self.window._assistant_available())
             self.conf["requesty_api_key"] = "rqsty-test"
             self.assertTrue(self.window._assistant_available())
@@ -794,7 +794,7 @@ class Setup(HomeFixture):
         self.conf["cleanup_provider"] = "openrouter"
         self.conf["cleanup_enabled"] = True
         self.settings._discard_changes()
-        with mock.patch.dict("os.environ", {}, clear=True):
+        with mock.patch.dict("os.environ", {"PATH": os.environ.get("PATH", "")}, clear=True):
             dialog = setup_ui.SetupDialog(self.settings, "cloud")
             self.addCleanup(dialog.deleteLater)
             dialog.service.setCurrentIndex(dialog.service.findData("groq"))
@@ -829,7 +829,7 @@ class Setup(HomeFixture):
         from dikte import setup_ui
         self.conf["openrouter_api_key"] = ""
         self.settings._discard_changes()
-        with mock.patch.dict("os.environ", {}, clear=True):
+        with mock.patch.dict("os.environ", {"PATH": os.environ.get("PATH", "")}, clear=True):
             dialog = setup_ui.SetupDialog(self.settings, "cloud")
             self.addCleanup(dialog.deleteLater)
             dialog.service.setCurrentIndex(dialog.service.findData("gemini"))
