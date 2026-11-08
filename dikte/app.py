@@ -309,6 +309,7 @@ class Dikte:
         self.ask_pipeline.failed.connect(self._on_ask_error)
         self.ask_pipeline.cancelled.connect(self._on_ask_cancelled)
         self.ask_pipeline.answered.connect(self._on_assist_answered)
+        self.ask_pipeline.heard.connect(self._on_ask_heard)
         self.meeting_recorder.levels.connect(self._on_meeting_levels)
         self.meeting_recorder.stopped.connect(self._on_meeting_recorded)
         self.meeting_recorder.died.connect(self._on_meeting_died)
@@ -917,6 +918,7 @@ class Dikte:
         if isinstance(getattr(self, "home_messages", None), dict):
             self.home_messages[ASK] = ""
             self.home_messages.pop("ask_stage", None)
+            self.home_messages.pop("ask_question", None)
         self.front_before = self._the_front()
         self.ask_overlay.show_recording(asking=True)
         self._begin_recording(ASK)
@@ -933,6 +935,7 @@ class Dikte:
         if isinstance(getattr(self, "home_messages", None), dict):
             self.home_messages[ASK] = ""
             self.home_messages.pop("ask_stage", None)
+            self.home_messages.pop("ask_question", None)
         self.front_before = self._the_front()
         # Before the indicator goes up, while the window holding the selection
         # still has the keyboard: on macOS and Windows the copy is a key press.
@@ -1435,6 +1438,10 @@ class Dikte:
     def _on_recorded(self, wav_path, duration, rms_values):
         owner, self.recorder_owner = self.recorder_owner, None
         wants_paste = self.paste_override.pop(owner, None)
+        if owner != ASK:
+            # What the indicator says the raw text did, should cleanup fail.
+            self._last_paste = (self.conf["auto_paste"] if wants_paste is None
+                                else bool(wants_paste))
         focus, self.front_before = self.front_before, None
         # Handed over unresolved: the pipeline asks for the result on its own
         # thread, so a slow lookup never stalls this one.
@@ -1466,6 +1473,8 @@ class Dikte:
             profile = profiles.again(self.conf, row)
         except Exception:
             profile = None
+        # A retry only copies, so its outcome must not say it pasted.
+        self._last_paste = False
         queued = self.pipeline.run(row.get("audio") or "",
                                    float(row.get("duration") or 0),
                                    paste=False, retry=row, profile=profile)
@@ -1475,6 +1484,12 @@ class Dikte:
             return
         if self.state != RECORDING:
             self._set_state(BUSY)
+
+    def _on_ask_heard(self, question):
+        """What the spoken command came out as, for the home window to show
+        above the answer it is waiting for."""
+        if isinstance(getattr(self, "home_messages", None), dict):
+            self.home_messages["ask_question"] = question
 
     def _on_ask_stage(self, message):
         if isinstance(getattr(self, "home_messages", None), dict):
@@ -1517,10 +1532,8 @@ class Dikte:
             # The text was still pasted, but cleanup did not run. Say so loudly:
             # a rejected key otherwise looks exactly like working dictation.
             if self.state != RECORDING:
-                self.overlay.show_warning(
-                    t("Completed with a warning: {error}",
-                      error=warning.splitlines()[0])
-                )
+                self.overlay.show_warning(_warning_line(
+                    _raw, text, warning, getattr(self, "_last_paste", self.conf["auto_paste"])))
             self.tray.showMessage(
                 t("Dikte: completed with a warning"), warning,
                 QSystemTrayIcon.MessageIcon.Warning, 10000,
@@ -1597,7 +1610,7 @@ class Dikte:
         # A provider that is never sent a selection says so, rather than
         # leave the user wondering why the answer ignored it.
         note = ("" if payload.get("reads_selection", True)
-                else t("This agent does not read the selection."))
+                else t("This assistant does not read the selection."))
         if payload.get("selection_dropped"):
             note = t("The selection was not shown in time, so it was not sent.")
         window = AnswerWindow(
@@ -1826,7 +1839,7 @@ class Dikte:
         self.settings_window.file_label.setText(old.file_label.text())
         self.settings_window.file_output.setPlainText(old.file_output.toPlainText())
         self.settings_window.file_segments = getattr(old, "file_segments", [])
-        self.settings_window.file_save_srt.setEnabled(bool(self.settings_window.file_segments))
+        self.settings_window._set_srt(bool(self.settings_window.file_segments))
         self.settings_window.file_status.setText(old.file_status.text())
         self.settings_window.show()
         self.settings_window.raise_()
@@ -1971,13 +1984,33 @@ ASSIST_HOLD_SECONDS = 3.0
 def _grab_note(grab, read):
     """The line under a selection question's ribbon: what goes with it."""
     if not grab.reads:
-        return t("This agent does not read the selection.")
+        return t("This assistant does not read the selection.")
     if read is selection.LEFT_ALONE:
         return t("The clipboard was left alone, so no selection was read.")
     if not read.text:
         return t("Nothing selected")
     return t("Selected ({count} characters): {preview}", count=len(read.text),
              preview=answer_window.one_line(read.text, 40))
+
+
+def _warning_line(raw, text, warning, pasted):
+    """The indicator's line for a dictation that finished with a warning.
+
+    A cleanup that failed is the common case, and the warning itself is the
+    service's error; what the user needs in the corner is what happened to
+    their words. Translation and paste failures already say that themselves.
+    """
+    first = warning.splitlines()[0] if warning else ""
+    own = (t("Translation failed, so the original transcript was copied and not "
+             "pasted: {error}", error="").split(":")[0],
+           t("Copied, but pasting failed: {error}", error="").split(":")[0])
+    if text == raw and first and not any(first.startswith(part) for part in own):
+        # A paste that failed as well leaves the text on the clipboard only.
+        pasted = pasted and not any(line.startswith(own[1])
+                                    for line in warning.splitlines())
+        return (t("Cleanup failed. Pasted the raw text.") if pasted
+                else t("Cleanup failed. Copied the raw text."))
+    return t("Completed with a warning: {error}", error=first)
 
 
 def _preview(text):

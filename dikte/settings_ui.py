@@ -1,20 +1,25 @@
 """Settings window."""
 
+import copy
 import functools
 import os
 import pathlib
+import re
 import shutil
 import sys
 import threading
 
 from PyQt6.QtCore import QEvent, QObject, QRect, QSize, Qt, QTimer, QUrl, QSignalBlocker, pyqtSignal
-from PyQt6.QtGui import QDesktopServices, QGuiApplication, QKeySequence, QShortcut
+from PyQt6.QtGui import (QDesktopServices, QFont, QGuiApplication, QKeySequence, QShortcut,
+                         QTextCharFormat, QTextCursor, QTextDocument, QTextFormat,
+                         QTextListFormat)
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QAbstractSpinBox, QCheckBox, QComboBox, QDialog,
-    QDialogButtonBox, QFileDialog, QFormLayout, QGroupBox, QHBoxLayout, QLabel,
-    QLayout, QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit,
-    QPushButton, QScrollArea, QSizePolicy, QSpinBox, QTabWidget, QToolButton,
-    QVBoxLayout, QWidget, QWidgetItem,
+    QAbstractButton, QAbstractItemView, QAbstractSpinBox, QButtonGroup, QCheckBox, QComboBox, QDialog,
+    QFileDialog, QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel,
+    QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox, QPlainTextEdit,
+    QPushButton, QScrollArea, QSizePolicy, QSpinBox, QStackedWidget, QTabWidget, QTextBrowser,
+    QToolButton,
+    QVBoxLayout, QWidget,
 )
 
 from . import __version__
@@ -35,6 +40,7 @@ from . import paste
 from . import profiles
 from . import profiles_ui
 from . import update
+from . import widgets
 from . import worker
 from .filetranscribe import FileTranscriber
 from .i18n import t
@@ -46,6 +52,101 @@ LANGUAGES = [
     ("German", "de"), ("French", "fr"), ("Spanish", "es"), ("Arabic", "ar"),
 ]
 CORNERS = ["bottom-left", "bottom-right", "top-left", "top-right"]
+CORNER_LABELS = {"bottom-left": "Bottom left", "bottom-right": "Bottom right",
+                 "top-left": "Top left", "top-right": "Top right"}
+# The pages of Settings, in order: the name code opens a page by, the title
+# above it, the label in the sidebar (the same words, so the two never
+# disagree about where you are), and the sidebar's glyph.
+PAGES = [
+    ("general", "General", "General", "general"),
+    ("api", "Models", "Models", "key"),
+    ("editing", "Editing", "Editing", "edit"),
+    ("profiles", "Profiles", "Profiles", "profile"),
+    ("assistant", "Assistant", "Assistant", "sparkle"),
+    ("meeting", "Meeting", "Meeting", "meeting"),
+    ("shortcuts", "Shortcuts", "Shortcuts", "keyboard"),
+]
+# Settings content never gets wider than this: a form line longer than that is
+# hard to follow from label to field. Wider windows centre it in the pane.
+CONTENT_WIDTH = 760
+# The band Apply and Discard sit in.
+FOOTER_HEIGHT = 64
+# The margin between the sidebar and a page, and on the page's other side.
+PAGE_GUTTER = 20
+# Every page is centred at one width, so a page starts at the same x as the
+# one before it whatever is on it; the ones with more to show go to two
+# columns before they reach it.
+PAGE_WIDTH = 1240
+
+
+def key_label(combo):
+    """"ctrl+shift+v" as a keyboard says it: "Ctrl+Shift+V"."""
+    return "+".join(part.strip()[:1].upper() + part.strip()[1:]
+                    for part in str(combo).split("+") if part.strip())
+
+
+def reflow(text):
+    """A prompt written with hard line breaks, as one line per paragraph.
+
+    The defaults are kept wrapped at 80 columns in the source; in an editor
+    that wraps by itself those breaks only make ragged lines. List items,
+    headings and blank lines keep their own lines.
+    """
+    out, current = [], None
+    for line in text.splitlines():
+        stripped = line.strip()
+        item = re.match(r"([-*\u2022]|\d+[.)])\s", stripped)
+        if not stripped or item or stripped.startswith("#"):
+            if current is not None:
+                out.append(current)
+            current = None
+            if not stripped or stripped.startswith("#"):
+                out.append(stripped)
+            else:
+                current = line.rstrip()
+            continue
+        current = stripped if current is None else current + " " + stripped
+    if current is not None:
+        out.append(current)
+    return "\n".join(out).strip()
+
+
+def _note(text, tooltip=""):
+    """One short muted line under a control; the rest goes in its tooltip."""
+    label = QLabel(text)
+    label.setObjectName("muted")
+    label.setWordWrap(True)
+    if tooltip:
+        label.setToolTip(tooltip)
+    return label
+
+
+def _with_info(widget, tooltip):
+    """A control with an (i) beside it whose tooltip says the rest."""
+    holder = QWidget()
+    row = QHBoxLayout(holder)
+    row.setContentsMargins(0, 0, 0, 0)
+    row.setSpacing(6)
+    if isinstance(widget, QLabel):
+        # One short line by design; wrapped, it would break beside its (i).
+        widget.setWordWrap(False)
+    row.addWidget(widget)
+    topic = widget.text() if isinstance(widget, (QLabel, QAbstractButton)) else ""
+    row.addWidget(widgets.InfoIcon(tooltip, topic=topic))
+    row.addStretch(1)
+    return holder
+
+
+def _reveal(widget):
+    """Scroll the page `widget` is on so all of it is in view."""
+    try:
+        area = widget.parentWidget()
+        while area is not None and not isinstance(area, QScrollArea):
+            area = area.parentWidget()
+        if area is not None and widget.isVisible():
+            area.ensureWidgetVisible(widget, 0, 16)
+    except RuntimeError:
+        pass  # the window went while the timer ran
 
 
 def _graphics_device_label(device):
@@ -318,15 +419,23 @@ class LocalModelBox(QGroupBox):
         self._later.setInterval(400)
         self._later.timeout.connect(self._later_fetch)
 
-        form = QFormLayout(self)
+        # Flat: it sits inside a section that already has a frame and a
+        # title, and its rows share that section's label column.
+        self.setObjectName("flat")
+        self.setTitle("")
+        self.setAccessibleName(title)
+        form = self.form = QFormLayout(self)
         form.setFieldGrowthPolicy(
             QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        form.setContentsMargins(0, 0, 0, 0)
+        form.setVerticalSpacing(9)
+        form.setHorizontalSpacing(14)
 
         self.program_label = WrappedLabel()
         self.install_button = QPushButton(t("Download"))
         self.install_button.clicked.connect(self._install_program)
-        form.addRow(t("Program"), self._side_by_side(self.program_label,
-                                                     self.install_button))
+        form.addRow(t("Speech engine") if program is ggml.WHISPER else t("Program"),
+                    self._side_by_side(self.program_label, self.install_button))
 
         self.automatic_button = QPushButton(t("Use automatic selection"))
         self.automatic_button.clicked.connect(self._use_automatic_program)
@@ -390,8 +499,7 @@ class LocalModelBox(QGroupBox):
                                                    self.delete_button))
         self.model.currentIndexChanged.connect(self._model_changed)
 
-        self.status = QLabel("")
-        self.status.setWordWrap(True)
+        self.status = widgets.StatusLine(muted=False)
         form.addRow(self.status)
 
         self._listed.connect(self._on_listed)
@@ -483,7 +591,9 @@ class LocalModelBox(QGroupBox):
         return ggml.program_path(self.program, self.custom_binary)
 
     def _show_program(self):
-        self.automatic_button.setVisible(bool(self.custom_binary))
+        # The row, not just the button: a hidden button in a visible row
+        # still leaves a row's worth of gap under the program.
+        self.form.setRowVisible(self.automatic_button, bool(self.custom_binary))
         path = self._program_path()
         installed = ggml.installed_program(self.program)
         # Installed and selected are independent: a download never changes an
@@ -953,7 +1063,8 @@ class LocalModelBox(QGroupBox):
             # it publishes is split across files, past the size cap, or a
             # projector or draft head rather than a model of its own. Said
             # nowhere, it read as though the click had not registered.
-            self.status.setText(
+            self.status.warn(
+                t("Nothing from this publisher runs here. Choose another one."),
                 t("{repo} publishes nothing that can be run here. Its models "
                   "are split across files, larger than {cap}, or pieces of a "
                   "model rather than one. Choose another publisher.",
@@ -963,107 +1074,40 @@ class LocalModelBox(QGroupBox):
         elif here and not self._program_path():
             # The model alone runs nothing, and "Ready" over a missing program
             # reads as though it does.
-            self.status.setText(t("{name} is here, but the program above is "
-                                  "not. Download it first.", name=name))
+            self.status.warn(t("The program above is missing. Download it first."),
+                             t("{name} is here, but the program above is "
+                               "not. Download it first.", name=name))
         elif here:
             self.status.setText(t("Ready: {name}.", name=name))
         elif item is None:
-            self.status.setText(t("{name} is not on this machine and this "
-                                  "publisher does not offer it. Choose another "
-                                  "model, or another publisher.", name=name))
+            self.status.warn(t("Not available from this publisher. Pick another model."),
+                             t("{name} is not on this machine and this "
+                               "publisher does not offer it. Choose another "
+                               "model, or another publisher.", name=name))
         else:
             self.status.setText(t("{name} has not been downloaded yet.", name=name))
 
 
-class FlowLayout(QLayout):
-    """Widgets side by side that move on to the next line when the width runs
-    out, so a large font or a long translation wraps a row of buttons rather
-    than cutting their labels short."""
-
-    def __init__(self, parent=None, spacing=6):
-        super().__init__(parent)
-        self._items = []
-        self._gap = spacing
-        self.setContentsMargins(0, 0, 0, 0)
-
-    def addItem(self, item):
-        self._items.append(item)
-
-    def insertWidget(self, index, widget):
-        """As QBoxLayout's, for callers that add a button of their own."""
-        self.addChildWidget(widget)
-        self._items.insert(max(0, min(index, len(self._items))), QWidgetItem(widget))
-        self.invalidate()
-
-    def count(self):
-        return len(self._items)
-
-    def itemAt(self, index):
-        return self._items[index] if 0 <= index < len(self._items) else None
-
-    def takeAt(self, index):
-        return self._items.pop(index) if 0 <= index < len(self._items) else None
-
-    def expandingDirections(self):
-        return Qt.Orientation(0)
-
-    def hasHeightForWidth(self):
-        return True
-
-    def heightForWidth(self, width):
-        return self._arrange(QRect(0, 0, width, 0), move=False)
-
-    def setGeometry(self, rect):
-        super().setGeometry(rect)
-        self._arrange(rect, move=True)
-
-    def sizeHint(self):
-        return self.minimumSize()
-
-    def minimumSize(self):
-        # As wide as the widest button: narrower than that, one would be cut.
-        size = QSize()
-        for item in self._items:
-            if not item.isEmpty():
-                size = size.expandedTo(item.sizeHint())
-        margins = self.contentsMargins()
-        return size + QSize(margins.left() + margins.right(),
-                            margins.top() + margins.bottom())
-
-    def _arrange(self, rect, move):
-        """Lay the items out in `rect`, or only measure; the height used."""
-        margins = self.contentsMargins()
-        area = rect.adjusted(margins.left(), margins.top(),
-                             -margins.right(), -margins.bottom())
-        x, y, line = area.x(), area.y(), 0
-        for item in self._items:
-            if item.isEmpty():
-                continue  # a hidden button takes no room
-            size = item.sizeHint()
-            if x > area.x() and x + size.width() > area.right() + 1:
-                x, y, line = area.x(), y + line + self._gap, 0
-            if move:
-                item.setGeometry(QRect(x, y, size.width(), size.height()))
-            x += size.width() + self._gap
-            line = max(line, size.height())
-        return y + line - rect.y() + margins.bottom()
+# Kept under its old name for the callers that import it from here.
+FlowLayout = widgets.FlowLayout
 
 
-def history_marks(row):
+def history_marks(row, program=True):
     """What a history row says about its profile and translation, so that a
     translated text is never mistaken for what was said. Empty for a row
-    written without either."""
+    written without either. `program=False` leaves out the program and site
+    the profile was matched by, for a card that has no room for them."""
     marks = ""
     if "profile" in row:
         marks += t("  ·  profile: {name}", name=row.get("profile") or t("Default"))
         # Only for a row whose program was asked for: one skipped on purpose
         # (an override, the switch off, no profile listing one) says nothing.
-        program = row.get("program")
-        if isinstance(program, str):
-            marks += (t(" ({program})", program=program) if program
+        name = row.get("program")
+        if program and isinstance(name, str):
+            marks += (t(" ({program})", program=name) if name
                       else t(" (program unknown)"))
         site = row.get("site")
-        if isinstance(site, str) and site:
+        if program and isinstance(site, str) and site:
             marks += t("  ·  site: {site}", site=site)
     code = row.get("translate_to")
     if isinstance(code, str) and code:
@@ -1072,6 +1116,94 @@ def history_marks(row):
                   if row.get("translated")
                   else t("  ·  translation into {language} failed", language=language))
     return marks
+
+
+def history_brief(row):
+    """The muted line under a history row: when, in a word or two, and which
+    profile or assistant. The full timestamp and marks are in the reader."""
+    parts = [widgets.short_time(row.get("ts", ""))]
+    if row.get("failed"):
+        # The row is titled by what failed; why is said here, in a word.
+        parts.append((row.get("error") or t("Failed")).splitlines()[0]
+                     if (row.get("error") or "").strip() else t("Failed"))
+    elif row.get("mode") == "ask":
+        parts.append(assistant.SERVICES.get(row.get("assistant"), "Claude"))
+    elif "profile" in row:
+        parts.append(row.get("profile") or t("Default"))
+    code = row.get("translate_to")
+    if isinstance(code, str) and code and not row.get("failed"):
+        language = t(profiles.language_name(code))
+        parts.append(t("into {language}", language=language) if row.get("translated")
+                     else t("translation failed"))
+    return widgets.meta_line(*parts)
+
+
+def history_context(row):
+    """What a run was, past when: the assistant or the profile, and the
+    translation, each in a word or two."""
+    parts = []
+    if row.get("mode") == "ask":
+        parts.append(assistant.SERVICES.get(row.get("assistant"), "Claude"))
+    elif "profile" in row:
+        parts.append(row.get("profile") or t("Default"))
+    code = row.get("translate_to")
+    if isinstance(code, str) and code and not row.get("failed"):
+        language = t(profiles.language_name(code))
+        parts.append(t("into {language}", language=language) if row.get("translated")
+                     else t("translation failed"))
+    return parts
+
+
+def history_detail(row):
+    """The line over an entry in the reader: the day and the minute, how
+    long it was, and the profile or the assistant, the way a person says it
+    ("Today 10:44  ·  18 s  ·  Team chat"). The program it was matched by is
+    the list's tooltip, not this."""
+    duration = t("{seconds} s", seconds=row.get("duration")) if row.get("duration") else ""
+    return widgets.meta_line(widgets.day_time(row.get("ts", "")), duration,
+                             *history_context(row))
+
+
+def history_title(row):
+    """What a history row says first: the text, or for a failure what kind of
+    run failed, so two failures with the same error do not read as one."""
+    if row.get("failed"):
+        return (t("Assistant request failed") if row.get("mode") == "ask"
+                else t("Dictation failed"))
+    return (row.get("text") or "").replace("\n", " ")
+
+
+def history_kind(row):
+    """The glyph a history row leads with."""
+    if row.get("failed"):
+        return "failed"
+    if row.get("mode") == "ask":
+        return "sparkle"
+    if row.get("translate_to") and row.get("translated"):
+        return "globe"
+    return "mic"
+
+
+def key_check(provider, key, base=""):
+    """Ask a hosted service whether `key` works: the line to show, or ApiError
+    with the line to show instead. Runs on a worker thread."""
+    if provider == "openrouter":
+        return api.openrouter_key_status(key)
+    if provider == "gemini":
+        return t("Connection works. {count} models visible.",
+                 count=len(api.gemini_models(key, base)))
+    if provider in ("openai", "groq"):
+        service = cfg.TRANSCRIBERS[provider].service
+        return t("Connection works. {count} audio models visible.",
+                 count=len(api.openai_models(key, base, service) if provider == "groq"
+                           else api.openai_models(key, base)))
+    if provider == "custom":
+        return t("Connection works. {count} models visible.",
+                 count=len(api.custom_models(key, base, t("Custom server"))))
+    service = {"deepseek": "DeepSeek", "opencode": "OpenCode Go",
+               "requesty": "Requesty"}[provider]
+    return t("Connection works. {count} models visible.",
+             count=len(api.openai_models(key, base, service)))
 
 
 def _retryable(row):
@@ -1091,6 +1223,10 @@ class SettingsWindow(QDialog):
     # A failed dictation in the history the user asked to try again, as its
     # row. The owner runs it, since the dictation chain is the owner's.
     retry_requested = pyqtSignal(dict)
+    # What a failed entry with no recording left offers instead of a retry:
+    # "record" (dictate it again) or "check" (the connection settings). The
+    # owner of the home window acts on it.
+    history_action = pyqtSignal(str)
 
     def _sources_once(self):
         """One device listing per window build, shared by every combo.
@@ -1138,6 +1274,8 @@ class SettingsWindow(QDialog):
         # global shortcuts. One dictionary is what lets install, remove and the
         # status line be written once instead of once per key.
         self._shortcut_rows = {}
+        self._shortcut_forms = {}
+        self._shortcut_tips = {}
         # Each provider keeps its own transcription model, so switching the
         # provider back and forth never overwrites the other one's.
         self._models = dict.fromkeys(cfg.TRANSCRIBERS, "")
@@ -1158,54 +1296,110 @@ class SettingsWindow(QDialog):
         self._wheel_guard = WheelGuard(self)
 
         tabs = self.tabs = QTabWidget(self)
-        tabs.addTab(self._scrolled(self._general_tab()), t("General"))
-        tabs.addTab(self._scrolled(self._display_tab()), t("Display"))
-        self.api_tab_index = tabs.addTab(
-            self._scrolled(self._api_tab()), t("API and models"))
-        tabs.addTab(self._scrolled(self._prompt_tab()), t("Text editing and dictionary"))
+        builders = {
+            "general": self._general_tab,
+            "api": self._api_tab, "editing": self._prompt_tab,
+            "assistant": self._assistant_tab, "meeting": self._meeting_tab,
+            "shortcuts": self._shortcut_tab,
+        }
         self.profiles_editor = profiles_ui.ProfilesEditor()
-        tabs.addTab(self._scrolled(self.profiles_editor), t("Profiles"))
-        tabs.addTab(self._scrolled(self._assistant_tab()), t("Agent"))
-        tabs.addTab(self._scrolled(self._meeting_tab()), t("Meeting"))
-        tabs.addTab(self._scrolled(self._shortcut_tab()), t("Shortcuts"))
+        # Pages are opened by name (show_page), never by a number that moves
+        # whenever a page is added.
+        self.page_index = {}
+        for name, title, _short, _glyph in PAGES:
+            page = self.profiles_editor if name == "profiles" else builders[name]()
+            self.page_index[name] = tabs.addTab(self._scrolled(page, PAGE_WIDTH), t(title))
+        self.api_tab_index = self.page_index["api"]
         self.task_pages = {
-            "file": self._scrolled(self._file_tab()),
-            "minutes": self._scrolled(self._minutes_tab()),
-            "history": self._scrolled(self._history_tab()),
+            "file": self._file_tab(),
+            "minutes": self._minutes_tab(),
+            "history": self._history_tab(),
         }
         for page in self.task_pages.values():
             page.setParent(self)
             page.hide()
-        retention = QGroupBox(t("History"))
-        retention_form = QFormLayout(retention)
-        retention_form.addRow(t("Keep at most"), self.history_limit)
-        general_layout = tabs.widget(0).widget().layout()
-        general_layout.addRow(retention)
         tabs.tabBar().hide()
-        self.categories = QComboBox()
-        self.categories.setAccessibleName(t("Settings category"))
-        for index in range(tabs.count()):
-            self.categories.addItem(tabs.tabText(index))
-        self.categories.currentIndexChanged.connect(tabs.setCurrentIndex)
-        tabs.currentChanged.connect(self.categories.setCurrentIndex)
+
+        # The sidebar: every page in view at once, rather than behind a
+        # dropdown that looks like one more setting.
+        self.nav = QListWidget()
+        self.nav.setObjectName("nav")
+        self.nav.setAccessibleName(t("Settings category"))
+        # Wider than the glyph: an unsaved page's dot goes beside the glyph
+        # rather than on top of it (widgets.glyph_pixmap, aside).
+        self.nav.setIconSize(QSize(26, 18))
+        self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.nav.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        for _name, _title, short, _glyph in PAGES:
+            item = QListWidgetItem(t(short))
+            item.setToolTip(t(short))
+            self.nav.addItem(item)
+        self.nav.currentRowChanged.connect(tabs.setCurrentIndex)
+        tabs.currentChanged.connect(self._page_changed)
+
+        self.page_title = QLabel("")
+        self.page_title.setObjectName("pagetitle")
+        # Moved to the left edge of the page under it whenever that moves
+        # (_align_title), so the title, the section headings and the boxes
+        # share one edge whatever the width and whether a scroll bar shows.
+        title_row = self.title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.addWidget(self.page_title, 1)
 
         # Save keeps the window open, so the window is closed with the titlebar
         # cross (or Escape) instead. A "Cancel" next to it would be a lie: the
         # settings are already on disk by then.
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save)
-        buttons.button(QDialogButtonBox.StandardButton.Save).setText(t("Apply changes"))
-        discard = buttons.addButton(t("Discard changes"), QDialogButtonBox.ButtonRole.ResetRole)
-        discard.clicked.connect(self._discard_changes)
+        self.apply_button = QPushButton(t("Apply changes"))
+        self.apply_button.setObjectName("primary")
+        # Always shaped as the primary button: a pale fill while there is
+        # nothing to apply, the accent once there is.
+        self.apply_button.setProperty("footer", True)
+        self.apply_button.setAutoDefault(False)
+        self.apply_button.clicked.connect(self._save)
+        self.discard_button = QPushButton(t("Discard changes"))
+        # An outlined ghost button: beside Apply it must never look like a
+        # second primary, enabled or not.
+        self.discard_button.setObjectName("ghost")
+        self.discard_button.setAutoDefault(False)
+        self.discard_button.clicked.connect(self._discard_changes)
         self.dirty_label = QLabel("")
         self.dirty_label.setObjectName("muted")
-        buttons.accepted.connect(self._save)
+        footer = QWidget()
+        footer.setObjectName("footerbar")
+        footer.setFixedHeight(FOOTER_HEIGHT)
+        bar = QHBoxLayout(footer)
+        bar.setContentsMargins(PAGE_GUTTER, 0, PAGE_GUTTER, 0)
+        bar.setSpacing(10)
+        bar.addWidget(self.dirty_label, 1)
+        bar.addWidget(self.discard_button)
+        bar.addWidget(self.apply_button)
 
-        layout = QVBoxLayout(self)
-        layout.addWidget(self.categories)
-        layout.addWidget(tabs)
-        layout.addWidget(self.dirty_label)
-        layout.addWidget(buttons)
-        self._size_to_screen(680, 640)
+        side = QWidget()
+        side.setObjectName("side")
+        side_layout = QVBoxLayout(side)
+        side_layout.setContentsMargins(10, 14, 6, 10)
+        side_layout.addWidget(self.nav)
+        self.side = side
+        rule = QFrame()
+        rule.setObjectName("vrule")
+        hrule = QFrame()
+        hrule.setObjectName("rule")
+        right = QVBoxLayout()
+        right.setContentsMargins(0, 14, 0, 0)
+        right.setSpacing(8)
+        right.addLayout(title_row)
+        right.addWidget(tabs, 1)
+        right.addWidget(hrule)
+        right.addWidget(footer)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(side)
+        layout.addWidget(rule)
+        layout.addLayout(right, 1)
+        self._compact = None
+        self._set_compact(False)
+        self._size_to_screen(940, 700)
 
         self._models_loaded.connect(self._on_models_loaded)
         self._gemini_models_loaded.connect(self._on_gemini_models_loaded)
@@ -1229,14 +1423,33 @@ class SettingsWindow(QDialog):
         self._load()
         for button in self.findChildren(QPushButton):
             button.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        compact = self.tabs.findChildren(QSpinBox) + [
-            self.theme_choice,
-            self.ui_language, self.language, self.paste_shortcut, self.corner,
-            self.cleanup_reasoning, self.local_llm_reasoning,
-            self.assistant_reasoning, self.meeting_reasoning,
-        ]
+        compact = self._short_selects()
+        # One width for every short select and one for every number box, so
+        # the fields of a page end where the fields above them end; only the
+        # model names, the devices and free text stretch with the window.
         for box in compact:
             box.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
+            if isinstance(box, QComboBox):
+                box.setFixedWidth(widgets.SELECT_WIDTH)
+                # A longer entry is elided in the closed box and shown whole
+                # in the list that drops down.
+                LocalModelBox._fit_popup(box)
+            else:
+                # The same short width as the selects: two widths per page,
+                # full or short, rather than one per kind of control.
+                box.setFixedWidth(max(widgets.SELECT_WIDTH, box.minimumWidth()))
+        # The stylesheet's padding does not reach the editor inside a spin
+        # box, so its text would sit against the frame while every combo and
+        # line edit beside it starts 7 px in.
+        for box in self.findChildren(QSpinBox):
+            box.lineEdit().setTextMargins(7, 0, 0, 0)
+        # A long entry (a model file and its "not downloaded" note) would
+        # otherwise set the box's minimum width and push the page sideways.
+        for box in self.tabs.findChildren(QComboBox):
+            if box not in compact:
+                box.setSizeAdjustPolicy(
+                    QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+                box.setMinimumContentsLength(14)
         # Listed once, in a fixed order. findChildren follows the order of the
         # children, and showing a tab raises its page to the end of that, so a
         # list read again after the user moved between tabs would compare its
@@ -1244,7 +1457,9 @@ class SettingsWindow(QDialog):
         # a search or a selection there is not an edit, and the editors say
         # when something was edited.
         self._form_boxes = self._boxes()
+        self._box_pages = [self._page_of(box) for box in self._form_boxes]
         self._saved_form = self._form_values()
+        self._show_dirty()  # Apply and Discard start disabled: nothing to do yet
         for box in self._form_boxes:
             if isinstance(box, (QLineEdit, QPlainTextEdit)):
                 box.textChanged.connect(self._show_dirty)
@@ -1278,44 +1493,83 @@ class SettingsWindow(QDialog):
         # once as the window opens would be wrong for most of the wait. Runs
         # only while the window is on screen: there is nobody to read it
         # otherwise, and it costs a lock and a poll() each time.
+        self._page_changed(self.tabs.currentIndex())
         self._local_state_timer = QTimer(self)
         self._local_state_timer.setInterval(2000)
         self._local_state_timer.timeout.connect(self._show_local_state)
         self._show_local_state()
+
+    def _short_selects(self):
+        """The boxes that hold a short choice or a number, which share one
+        width: every fixed list but the ones naming a device or a model file,
+        whose entries are as long as somebody else decided."""
+        stretch = {self.mic, self.meeting_mic, self.meeting_system, self.local_device}
+        boxes = []
+        for box in self.tabs.findChildren((QComboBox, QSpinBox)):
+            if box in stretch or isinstance(box.parentWidget(), QSpinBox):
+                continue
+            owner = box.parentWidget()
+            inside = False
+            while owner is not None:
+                if isinstance(owner, (LocalModelBox, profiles_ui.DictionaryEditor)):
+                    inside = True
+                    break
+                owner = owner.parentWidget()
+            # The paste key is typed into as well, but holds a key like the
+            # other short selects rather than a model name.
+            if inside or (isinstance(box, QComboBox) and box.isEditable()
+                          and box is not self.paste_shortcut):
+                continue
+            boxes.append(box)
+        return boxes
 
     def _boxes(self):
         return [box for box in self.tabs.findChildren(
                     (QLineEdit, QComboBox, QCheckBox, QSpinBox, QPlainTextEdit))
                 if not profiles_ui.owned(box)]
 
-    def _form_values(self):
-        values = []
+    def _page_of(self, widget):
+        """The name of the page `widget` is on, or ""."""
+        areas = {self.tabs.widget(index): name for name, index in self.page_index.items()}
+        while widget is not None:
+            if widget in areas:
+                return areas[widget]
+            widget = widget.parentWidget()
+        return ""
+
+    def _form_entries(self):
+        """Every value the form holds, each with the page it is on."""
+        entries = []
+        pages = getattr(self, "_box_pages", None) or [""] * len(self._form_boxes)
         # The editors report their own contents, below.
-        for box in self._form_boxes:
+        for box, page in zip(self._form_boxes, pages):
             if isinstance(box, QPlainTextEdit):
                 if not box.isReadOnly():
-                    values.append(box.toPlainText())
+                    entries.append((page, box.toPlainText()))
             elif isinstance(box, QLineEdit):
-                values.append(box.text())
+                entries.append((page, box.text()))
             elif isinstance(box, QComboBox):
                 value = box.currentData()
-                values.append(box.currentText() if value is None else value)
+                entries.append((page, box.currentText() if value is None else value))
             elif isinstance(box, QCheckBox):
-                values.append(box.isChecked())
+                entries.append((page, box.isChecked()))
             else:
-                values.append(box.value())
+                entries.append((page, box.value()))
         models = dict(self._models)
         provider = self.transcribe_provider.currentData()
         if provider in models:
             models[provider] = self.transcribe_model.currentText().strip()
-        values.append(models)
-        values.extend((
-            self.local_whisper.custom_binary,
-            self.local_llm.custom_binary,
-            self.dictionary_editor.values(),
-            self.profiles_editor.values(),
+        entries.extend((
+            ("api", models),
+            ("api", self.local_whisper.custom_binary),
+            ("api", self.local_llm.custom_binary),
+            ("editing", self.dictionary_editor.values()),
+            ("profiles", self.profiles_editor.values()),
         ))
-        return values
+        return entries
+
+    def _form_values(self):
+        return [value for _page, value in self._form_entries()]
 
     def refresh_configuration(self):
         """Reload clean forms while keeping unsaved edits for a later merge."""
@@ -1345,8 +1599,94 @@ class SettingsWindow(QDialog):
         self._show_dirty()
 
     def _show_dirty(self, *_):
-        dirty = self._form_values() != getattr(self, "_saved_form", [])
+        entries = self._form_entries()
+        saved = getattr(self, "_saved_form", [])
+        dirty = [value for _page, value in entries] != saved
         self.dirty_label.setText(t("Unsaved changes") if dirty else "")
+        self.apply_button.setEnabled(dirty)
+        self.discard_button.setEnabled(dirty)
+        # Which pages hold the changes, as a dot on their sidebar entry: an
+        # edit made three pages ago is otherwise easy to apply unawares.
+        if len(saved) == len(entries):
+            pages = {page for (page, value), before in zip(entries, saved)
+                     if value != before}
+        else:
+            pages = {page for page, _value in entries} if dirty else set()
+        if pages != getattr(self, "_dirty_pages", None):
+            self._dirty_pages = pages
+            self._paint_nav()
+
+    # ---- navigation ------------------------------------------------------
+
+    def show_page(self, name):
+        """Open the page called `name` (see PAGES)."""
+        self.tabs.setCurrentIndex(self.page_index[name])
+
+    def current_page(self):
+        index = self.tabs.currentIndex()
+        return next((name for name, i in self.page_index.items() if i == index), "")
+
+    def _page_changed(self, index):
+        if self.nav.currentRow() != index:
+            self.nav.setCurrentRow(index)
+        if 0 <= index < len(PAGES):
+            self.page_title.setText(t(PAGES[index][1]))
+            area = self.tabs.widget(index)
+            if isinstance(area, QScrollArea) and area.widget() is not None:
+                area.widget().installEventFilter(self)
+        self._align_title()
+
+    def _align_title(self):
+        """Start the title where the page under it starts."""
+        area = self.tabs.currentWidget()
+        page = area.widget() if isinstance(area, QScrollArea) else None
+        if page is None or not page.isVisible():
+            return
+        left = page.mapTo(self, page.rect().topLeft()).x()
+        margins = page.layout().contentsMargins() if page.layout() else None
+        inner = margins.left() if margins else 0
+        origin = self.tabs.mapTo(self, self.tabs.rect().topLeft()).x()
+        self.title_row.setContentsMargins(max(0, left - origin + inner), 0, 0, 0)
+
+    def eventFilter(self, watched, event):
+        if event.type() in (QEvent.Type.Move, QEvent.Type.Resize, QEvent.Type.Show):
+            area = self.tabs.currentWidget()
+            if isinstance(area, QScrollArea) and area.widget() is watched:
+                QTimer.singleShot(0, self._align_title)
+        return super().eventFilter(watched, event)
+
+    def _apply_theme(self, name):
+        theme.apply(self, name)
+        self._paint_nav()
+        for badge in self.findChildren((widgets.GlyphLabel, widgets.Badge, widgets.GlyphButton)):
+            badge.restyle()
+
+    def _paint_nav(self):
+        """The sidebar's glyphs, with a dot on every page holding an edit."""
+        colors = theme.palette(self.property("dikte_theme") or theme.DEFAULT)
+        dirty = getattr(self, "_dirty_pages", set())
+        for row, (name, _title, short, glyph) in enumerate(PAGES):
+            item = self.nav.item(row)
+            changed = name in dirty
+            item.setIcon(widgets.glyph(glyph, colors["text"], 18,
+                                       dot=colors["accent"] if changed else None,
+                                       aside=True))
+            item.setToolTip(t("{page} (unsaved changes)", page=t(short)) if changed
+                            else t(short))
+
+    def _set_compact(self, compact):
+        """Below a comfortable width the sidebar keeps its icons only."""
+        if compact == self._compact:
+            return
+        self._compact = compact
+        for row, (_name, _title, short, _glyph) in enumerate(PAGES):
+            self.nav.item(row).setText("" if compact else t(short))
+        self.side.setFixedWidth(64 if compact else 196)
+        QTimer.singleShot(0, self._align_title)
+
+    def resizeEvent(self, event):
+        self._set_compact(event.size().width() < 800)
+        super().resizeEvent(event)
 
     def _discard_changes(self):
         self._load()
@@ -1369,6 +1709,22 @@ class SettingsWindow(QDialog):
             self._local_state_text(ggml.WHISPER, local.get("whisper", {})))
         self.local_llm_state.setText(
             self._local_state_text(ggml.LLAMA, local.get("llama", {})))
+        self._sync_local_rows(local)
+
+    def _sync_local_rows(self, local=None):
+        """The loaded-on line under each local model, only once it is loaded.
+
+        "Not loaded" is the state of every model nobody has used yet, and says
+        nothing the Model row above it does not.
+        """
+        local = ggml.state() if local is None else local
+        stt = (self.transcribe_provider.currentData() or "local") == "local"
+        cleaner = (self.cleanup_provider.currentData() or "openrouter") == "local"
+        self.stt_form.setRowVisible(
+            self.local_state, stt and ggml.accel_kind(local.get("whisper", {})) != "off")
+        self.cleanup_form.setRowVisible(
+            self.local_llm_state,
+            cleaner and ggml.accel_kind(local.get("llama", {})) != "off")
 
     @staticmethod
     def _local_state_text(program, entry):
@@ -1396,17 +1752,25 @@ class SettingsWindow(QDialog):
         return t("Loaded on the processor: only the CPU backend was loaded. "
                  "Check the server log for graphics backend or driver errors.")
 
-    def _scrolled(self, page):
+    def _scrolled(self, page, cap=CONTENT_WIDTH):
         """A tab that scrolls instead of growing the window to fit."""
         # Every tab goes through here. A page kept at its full height passes
         # that height on as the window's minimum, and a tall one (the API tab
         # is the tallest, and taller still under a large interface font) then
         # pushes Save off the bottom of the screen with no way to shrink back.
-        page.setMaximumWidth(680)
+        page.setMaximumWidth(cap)
+        if page.layout() is not None:
+            page.layout().setContentsMargins(PAGE_GUTTER, 4, PAGE_GUTTER, 16)
         area = QScrollArea()
         area.setWidgetResizable(True)
+        # Centred in the pane, title and all: a capped page against the
+        # sidebar leaves the right third of a wide window empty. The pages
+        # that have more to show go to two columns before they get here.
         area.setAlignment(Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop)
         area.setFrameShape(QScrollArea.Shape.NoFrame)
+        # Never sideways: a page wider than the window is a layout bug, and the
+        # combo boxes below elide rather than push the page out.
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         area.setWidget(page)
         for box in page.findChildren((QComboBox, QAbstractSpinBox)):
             # Focus by click or by tab, not by wheel. Qt hands the focus over
@@ -1434,17 +1798,68 @@ class SettingsWindow(QDialog):
 
     # ---- tabs ----------------------------------------------------------
 
-    def _general_tab(self):
+    @staticmethod
+    def _section(title):
+        """A titled block of form rows, the unit every page is built from:
+        a bold title above a framed form. Returns the block (to add, show
+        and hide) and its form."""
+        return widgets.section(title)
+
+    @staticmethod
+    def _align_labels(*boxes):
+        """One label column for every section of a page: as wide as the
+        longest label on it, up to widgets.LABEL_MAX, where a longer label
+        wraps rather than pushing every field to the right. Sibling cards
+        then start their controls at the same x. A row with no label (a lone
+        checkbox, a status line, a row of buttons) spans the whole width
+        rather than sitting behind an empty label. Forms nested in a section
+        (box.subforms) share the column. Returns its width."""
+        forms = []
+        for box in boxes:
+            form = getattr(box, "form", None)
+            if not isinstance(form, QFormLayout):
+                continue
+            forms += [form] + list(getattr(box, "subforms", []))
+        return widgets.align_form(forms) if forms else 0
+
+    @staticmethod
+    def _advanced(box, form, *rows):
+        """Tuning most people never touch, behind an Advanced disclosure at
+        the end of `box`. `rows` are (label, widget) pairs; returns the
+        disclosure and the form inside it."""
+        holder, inner = widgets.subform(box)
+        for label, widget in rows:
+            inner.addRow(label, widget)
+        disclosure = widgets.Disclosure(t("Advanced"), holder)
+        form.addRow(disclosure)
+        return disclosure, inner
+
+    def _page(self, *sections):
         page = QWidget()
-        form = QFormLayout(page)
-        form.setFieldGrowthPolicy(
-            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        layout = QVBoxLayout(page)
+        layout.setSpacing(4)
+        for section in sections:
+            layout.addWidget(section)
+        layout.addStretch(1)
+        self._align_labels(*sections)
+        return page
 
-        self.ui_language = QComboBox()
-        for label, code in UI_LANGUAGES:
-            self.ui_language.addItem(t(label), code)
-        form.addRow(t("Interface language"), self.ui_language)
+    def _two_columns(self, rows, order=None):
+        """A page whose sections pair up in rows on a wide window (see
+        widgets.Columns) and stack in one column on a narrow one."""
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setSpacing(4)
+        page.columns = widgets.Columns(rows, order=order)
+        layout.addWidget(page.columns)
+        layout.addStretch(1)
+        sections = [section for row in rows for cell in row
+                    for section in (cell if isinstance(cell, (list, tuple)) else [cell])]
+        self._align_labels(*sections)
+        return page
 
+    def _general_tab(self):
+        recording, form = self._section(t("Recording"))
         self.mic = QComboBox()
         self.mic.addItem(t("Default microphone"), "")
         for name, desc in self._sources_once():
@@ -1456,31 +1871,14 @@ class SettingsWindow(QDialog):
             self.language.addItem(t(label), code)
         form.addRow(t("Speech language"), self.language)
 
-        self.auto_paste = QCheckBox(t("Paste the text into the focused window"))
-        form.addRow("", self.auto_paste)
-
-        self.paste_shortcut = QComboBox()
-        # A shortlist of the combinations that usually paste, not the set of
-        # them: a stored one this desktop does not offer is kept as it is
-        # rather than quietly replaced by the first item on the list.
-        self.paste_shortcut.setEditable(True)
-        self.paste_shortcut.addItems(paste.desktop().shortcuts)
-        self.paste_shortcut.setToolTip(t(
-            "macOS asks for Accessibility permission the first time this is sent."
-            if paste.desktop() is paste.MACOS else
-            "Terminals usually want ctrl+shift+v. Change this if pasting does nothing."
-        ))
-        form.addRow(t("Paste key"), self.paste_shortcut)
-
-        self.restore_clipboard = QCheckBox(t("Restore the previous clipboard after pasting"))
-        form.addRow("", self.restore_clipboard)
-
         self.max_seconds = QSpinBox()
         self.max_seconds.setRange(10, 3600)
         self.max_seconds.setSuffix(t(" s"))
         form.addRow(t("Longest recording"), self.max_seconds)
 
-        self.skip_silent = QCheckBox(t("Skip silent recordings (don't call the API)"))
+        self.skip_silent = QCheckBox(t("Skip silent recordings"))
+        self.skip_silent.setToolTip(t(
+            "A recording with no speech in it is dropped without calling the API."))
         form.addRow("", self.skip_silent)
 
         self.silence_db = QSpinBox()
@@ -1492,13 +1890,11 @@ class SettingsWindow(QDialog):
             "speech gets dropped; raise it if noise still gets through.",
             margin=10,
         ))
-        form.addRow(t("Silence threshold"), self.silence_db)
 
-        self.filter_hallucinations = QCheckBox(
-            t("Discard stock phrases models invent for near-silent audio")
-        )
+        self.filter_hallucinations = QCheckBox(t("Remove phrases invented during silence"))
         self.filter_hallucinations.setToolTip(
-            t("Whisper answers silence with things like “Thanks for watching”.")
+            t("Discard stock phrases models invent for near-silent audio") + ". "
+            + t("Whisper answers silence with things like “Thanks for watching”.")
         )
         form.addRow("", self.filter_hallucinations)
 
@@ -1508,10 +1904,42 @@ class SettingsWindow(QDialog):
         ))
         form.addRow("", self.audio_cues)
 
-        self.keep_audio = QCheckBox(
-            t("Keep audio files ({path})", path=str(cfg.RECORDINGS_DIR))
-        )
+        self.keep_audio = QCheckBox(t("Keep the audio files"))
+        self.keep_audio.setToolTip(t("Saved in {path}", path=str(cfg.RECORDINGS_DIR)))
         form.addRow("", self.keep_audio)
+        self._advanced(recording, form, (t("Silence threshold"), self.silence_db))
+
+        pasting, form = self._section(t("Pasting"))
+        self.auto_paste = QCheckBox(t("Paste the text into the focused window"))
+        form.addRow("", self.auto_paste)
+        self.pasting_form = form
+
+        self.paste_shortcut = QComboBox()
+        # A shortlist of the combinations that usually paste, not the set of
+        # them: a stored one this desktop does not offer is kept as it is
+        # rather than quietly replaced by the first item on the list.
+        self.paste_shortcut.setEditable(True)
+        self.paste_shortcut.addItems([key_label(k) for k in paste.desktop().shortcuts])
+        self.paste_shortcut.setToolTip(t(
+            "macOS asks for Accessibility permission the first time this is sent."
+            if paste.desktop() is paste.MACOS else
+            "Terminals usually want ctrl+shift+v. Change this if pasting does nothing."
+        ))
+        # In the label column like every other row. It means nothing while
+        # pasting is off, so it is greyed out then rather than hidden: the
+        # combination stays in view for whoever turns pasting back on.
+        self.paste_key_label = QLabel(t("Paste key"))
+        form.addRow(self.paste_key_label, self.paste_shortcut)
+        self.auto_paste.toggled.connect(self._sync_paste_key)
+
+        self.restore_clipboard = QCheckBox(t("Restore the previous clipboard after pasting"))
+        form.addRow("", self.restore_clipboard)
+
+        application, form = self._section(t("Application"))
+        self.ui_language = QComboBox()
+        for label, code in UI_LANGUAGES:
+            self.ui_language.addItem(t(label), code)
+        form.addRow(t("Interface language"), self.ui_language)
 
         self.start_in_tray = QCheckBox(t("Start in the tray when I log in"))
         self.start_in_tray.setToolTip(
@@ -1521,6 +1949,16 @@ class SettingsWindow(QDialog):
         )
         form.addRow("", self.start_in_tray)
 
+        self.history_limit = QSpinBox()
+        self.history_limit.setRange(0, 10000)
+        self.history_limit.setSpecialValueText(t("no limit"))
+        self.history_limit.setSuffix(t(" entries"))
+        self.history_limit.setToolTip(t(
+            "Once the history passes this many entries, the oldest one is dropped "
+            "every time a new one arrives. Set it to 0 to keep everything."
+        ))
+        form.addRow(t("History size"), self.history_limit)
+
         self.update_check = QCheckBox(t("Look for a newer version once a day"))
         self.update_check.setToolTip(
             t("Dikte only looks. What it finds opens the release page in your "
@@ -1529,6 +1967,7 @@ class SettingsWindow(QDialog):
         form.addRow(t("Updates"), self.update_check)
 
         self.update_status = WrappedLabel("")
+        self.update_status.setObjectName("muted")
         self.update_page = QPushButton(t("Open the release page"))
         self.update_page.clicked.connect(
             lambda: QDesktopServices.openUrl(QUrl(self._release_url))
@@ -1537,17 +1976,27 @@ class SettingsWindow(QDialog):
         self.update_now.clicked.connect(self._check_for_update)
         form.addRow("", self._row(self.update_status, self.update_page,
                                   self.update_now))
-        return page
+        appearance = self._appearance_section()
+        # Wide: two rows of two, paired by height so that neither card in a
+        # row is left with much empty space (Recording is the tall one).
+        # Narrow: one column, recording and its look first.
+        return self._two_columns([(recording, application), (appearance, pasting)],
+                                 order=[recording, appearance, pasting, application])
 
-    def _display_tab(self):
-        page = QWidget()
-        form = QFormLayout(page)
+    def _sync_paste_key(self, *_):
+        on = self.auto_paste.isChecked()
+        self.paste_shortcut.setEnabled(on)
+        self.paste_key_label.setEnabled(on)
 
+    def _appearance_section(self):
+        # The theme and the recording indicator in one card: a card holding
+        # the theme alone was a frame around a single box.
+        appearance, form = self._section(t("Appearance"))
         self.theme_choice = QComboBox()
         for name, label in theme.NAMES.items():
             self.theme_choice.addItem(t(label), name)
         self.theme_choice.currentIndexChanged.connect(
-            lambda: theme.apply(self, self.theme_choice.currentData()))
+            lambda: self._apply_theme(self.theme_choice.currentData()))
         form.addRow(t("Theme"), self.theme_choice)
 
         self.indicator_screen = QComboBox()
@@ -1582,9 +2031,9 @@ class SettingsWindow(QDialog):
 
         self.corner = QComboBox()
         for value in CORNERS:
-            self.corner.addItem(t(value), value)
+            self.corner.addItem(t(CORNER_LABELS[value]), value)
         form.addRow(t("Indicator corner"), self.corner)
-        return page
+        return appearance
 
     def _sync_follow_pointer(self):
         self.follow_pointer.setEnabled(not self.indicator_screen.currentData())
@@ -1592,51 +2041,53 @@ class SettingsWindow(QDialog):
     def _api_tab(self):
         page = QWidget()
         outer = QVBoxLayout(page)
+        outer.setSpacing(6)
 
-        # Keys first, then the two jobs, because OpenRouter can now do both of
-        # them and a key no longer belongs to a single job.
-        keys = QGroupBox(t("Keys"))
-        keys_form = QFormLayout(keys)
-        self.openai_key = self._key_row(
-            keys_form, "openai", t("sk-… (falls back to OPENAI_API_KEY)"),
-            self._test_openai)
-        self.groq_key = self._key_row(
-            keys_form, "groq", t("gsk_… (falls back to GROQ_API_KEY)"),
-            self._test_groq)
+        # One key per service, each in a holder that moves: the key of the
+        # transcription provider sits under that provider, the cleanup
+        # provider's under cleanup, and the rest wait, collapsed, under Other
+        # connections. A key no longer belongs to a single job, so it is never
+        # in two places and never missing from all of them.
+        self._key_holders = {}
+        self._key_homes = {}
+        self._key_names = []
+        others = QWidget()
+        self.other_keys = QVBoxLayout(others)
+        self.other_keys.setContentsMargins(0, 0, 0, 0)
+        self.other_keys.setSpacing(8)
+        # "Paste key" in every field; the environment variable a key may come
+        # from instead is the field's tooltip, not a placeholder to decode.
+        self.openai_key = self._key_row("openai", "OPENAI_API_KEY", self._test_openai)
+        self.groq_key = self._key_row("groq", "GROQ_API_KEY", self._test_groq)
         self.openrouter_key = self._key_row(
-            keys_form, "openrouter", t("sk-or-… (falls back to OPENROUTER_API_KEY)"),
-            self._test_openrouter)
+            "openrouter", "OPENROUTER_API_KEY", self._test_openrouter)
         self.gemini_key = self._key_row(
-            keys_form, "gemini", t("(falls back to GEMINI_API_KEY)"),
-            self._test_gemini, service="Google AI Studio")
+            "gemini", "GEMINI_API_KEY", self._test_gemini, service="Google AI Studio")
         self.deepseek_key = self._key_row(
-            keys_form, "deepseek", t("(falls back to DEEPSEEK_API_KEY)"),
-            self._test_deepseek, service="DeepSeek")
+            "deepseek", "DEEPSEEK_API_KEY", self._test_deepseek, service="DeepSeek")
         self.opencode_key = self._key_row(
-            keys_form, "opencode", t("(falls back to OPENCODE_API_KEY)"),
-            self._test_opencode, service="OpenCode Go")
+            "opencode", "OPENCODE_API_KEY", self._test_opencode, service="OpenCode Go")
         self.requesty_key = self._key_row(
-            keys_form, "requesty", t("(falls back to REQUESTY_API_KEY)"),
-            self._test_requesty)
+            "requesty", "REQUESTY_API_KEY", self._test_requesty)
         # The one provider whose address is not known in advance, so it is the
         # one with an address field; the others keep theirs in the config.
         self.custom_url = QLineEdit()
         self.custom_url.setPlaceholderText(
             t("OpenAI-compatible, e.g. http://localhost:8000/v1"))
-        keys_form.addRow(t("Custom server address"), self.custom_url)
+        self.custom_url.setAccessibleName(t("Custom server address"))
+        self.custom_url.setToolTip(t("Custom server address"))
         self.custom_key = self._key_row(
-            keys_form, "custom", t("Optional (falls back to CUSTOM_API_KEY)"),
-            self._test_custom, service=t("Custom server"))
-        outer.addWidget(keys)
+            "custom", "CUSTOM_API_KEY", self._test_custom, service=t("Custom server"),
+            above=self.custom_url, optional=True)
+        self.other_connections = widgets.Disclosure(t("Other connections"), others)
 
-        stt = QGroupBox(t("Speech to text"))
-        stt_form = QFormLayout(stt)
-        stt_form.setFieldGrowthPolicy(
-            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        stt, stt_form = self._section(t("Speech to text"))
         self.transcribe_provider = QComboBox()
         for label, value in TRANSCRIBE_PROVIDERS:
             self.transcribe_provider.addItem(t(label), value)
         stt_form.addRow(t("Provider"), self.transcribe_provider)
+        self.stt_key_slot = self._key_slot()
+        stt_form.addRow(t("Key"), self.stt_key_slot)
 
         # A hosted provider takes any model id that is typed at it; the local
         # one offers what has been published. One row each, and only the rows of
@@ -1652,7 +2103,10 @@ class SettingsWindow(QDialog):
         # OpenRouter only: which of its models a timestamped run asks for.
         self.file_model = QComboBox()
         self.file_model.setEditable(True)
-        self.file_model.lineEdit().setPlaceholderText(api.OPENROUTER_FILE_MODEL)
+        # Empty in the settings means whisper-1; said as a choice of its own
+        # rather than a grey placeholder that reads as a disabled box.
+        self.file_model_default = t("{model} (default)", model=api.OPENROUTER_FILE_MODEL)
+        self.file_model.addItem(self.file_model_default)
         self.file_model.setToolTip(
             t("The model a timestamped audio file (subtitles) is sent to. Not every model "
               "on OpenRouter returns segment times; empty means openai/whisper-1."))
@@ -1660,14 +2114,14 @@ class SettingsWindow(QDialog):
         stt_form.addRow(t("Audio file model"), self.file_model_row)
         # A spanning row: in the narrow field column a wrapped label gets a
         # height that fits one line, and the rest of the text is cut off.
-        self.transcribe_status = QLabel("")
-        self.transcribe_status.setWordWrap(True)
+        self.transcribe_status = widgets.StatusLine()
         stt_form.addRow(self.transcribe_status)
 
         self.local_whisper = LocalModelBox(
             ggml.WHISPER, t("On this machine"),
             ggml.whisper_models, ggml.whisper_model_path)
         stt_form.addRow(self.local_whisper)
+        stt.subforms.append(self.local_whisper.form)
 
         self.local_models_dir = QLineEdit()
         self.local_models_dir.setPlaceholderText(str(ggml.DATA_DIR / "models"))
@@ -1678,8 +2132,7 @@ class SettingsWindow(QDialog):
         ))
         choose_models_dir = QPushButton(t("Choose…"))
         choose_models_dir.clicked.connect(self._choose_models_dir)
-        stt_form.addRow(t("Model folder"), self._row(
-            self.local_models_dir, choose_models_dir))
+        self.models_dir_row = self._row(self.local_models_dir, choose_models_dir)
 
         self.local_device = QComboBox()
         self.local_device.addItem(t("Automatic (whisper.cpp default)"), "auto")
@@ -1719,37 +2172,30 @@ class SettingsWindow(QDialog):
             .horizontalAdvance(t("Automatic")) + 56)
         self.local_options = QWidget()
         options_form = self.local_options_form = QFormLayout(self.local_options)
+        options_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         options_form.setContentsMargins(0, 0, 0, 0)
+        options_form.setVerticalSpacing(9)
+        options_form.setHorizontalSpacing(14)
+        stt.subforms.append(options_form)
         options_form.addRow(t("Processing device"), self.local_device)
         options_form.addRow("", self.local_preload)
-        self.local_advanced_toggle = QToolButton()
-        self.local_advanced_toggle.setObjectName("disclosure")
-        self.local_advanced_toggle.setText(t("Advanced"))
-        self.local_advanced_toggle.setCheckable(True)
-        self.local_advanced_toggle.setAutoRaise(True)
-        self.local_advanced_toggle.setSizePolicy(
-            QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-        self.local_advanced_toggle.setToolButtonStyle(
-            Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        options_form.addRow(self.local_advanced_toggle)
-        options_form.addRow(t("CPU threads"), self.local_threads)
-        self.local_advanced_toggle.toggled.connect(self._toggle_local_advanced)
-        self._toggle_local_advanced(False)
+        # The same disclosure as every other Advanced, holding the threads.
+        self.local_advanced, _threads_form = self._advanced(
+            stt, options_form, (t("CPU threads"), self.local_threads))
+        self.local_advanced_toggle = self.local_advanced.button
         stt_form.addRow(self.local_options)
         # What the model is actually doing, as against what the boxes above
         # ask for. The checkbox can only ask: whether a card was found is
         # decided by the build and by the machine, and is read back off the
         # server's own log once it has loaded.
         self.local_state = WrappedLabel("")
+        self.local_state.setObjectName("muted")
         stt_form.addRow(self.local_state)
 
         self.transcribe_provider.currentIndexChanged.connect(self._provider_changed)
-        outer.addWidget(stt)
 
-        orr = QGroupBox(t("Transcript cleanup"))
-        orr_form = self.cleanup_form = QFormLayout(orr)
-        orr_form.setFieldGrowthPolicy(
-            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        orr, orr_form = self._section(t("Transcript cleanup"))
+        self.cleanup_form = orr_form
         self.cleanup_enabled = QCheckBox(t("Clean the transcript with a model"))
         orr_form.addRow("", self.cleanup_enabled)
 
@@ -1757,7 +2203,10 @@ class SettingsWindow(QDialog):
         for label, value in CLEANUP_PROVIDERS:
             self.cleanup_provider.addItem(t(label), value)
         self.cleanup_provider.currentIndexChanged.connect(self._cleanup_provider_changed)
-        orr_form.addRow(t("Runs on"), self.cleanup_provider)
+        self.cleanup_enabled.toggled.connect(lambda *_: self._place_keys())
+        orr_form.addRow(t("Provider"), self.cleanup_provider)
+        self.cleanup_key_slot = self._key_slot()
+        orr_form.addRow(t("Key"), self.cleanup_key_slot)
 
         self.cleanup_model = QComboBox()
         self.cleanup_model.setEditable(True)
@@ -1842,10 +2291,10 @@ class SettingsWindow(QDialog):
               "a light job, so more thinking mostly costs time and tokens. Models "
               "that cannot think ignore this.")
         )
-        orr_form.addRow(t("Thinking"), self.cleanup_reasoning)
 
-        self.models_label = QLabel(t("Runs on OpenRouter."))
-        self.models_label.setWordWrap(True)
+        # Only says something for a provider that is a program on this
+        # machine: where it was found, or that it was not.
+        self.models_label = widgets.StatusLine()
         orr_form.addRow(self.models_label)
 
         self.local_llm = LocalModelBox(
@@ -1853,6 +2302,7 @@ class SettingsWindow(QDialog):
             ggml.llm_quants, ggml.llm_model_path,
             repos=ggml.llm_repos)
         orr_form.addRow(self.local_llm)
+        orr.subforms.append(self.local_llm.form)
 
         self.local_llm_gpu = QCheckBox(t("Use the graphics card"))
         self.local_llm_preload = QCheckBox(t("Load the model when Dikte starts"))
@@ -1868,23 +2318,30 @@ class SettingsWindow(QDialog):
               "waiting. Off is what cleanup wants."))
         self.local_llm_options = QWidget()
         llm_form = QFormLayout(self.local_llm_options)
-
+        llm_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         llm_form.setContentsMargins(0, 0, 0, 0)
+        llm_form.setVerticalSpacing(9)
+        llm_form.setHorizontalSpacing(14)
+        orr.subforms.append(llm_form)
         llm_form.addRow("", self.local_llm_gpu)
         llm_form.addRow("", self.local_llm_preload)
-        llm_form.addRow(t("Thinking"), self.local_llm_reasoning)
         orr_form.addRow(self.local_llm_options)
         self.local_llm_state = WrappedLabel("")
+        self.local_llm_state.setObjectName("muted")
         orr_form.addRow(self.local_llm_state)
+        # How hard either kind of cleanup model thinks: one row each, since
+        # the two default to opposite things, and only the chosen one shows.
+        self.cleanup_advanced, self.cleanup_advanced_form = self._advanced(
+            orr, orr_form, (t("Thinking"), self.cleanup_reasoning),
+            (t("Thinking"), self.local_llm_reasoning))
 
-        outer.addWidget(orr)
 
         # One box for both servers rather than a row inside each: what is being
         # decided is whether this machine keeps gigabytes tied up between
         # dictations, and that is not a question anybody wants to answer once
         # per model.
-        self.local_box = QGroupBox(t("Models on this machine"))
-        local_form = QFormLayout(self.local_box)
+        self.local_box, local_form = self._section(t("Models on this machine"))
+        local_form.addRow(t("Model folder"), self.models_dir_row)
         self.local_idle_unload = QCheckBox(t("Unload a model that is sitting unused"))
         self.local_idle_unload.setToolTip(
             t("A loaded model holds its memory whether anything is using it or "
@@ -1898,7 +2355,22 @@ class SettingsWindow(QDialog):
         self.local_idle_unload.toggled.connect(self.local_idle_minutes.setEnabled)
         local_form.addRow("", self.local_idle_unload)
         local_form.addRow(t("After"), self.local_idle_minutes)
-        outer.addWidget(self.local_box)
+        others_box = QWidget()
+        others_column = QVBoxLayout(others_box)
+        others_column.setContentsMargins(0, widgets.SECTION_GAP, 0, 0)
+        others_column.addWidget(self.other_connections)
+        # Wide: speech to text on the left, cleanup on the right. Narrow: one
+        # column, speech to text first.
+        # The models on this machine serve both sides, and the other keys are
+        # a list of their own, so each takes a full row under the pair.
+        page.columns = widgets.Columns([(stt, orr), (self.local_box,), (others_box,)],
+                                       order=[stt, self.local_box, orr, others_box])
+        outer.addWidget(page.columns)
+        # The keys under Other connections line up with the sections above.
+        width = self._align_labels(stt, orr, self.local_box)
+        for name in self._key_names:
+            name.setMinimumWidth(width)
+        self.other_keys.setContentsMargins(15, 6, 15, 0)
 
         outer.addStretch(1)
         return page
@@ -1920,50 +2392,96 @@ class SettingsWindow(QDialog):
         )
 
     def _prompt_tab(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
-
         # Two jobs, two sets of rules: dictation is rewritten for reading, an
         # audio file becomes subtitles that have to stay in sync with the voice.
-        inner = QTabWidget()
-        self.cleanup_prompt = self._prompt_page(
-            inner, t("Dictation"),
-            t("System instruction given to the cleanup model. This is where you "
-              "decide how much it may touch your words."),
-            cfg.default_cleanup_prompt,
-        )
-        # How a custom instruction and the profiles combine, said where the
-        # instruction is written; Config.cleanup_prompt is the rule itself.
-        self.cleanup_prompt.setToolTip(t(
+        combined = t(
             "Your own instruction replaces the built-in one. The dictionary, "
             "and the style and translation of the profile in use, are still "
             "added after it. Switch the profile style off under Profiles to "
-            "use your instruction alone."))
-        self.file_cleanup_prompt = self._prompt_page(
-            inner, t("Audio file"),
-            t("Used instead when an audio or video file is cleaned up. It is "
-              "written for subtitles: lines stay where they are, nothing is "
-              "shortened, and misheard words are repaired from the context."),
-            cfg.default_file_cleanup_prompt,
+            "use your instruction alone.")
+        modes = (
+            (t("Dictation"), t("System instruction given to the cleanup model. This is where you "
+                               "decide how much it may touch your words.") + "\n\n" + combined,
+             cfg.default_cleanup_prompt),
+            (t("Audio file"), t("Used instead when an audio or video file is cleaned up. It is "
+                                "written for subtitles: lines stay where they are, nothing is "
+                                "shortened, and misheard words are repaired from the context."),
+             cfg.default_file_cleanup_prompt),
         )
+        rules, rules_form = self._section(t("Cleanup instructions"))
+        # A segmented switch between the two, each with its status line and
+        # its editor collapsed until asked for.
+        segments = QHBoxLayout()
+        segments.setContentsMargins(0, 0, 0, 0)
+        segments.setSpacing(0)
+        self.prompt_modes = QButtonGroup(self)
+        self.prompt_stack = QStackedWidget()
+        self.prompt_info = widgets.InfoIcon(modes[0][1], topic=t("Cleanup instructions"))
+        editors = []
+        for index, (title, tip, default) in enumerate(modes):
+            button = QPushButton(title)
+            button.setObjectName("segment")
+            button.setProperty("edge", "first" if index == 0 else "last")
+            button.setCheckable(True)
+            button.setAutoDefault(False)
+            button.setToolTip(tip)
+            self.prompt_modes.addButton(button, index)
+            segments.addWidget(button)
+            box, holder = self._instructions(default)
+            self.prompt_stack.addWidget(holder)
+            editors.append(box)
+        segments.addSpacing(8)
+        segments.addWidget(self.prompt_info)
+        segments.addStretch(1)
+
+        def show_mode(index):
+            self.prompt_stack.setCurrentIndex(index)
+            self.prompt_info.set_text(modes[index][1])
+        self.prompt_modes.idClicked.connect(show_mode)
+        self.prompt_modes.button(0).setChecked(True)
+        holder = QWidget()
+        holder.setLayout(segments)
+        rules_form.addRow(holder)
+        rules_form.addRow(self.prompt_stack)
+        self.cleanup_prompt, self.file_cleanup_prompt = editors
+        # How a custom instruction and the profiles combine, said where the
+        # instruction is written; Config.cleanup_prompt is the rule itself.
+        self.cleanup_prompt.setToolTip(combined)
+
+        # The dictionary is what this page is mostly used for, so it comes
+        # first; it is as tall as its words, up to a few screens' worth of
+        # rows, and the cards of both columns start at the same top.
         self.dictionary_editor = profiles_ui.DictionaryEditor()
-        inner.addTab(self.dictionary_editor, t("Dictionary"))
-        layout.addWidget(inner, 1)
+        dictionary = QWidget()
+        column = QVBoxLayout(dictionary)
+        column.setContentsMargins(0, widgets.SECTION_GAP, 0, 0)
+        column.setSpacing(6)
+        heading = QLabel(t("Dictionary"))
+        heading.setObjectName("section")
+        column.addWidget(heading)
+        frame = QFrame()
+        frame.setObjectName("sectionbox")
+        inner = QVBoxLayout(frame)
+        inner.setContentsMargins(widgets.CARD_PAD, 12, widgets.CARD_PAD, 12)
+        inner.addWidget(self.dictionary_editor)
+        column.addWidget(frame, 1)
+
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setSpacing(4)
+        page.columns = widgets.Columns([(dictionary, rules)], threshold=900)
+        # Stacked, a few rows keep the instructions below in view; beside
+        # them the list has a column of its own to fill.
+        page.columns.on_arrange = lambda wide: self.dictionary_editor.set_max_rows(
+            12 if wide else profiles_ui.DictionaryEditor.MAX_ROWS)
+        layout.addWidget(page.columns)
+        layout.addStretch(1)
         return page
 
     def _assistant_tab(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        self.assistant_found = QLabel("")
-        self.assistant_found.setWordWrap(True)
-        layout.addWidget(self.assistant_found)
-
-        how = QGroupBox(t("How it runs"))
-        how_form = QFormLayout(how)
-        self._shortcut_row(
-            how_form, "ask", t("Shortcut"),
-            t("No global shortcut installed. The tray menu asks it too."),
-        )
+        how, how_form = self._section(t("How it runs"))
+        self.assistant_how_form = how_form
+        self._shortcut_link(how_form, "ask", t("Shortcut"))
 
         self.assistant_provider = QComboBox()
         for label, value in ASSISTANT_PROVIDERS:
@@ -1971,21 +2489,31 @@ class SettingsWindow(QDialog):
         self.assistant_provider.currentIndexChanged.connect(
             self._assistant_provider_changed
         )
-        how_form.addRow(t("Runs on"), self.assistant_provider)
+        how_form.addRow(t("Provider"), self.assistant_provider)
+        self.assistant_found = widgets.StatusLine()
+        how_form.addRow("", self.assistant_found)
 
         self.assistant_dir = QLineEdit()
         self.assistant_dir.setPlaceholderText(os.path.expanduser("~"))
-        browse = QPushButton(t("Choose…"))
-        browse.clicked.connect(self._choose_assistant_dir)
-        how_form.addRow(t("Working directory"),
-                        self._row(self.assistant_dir, browse))
-        dir_note = QLabel(t(
+        dir_tip = t(
             "The directory the command runs in, which decides which project's "
             "instructions and files it can see. Your own skills and services "
             "are there whichever one it is."
+        )
+        self.assistant_dir.setToolTip(dir_tip)
+        browse = QPushButton(t("Choose…"))
+        browse.clicked.connect(self._choose_assistant_dir)
+        self.assistant_dir_row = self._row(self.assistant_dir, browse)
+        how_form.addRow(t("Working directory"), self.assistant_dir_row)
+
+        # What is sent: the spoken command, cleaned up first or not. It
+        # belongs with the provider, not with what comes back.
+        self.assistant_cleanup = QCheckBox(t("Clean the transcript up before sending it"))
+        self.assistant_cleanup.setToolTip(t(
+            "Off by default: Claude reads through “erm” and “you know” without "
+            "help, and cleanup costs an API call and a second or two."
         ))
-        dir_note.setWordWrap(True)
-        how_form.addRow(dir_note)
+        how_form.addRow("", self.assistant_cleanup)
 
         # One scale for all four: how hard to think is one thing to want, and
         # each provider is handed the nearest rung it actually has.
@@ -1997,7 +2525,6 @@ class SettingsWindow(QDialog):
             "screen while it happens. Worth it for a job that has to be worked "
             "out rather than looked up."
         ))
-        how_form.addRow(t("Thinking"), self.assistant_reasoning)
 
         self.assistant_timeout = QSpinBox()
         self.assistant_timeout.setRange(15, 3600)
@@ -2006,16 +2533,13 @@ class SettingsWindow(QDialog):
             "A command still running after this is given up on. The tray menu "
             "can stop one earlier."
         ))
-        how_form.addRow(t("Give up after"), self.assistant_timeout)
-        layout.addWidget(how)
+        self._advanced(how, how_form, (t("Thinking"), self.assistant_reasoning),
+                       (t("Give up after"), self.assistant_timeout))
 
         # One box per provider, only the chosen one on screen: they have nothing
         # in common past the model, and four sets of half-relevant fields would
         # be worse than none.
-        self.claude_box = QGroupBox(t("Claude Code"))
-        claude_form = QFormLayout(self.claude_box)
-        claude_form.setFieldGrowthPolicy(
-            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.claude_box, claude_form = self._section(t("Claude Code"))
         self.assistant_model = QComboBox()
         self.assistant_model.setEditable(True)
         self.assistant_model.addItems(ASSISTANT_MODELS)
@@ -2029,12 +2553,8 @@ class SettingsWindow(QDialog):
         for label, value in PERMISSION_MODES:
             self.assistant_permission.addItem(t(label), value)
         claude_form.addRow(t("Permissions"), self.assistant_permission)
-        layout.addWidget(self.claude_box)
 
-        self.codex_box = QGroupBox(t("Codex"))
-        codex_form = QFormLayout(self.codex_box)
-        codex_form.setFieldGrowthPolicy(
-            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.codex_box, codex_form = self._section(t("Codex"))
         self.assistant_codex_model = QComboBox()
         self.assistant_codex_model.setEditable(True)
         self.assistant_codex_model.addItem(t("Codex's own default"), "")
@@ -2046,170 +2566,110 @@ class SettingsWindow(QDialog):
         for label, value in CODEX_SANDBOXES:
             self.assistant_codex_sandbox.addItem(t(label), value)
         codex_form.addRow(t("Sandbox"), self.assistant_codex_sandbox)
-        layout.addWidget(self.codex_box)
 
-        self.openrouter_box = QGroupBox("OpenRouter")
-        or_form = QFormLayout(self.openrouter_box)
-        or_form.setFieldGrowthPolicy(
-            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        # The chat providers answer and do nothing else; one short line says
+        # so, and the tooltip what that means.
+        chat_line = t("Answers questions; runs no commands.")
+
+        def chat_tip(service):
+            return t(
+                "A plain question and a plain answer, over the {service} key you "
+                "already have. It runs no commands, opens no files and reaches "
+                "none of your services, so it can tell you what the capital of "
+                "Peru is but not what is in your calendar.", service=service)
+
+        self.openrouter_box, or_form = self._section(t("Model"))
         self.assistant_openrouter_model = QComboBox()
         self.assistant_openrouter_model.setEditable(True)
         self.assistant_openrouter_model.addItems(ASSISTANT_OR_MODELS)
         or_form.addRow(t("Model"), self.assistant_openrouter_model)
-        or_note = QLabel(t(
-            "A plain question and a plain answer, over the OpenRouter key you "
-            "already have. It runs no commands, opens no files and reaches none "
-            "of your services, so it can tell you what the capital of Peru is "
-            "but not what is in your calendar. Working directory and permissions "
-            "above mean nothing here."
-        ))
-        or_note.setWordWrap(True)
-        or_form.addRow(or_note)
-        layout.addWidget(self.openrouter_box)
+        or_form.addRow("", _with_info(_note(chat_line), chat_tip("OpenRouter")))
 
-        self.agy_box = QGroupBox(t("Antigravity"))
-        agy_form = QFormLayout(self.agy_box)
-        agy_form.setFieldGrowthPolicy(
-            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.agy_box, agy_form = self._section(t("Antigravity"))
         self.assistant_agy_model = QComboBox()
         self.assistant_agy_model.setEditable(True)
         self.assistant_agy_model.addItem(t("Antigravity's own default"), "")
         for name in AGY_MODELS:
             self.assistant_agy_model.addItem(name, name)
         agy_form.addRow(t("Model"), self.assistant_agy_model)
-        agy_note = QLabel(t(
-            "Antigravity has neither a permission mode nor a sandbox to hand it, "
-            "so what it may do without asking is whatever its own allow-rules "
-            "say. The Permissions and Sandbox boxes above belong to the other "
-            "two; the working directory still applies."
-        ))
-        agy_note.setWordWrap(True)
-        agy_form.addRow(agy_note)
-        layout.addWidget(self.agy_box)
+        agy_form.addRow("", _with_info(
+            _note(t("Uses its own allow-rules for permissions.")),
+            t("Antigravity has neither a permission mode nor a sandbox to hand "
+              "it, so what it may do without asking is whatever its own "
+              "allow-rules say. The working directory still applies.")))
 
-        self.opencode_box = QGroupBox("OpenCode Go")
-        og_form = QFormLayout(self.opencode_box)
-        og_form.setFieldGrowthPolicy(
-            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.opencode_box, og_form = self._section(t("Model"))
         self.assistant_opencode_model = QComboBox()
         self.assistant_opencode_model.setEditable(True)
         self.assistant_opencode_model.addItems(OPENCODE_MODELS)
         og_form.addRow(t("Model"), self.assistant_opencode_model)
-        og_note = QLabel(t(
-            "A plain question and a plain answer, over the OpenCode Go key you "
-            "already have. It runs no commands, opens no files and reaches none "
-            "of your services, so it can tell you what the capital of Peru is "
-            "but not what is in your calendar. Working directory and permissions "
-            "above mean nothing here."
-        ))
-        og_note.setWordWrap(True)
-        og_form.addRow(og_note)
-        layout.addWidget(self.opencode_box)
+        og_form.addRow("", _with_info(_note(chat_line), chat_tip("OpenCode Go")))
 
-        self.requesty_box = QGroupBox("Requesty")
-        rq_form = QFormLayout(self.requesty_box)
-        rq_form.setFieldGrowthPolicy(
-            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.requesty_box, rq_form = self._section(t("Model"))
         self.assistant_requesty_model = QComboBox()
         self.assistant_requesty_model.setEditable(True)
         self.assistant_requesty_model.addItems(REQUESTY_MODELS)
         rq_form.addRow(t("Model"), self.assistant_requesty_model)
-        rq_note = QLabel(t(
-            "A plain question and a plain answer, over the Requesty key you "
-            "already have. It runs no commands, opens no files and reaches none "
-            "of your services, so it can tell you what the capital of Peru is "
-            "but not what is in your calendar. Working directory and permissions "
-            "above mean nothing here."
-        ))
-        rq_note.setWordWrap(True)
-        rq_form.addRow(rq_note)
-        layout.addWidget(self.requesty_box)
+        rq_form.addRow("", _with_info(_note(chat_line), chat_tip("Requesty")))
 
-        thread = QGroupBox(t("The conversation"))
-        thread_form = QFormLayout(thread)
+        thread, thread_form = self._section(t("The conversation"))
         self.assistant_session_minutes = QSpinBox()
         self.assistant_session_minutes.setRange(0, 1440)
         self.assistant_session_minutes.setSuffix(t(" min"))
         self.assistant_session_minutes.setSpecialValueText(t("every command on its own"))
-        thread_form.addRow(t("Carry on for"), self.assistant_session_minutes)
-        thread_note = QLabel(t(
+        self.assistant_session_minutes.setToolTip(t(
             "Commands within this long of each other are one conversation, so "
             "“and move that to Thursday” knows what “that” is. After it, the "
             "next command starts fresh."
         ))
-        thread_note.setWordWrap(True)
-        thread_form.addRow(thread_note)
-        reset = QPushButton(t("Start a new conversation now"))
+        thread_form.addRow(t("Reset after inactivity"), self.assistant_session_minutes)
+        reset = QPushButton(t("New conversation"))
+        reset.setToolTip(t("Start a new conversation now"))
         reset.clicked.connect(self._reset_assistant_session)
         self.assistant_session_status = QLabel("")
-        self.assistant_session_status.setWordWrap(True)
-        thread_form.addRow(self._row(reset), self.assistant_session_status)
-        layout.addWidget(thread)
+        self.assistant_session_status.setObjectName("muted")
+        # One line beside its button at every width: the state is a few words.
+        self.assistant_session_status.setWordWrap(False)
+        thread_form.addRow("", self._row(self.assistant_session_status, reset))
 
-        answer = QGroupBox(t("The answer"))
-        answer_form = QFormLayout(answer)
-        self.assistant_paste = QCheckBox(t("Paste it into the focused window"))
+        # What happens to the reply, in the same card: a card of its own held
+        # this one checkbox.
+        self.assistant_paste = QCheckBox(t("Paste the answer into the focused window"))
         self.assistant_paste.setToolTip(t(
             "It is copied to the clipboard either way."
         ))
-        answer_form.addRow("", self.assistant_paste)
-        self.assistant_cleanup = QCheckBox(t("Clean the transcript up before sending it"))
-        self.assistant_cleanup.setToolTip(t(
-            "Off by default: Claude reads through “erm” and “you know” without "
-            "help, and cleanup costs an API call and a second or two."
-        ))
-        answer_form.addRow("", self.assistant_cleanup)
-        layout.addWidget(answer)
+        thread_form.addRow("", self.assistant_paste)
 
         # Its own switch and its own key, so that turning it on changes
         # nothing about the spoken command above.
-        selected = QGroupBox(t("Selected text"))
-        selected_form = QFormLayout(selected)
-        selected_form.setFieldGrowthPolicy(
-            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        selected, selected_form = self._section(t("Selected text"))
         self.selection_assist = QCheckBox(t("Ask about the selected text"))
         self.selection_assist.setToolTip(t(
             "Select text, press the shortcut and say what to do with it. The "
             "answer opens in a window; nothing is pasted until you press "
-            "Apply. The selection goes to the agent with no tools, and Codex "
-            "and Antigravity are not sent it. The history keeps your "
-            "instruction and the reply, not the selection."))
+            "Replace selection. The selection goes to the assistant with no "
+            "tools, and Codex and Antigravity are not sent it. The history "
+            "keeps your instruction and the reply, not the selection."))
         selected_form.addRow("", self.selection_assist)
-        box = self._shortcut_row(
-            selected_form, "assist", t("Shortcut"),
-            t("No global shortcut installed."),
-        )
-        # The key does nothing while the feature is off, so it is greyed out,
-        # all but Remove: a key installed earlier can still be taken back.
-        row = box.parentWidget()
-        self._assist_shortcut = [box, selected_form.labelForField(row)] + [
-            button for button in row.findChildren(QPushButton)
-            if button.text() != t("Remove")]
-        self.selection_assist.toggled.connect(self._enable_assist_shortcut)
-        self._enable_assist_shortcut(False)
-        layout.addWidget(selected)
+        # The link to the Shortcuts page is in How it runs already.
+        self._shortcut_link(selected_form, "assist", t("Shortcut"), link=False)
 
-        prompt_label = QLabel(t(
-            "Told to the agent alongside every command, on top of whatever your "
-            "own configuration already says."
-        ))
-        prompt_label.setWordWrap(True)
-        layout.addWidget(prompt_label)
-        self.assistant_prompt = QPlainTextEdit()
-        self.assistant_prompt.setMinimumHeight(180)
-        layout.addWidget(self.assistant_prompt, 1)
-        reset_prompt = QPushButton(t("Reset to default"))
-        reset_prompt.clicked.connect(
-            lambda: self.assistant_prompt.setPlainText(cfg.default_assistant_prompt())
-        )
-        layout.addWidget(reset_prompt, 0, Qt.AlignmentFlag.AlignRight)
-        return page
+        instructions, instructions_form = self._section(t("Instructions"))
+        self.assistant_prompt, editor = self._instructions(cfg.default_assistant_prompt)
+        self.assistant_prompt.setToolTip(t(
+            "Told to the assistant alongside every command, on top of "
+            "whatever your own configuration already says."))
+        instructions_form.addRow(editor)
+        # Wide: how it runs beside the conversation, the provider's own box
+        # (one is shown at a time) beside the selection, and the instructions,
+        # an editor once opened, across the whole width. Narrow: one column,
+        # how it runs first.
+        providers = [self.claude_box, self.codex_box, self.openrouter_box,
+                     self.agy_box, self.opencode_box, self.requesty_box]
+        return self._two_columns([(how, thread), (providers, selected), (instructions,)])
 
     def _meeting_tab(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        sources = QGroupBox(t("Sound"))
-        sources_form = QFormLayout(sources)
+        sources, sources_form = self._section(t("Sound"))
         self.meeting_mic = QComboBox()
         self.meeting_mic.addItem(t("Same as dictation"), "")
         for name, desc in self._sources_once():
@@ -2223,38 +2683,29 @@ class SettingsWindow(QDialog):
         sources_form.addRow(t("The other participants"), self.meeting_system)
 
         if audio.sound() is audio.COREAUDIO:
-            mac_note = QLabel(t(
-                "macOS does not offer what the speakers are playing as something "
-                "to record. Install BlackHole or Loopback, send the meeting's "
-                "sound through it, and pick it above."
-            ))
-            mac_note.setWordWrap(True)
-            sources_form.addRow(mac_note)
+            sources_form.addRow("", _with_info(
+                _note(t("Needs BlackHole or Loopback on macOS.")),
+                t("macOS does not offer what the speakers are playing as something "
+                  "to record. Install BlackHole or Loopback, send the meeting's "
+                  "sound through it, and pick it above.")))
         elif not audio.sound().meetings:
             # Windows is the system this is written for: it offers nothing that
             # captures what the speakers are playing, and there is no driver to
             # install that would put an entry in the list above. Left unsaid,
             # the box is simply empty and the Record button fails at the press.
-            nothing_note = QLabel(t(
-                "This system offers nothing that records what the speakers are "
-                "playing, so a meeting cannot be recorded on it. Dictation and "
-                "transcribing a file are unaffected."
-            ))
-            nothing_note.setWordWrap(True)
-            sources_form.addRow(nothing_note)
+            sources_form.addRow("", widgets.Notice(
+                t("Meetings cannot be recorded on this system."),
+                t("This system offers nothing that records what the speakers are "
+                  "playing, so a meeting cannot be recorded on it. Dictation and "
+                  "transcribing a file are unaffected.")))
 
-        note = QLabel(t(
-            "Wear headphones if you can. Through speakers your microphone hears "
-            "the other side as well, and although a line that lands on both "
-            "channels at once is dropped again, the repair is never as clean as "
-            "not needing it."
-        ))
-        note.setWordWrap(True)
-        sources_form.addRow(note)
-        layout.addWidget(sources)
+        sources_form.addRow("", _with_info(
+            _note(t("Wear headphones if you can.")),
+            t("Through speakers your microphone hears the other side as well, "
+              "and although a line that lands on both channels at once is "
+              "dropped again, the repair is never as clean as not needing it.")))
 
-        people = QGroupBox(t("Who is talking"))
-        people_form = QFormLayout(people)
+        people, people_form = self._section(t("Who is talking"))
         self.meeting_self_name = QLineEdit()
         self.meeting_self_name.setPlaceholderText(t("Me"))
         people_form.addRow(t("You"), self.meeting_self_name)
@@ -2264,21 +2715,18 @@ class SettingsWindow(QDialog):
         self.meeting_participants = QPlainTextEdit()
         self.meeting_participants.setMaximumHeight(70)
         self.meeting_participants.setPlaceholderText(t("One name per line"))
-        people_form.addRow(t("Expected"), self.meeting_participants)
-        people_note = QLabel(t(
+        people_tip = t(
             "Everyone on the far end shares one label: they reach you as a single "
             "mixed signal. The names go to the transcription model so they come "
             "out spelled right, and to the minutes, which may use one for a line "
             "only when the conversation itself makes clear who was speaking."
-        ))
-        people_note.setWordWrap(True)
-        people_form.addRow(people_note)
-        layout.addWidget(people)
+        )
+        self.meeting_participants.setToolTip(people_tip)
+        people_form.addRow(t("Expected"), self.meeting_participants)
+        people_form.addRow("", _with_info(
+            _note(t("Names help the spelling and the minutes.")), people_tip))
 
-        models = QGroupBox(t("Minutes"))
-        models_form = QFormLayout(models)
-        models_form.setFieldGrowthPolicy(
-            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        models, models_form = self._section(t("Minutes"))
         self.meeting_model = QComboBox()
         self.meeting_model.setEditable(True)
         self.meeting_model.addItems(MEETING_MODELS)
@@ -2290,7 +2738,6 @@ class SettingsWindow(QDialog):
             "Unlike cleanup, this one is worth some thinking: it has to hold a "
             "whole meeting in its head and work out what was actually decided."
         ))
-        models_form.addRow(t("Thinking"), self.meeting_reasoning)
         self.meeting_language = QComboBox()
         self.meeting_language.addItem(t("Same as dictation"), "")
         for label, code in LANGUAGES:
@@ -2302,10 +2749,12 @@ class SettingsWindow(QDialog):
             "written, keeping the timestamps and the speaker labels."
         ))
         models_form.addRow("", self.meeting_cleanup)
-        layout.addWidget(models)
+        self._advanced(models, models_form, (t("Thinking"), self.meeting_reasoning))
+        self.meeting_prompt, editor = self._instructions(cfg.default_meeting_prompt)
+        self.meeting_prompt.setToolTip(t("System instruction given to the minutes model."))
+        models_form.addRow(editor)
 
-        recording = QGroupBox(t("Recording"))
-        recording_form = QFormLayout(recording)
+        recording, recording_form = self._section(t("Recording"))
         self.meeting_max_minutes = QSpinBox()
         self.meeting_max_minutes.setRange(5, 600)
         self.meeting_max_minutes.setSuffix(t(" min"))
@@ -2318,89 +2767,127 @@ class SettingsWindow(QDialog):
             "again from the Minutes tab. This is about the ones that worked."
         ))
         recording_form.addRow("", self.meeting_keep_audio)
+        self._shortcut_link(recording_form, "meeting", t("Shortcut"))
+        # Wide: paired by height, sound beside the recording limits and the
+        # people beside the minutes. Narrow: the order the page always had.
+        return self._two_columns([(sources, recording), (people, models)],
+                                 order=[sources, people, models, recording])
 
-        self._shortcut_row(
-            recording_form, "meeting", t("Shortcut"),
-            t("No global shortcut installed. The tray menu starts a meeting too."),
-        )
-        layout.addWidget(recording)
+    @staticmethod
+    def _card(*children, spacing=8):
+        """A filled card with the one padding every card uses (widgets.card)."""
+        return widgets.card(*children, name="card", spacing=spacing)
 
-        prompt_label = QLabel(t("System instruction given to the minutes model."))
-        prompt_label.setWordWrap(True)
-        layout.addWidget(prompt_label)
-        self.meeting_prompt = QPlainTextEdit()
-        self.meeting_prompt.setMinimumHeight(200)
-        layout.addWidget(self.meeting_prompt, 1)
-        reset = QPushButton(t("Reset to default"))
-        reset.clicked.connect(
-            lambda: self.meeting_prompt.setPlainText(cfg.default_meeting_prompt())
-        )
-        layout.addWidget(reset, 0, Qt.AlignmentFlag.AlignRight)
-        return page
+    def _more_button(self, actions_list):
+        """A "More" button holding the actions that are not the main ones."""
+        more = QToolButton()
+        more.setObjectName("more")
+        more.setText("")
+        more.setIcon(widgets.glyph("more", theme.palette(self.conf["theme"])["text"], 16))
+        more.setToolTip(t("More"))
+        more.setAccessibleName(t("More"))
+        more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu = QMenu(more)
+        actions = {}
+        for label, handler in actions_list:
+            if label is None:
+                menu.addSeparator()
+                continue
+            action = menu.addAction(label)
+            action.triggered.connect(handler)
+            actions[label] = action
+        more.setMenu(menu)
+        more.actions_ = actions
+        return more
 
     def _minutes_tab(self):
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
 
-        self.minutes_list = QListWidget()
-        self.minutes_list.setWordWrap(True)
-        self.minutes_list.setMaximumHeight(110)
+        self.minutes_list = widgets.row_list(QListWidget(), lines=1)
+        self.minutes_list.setAccessibleName(t("Minutes"))
         self.minutes_list.currentItemChanged.connect(self._show_minutes)
-        layout.addWidget(self.minutes_list)
+        self.minutes_list.setMinimumHeight(90)
+        self.minutes_list.setProperty("card", True)
 
         self.minutes_status = QLabel("")
+        self.minutes_status.setObjectName("muted")
         self.minutes_status.setWordWrap(True)
-        layout.addWidget(self.minutes_status)
 
-        self.minutes_view = QPlainTextEdit()
-        self.minutes_view.setReadOnly(True)
+        # Rendered: headings and lists read as headings and lists. Copy and
+        # the file on disk stay the Markdown that was written.
+        self.minutes_view = widgets.guard_links(QTextBrowser())
         self.minutes_view.setPlaceholderText(t("Pick a meeting to read it."))
-        self.minutes_view.setMinimumHeight(120)
-        layout.addWidget(self.minutes_view, 1)
+        self.minutes_view.setMinimumHeight(90)
+        self.minutes_view.setAccessibleName(t("Minutes"))
+        self._minutes_text = ""
 
-        copy = QPushButton(t("Copy"))
+        # Secondary: the one filled button on that screen is Record a meeting.
+        copy = self.minutes_copy = QPushButton(t("Copy"))
         copy.clicked.connect(
-            lambda: QGuiApplication.clipboard().setText(self.minutes_view.toPlainText())
+            lambda: QGuiApplication.clipboard().setText(self._minutes_text)
         )
+        copy.setEnabled(False)
         self.minutes_retry = QPushButton(t("Write it up"))
         self.minutes_retry.clicked.connect(self._retry_minutes)
         self.minutes_retry.setEnabled(False)
-        folder = QPushButton(t("Open the folder"))
-        folder.clicked.connect(
-            lambda: QDesktopServices.openUrl(
-                QUrl.fromLocalFile(str(cfg.MEETINGS_DIR))
-            )
-        )
-        delete = QPushButton(t("Delete selected"))
-        delete.clicked.connect(self._delete_minutes)
-        reload_ = QPushButton(t("Reload"))
-        reload_.clicked.connect(self._load_minutes)
+        self.minutes_retry.hide()
+        more = self.minutes_more = self._more_button([
+            (t("Open the folder"), lambda: QDesktopServices.openUrl(
+                QUrl.fromLocalFile(str(cfg.MEETINGS_DIR)))),
+            (None, None),
+            (t("Delete selected"), self._delete_minutes),
+        ])
+        # Kept by reference: the label is translated, and the language can
+        # change under a window that was built in the other one.
+        self.minutes_delete = more.actions_[t("Delete selected")]
+        self.minutes_delete.setEnabled(False)
         row = QHBoxLayout()
-        row.addStretch()
+        row.addWidget(self.minutes_status, 1)
         row.addWidget(copy)
         row.addWidget(self.minutes_retry)
-        row.addWidget(folder)
-        row.addWidget(delete)
-        row.addWidget(reload_)
-        row.addStretch()
-        layout.addLayout(row)
+        row.addWidget(more)
+        self.minutes_actions = row
+        widgets.cap_reading(self.minutes_view)
+        # The reader shows the minutes, or while a meeting records and its
+        # row is the one picked, a live panel the home window hands in.
+        self.minutes_view.document().setDocumentMargin(0)
+        self.minutes_reader = QStackedWidget()
+        self.minutes_reader.flush = True
+        self.minutes_reader.addWidget(self.minutes_view)
+        self.minutes_live_panel = None
+        reader = self._card((self.minutes_reader, 1), row)
+        # Stacked, the list opens two rows tall (the live recording among
+        # them) and the minutes, which are what this page is read for, take
+        # the rest. The handle still lets it grow.
+        self.minutes_split = widgets.Split(self.minutes_list, reader, side=300,
+                                           threshold=820, splitter=True, name="minutes",
+                                           share=0.0, min_rows=2)
+        layout.addWidget(self.minutes_split, 1)
         return page
 
     def _file_tab(self):
         page = QWidget()
-        layout = QVBoxLayout(page)
-        intro = QLabel(t("Transcribe an existing audio or video file with the same models."))
-        intro.setWordWrap(True)
-        layout.addWidget(intro)
+        outer = QVBoxLayout(page)
+        outer.setContentsMargins(0, 0, 0, 0)
+        options = QWidget()
+        layout = QVBoxLayout(options)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
 
         pick = QPushButton(t("Choose file…"))
         pick.clicked.connect(self._choose_file)
-        self.file_label = QLabel(t("No file selected"))
-        self.file_label.setWordWrap(True)
-        row = QHBoxLayout()
-        row.addWidget(pick)
-        row.addWidget(self.file_label, 1)
-        layout.addLayout(row)
+        # The file is dropped here or picked with the button inside; the
+        # zone says which one is chosen. The whole pane takes a drop, so the
+        # zone itself needs no more height than its name and button.
+        self.file_drop = widgets.DropZone(t("Drop an audio or video file here"), pick)
+        self.file_drop.setToolTip(t("Transcribe an existing audio or video file with the same models."))
+        self.file_drop.dropped.connect(self._use_file)
+        self.file_drop.accept_drops(options)
+        self.file_label = self.file_drop.title
+        layout.addWidget(self.file_drop)
+        layout.addSpacing(4)
 
         self.file_timestamps = QCheckBox(t("Add timestamps"))
         self._timestamps_tip = t(
@@ -2432,24 +2919,35 @@ class SettingsWindow(QDialog):
         )
         layout.addWidget(self.file_wrap)
 
+        # Transcribe and Stop take turns in one place: only the one that can
+        # be pressed is there.
         self.file_run = QPushButton(t("Transcribe"))
+        self.file_run.setObjectName("primary")
         self.file_run.clicked.connect(self._run_file)
         self.file_stop = QPushButton(t("Stop"))
         self.file_stop.clicked.connect(self._stop_file)
         self.file_stop.setEnabled(False)
+        self.file_stop.hide()
         run_row = QHBoxLayout()
+        run_row.setContentsMargins(0, 6, 0, 0)
         run_row.addWidget(self.file_run)
         run_row.addWidget(self.file_stop)
         run_row.addStretch(1)
         layout.addLayout(run_row)
 
         self.file_status = QLabel("")
+        self.file_status.setObjectName("muted")
         self.file_status.setWordWrap(True)
+        self.file_status.hide()
         layout.addWidget(self.file_status)
+        # The file, its options and Transcribe stay together at the top.
+        layout.addStretch(1)
 
         self.file_output = QPlainTextEdit()
-        self.file_output.setPlaceholderText("…")
-        layout.addWidget(self.file_output, 1)
+        self.file_output.setPlaceholderText(t("The transcript will appear here."))
+        self.file_output.setAccessibleName(t("Transcript"))
+        self.file_output.setMinimumHeight(100)
+        widgets.cap_reading(self.file_output)
 
         copy = QPushButton(t("Copy"))
         copy.clicked.connect(
@@ -2457,68 +2955,112 @@ class SettingsWindow(QDialog):
         )
         save = QPushButton(t("Save as .txt"))
         save.clicked.connect(self._save_transcript)
+        # There only when the run gave segment times to make subtitles from.
         self.file_save_srt = QPushButton(t("Save as .srt"))
         self.file_save_srt.setToolTip(
             t("Subtitles, timed from the segments. Needs the timestamps option.")
         )
-        self.file_save_srt.setEnabled(False)
         self.file_save_srt.clicked.connect(self._save_subtitles)
+        self._set_srt(False)
         out_row = QHBoxLayout()
+        out_row.addStretch(1)
         out_row.addWidget(copy)
         out_row.addWidget(save)
         out_row.addWidget(self.file_save_srt)
-        out_row.addStretch(1)
-        layout.addLayout(out_row)
+        transcript = self._card((self.file_output, 1), out_row)
+        card = self._card((options, 1))
+        controls = QWidget()
+        stack = QVBoxLayout(controls)
+        stack.setContentsMargins(0, 0, 0, 0)
+        stack.addWidget(card, 1)
+        self.file_split = widgets.Split(controls, transcript, side=330, threshold=820,
+                                        fit_first=True)
+        outer.addWidget(self.file_split, 1)
         return page
 
+    def _set_srt(self, available):
+        """Offer the subtitles only when the transcript has times to give them."""
+        self.file_save_srt.setEnabled(available)
+        self.file_save_srt.setVisible(available)
+
     def _shortcut_tab(self):
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        # Both keys in one form, the way the Meeting and Agent tabs already lay
-        # theirs out. Two forms would give each row a label column of its own,
-        # and two combination boxes starting at different places read as two
-        # unrelated settings rather than the pair they are.
-        form = QFormLayout()
-        form.setFieldGrowthPolicy(
-            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        # Every global key on one page, in one section per feature, and each
+        # section one form: two forms would give each row a label column of
+        # its own, and boxes starting at different places read as unrelated
+        # settings rather than the set they are. The feature pages name their
+        # key and link here.
+        keys, form = self._section(t("Dictation"))
         self._shortcut_row(
-            form, "toggle", t("Start and stop"),
-            t("No global shortcut installed."), placeholder="Ctrl+Space",
+            form, "toggle", t("Start and stop"), placeholder="Ctrl+Space",
         )
         # The point of holding a recording is that something else came up, and
         # something else is exactly when a hand is not free for a menu.
         self._shortcut_row(
             form, "pause", t("Pause and resume"),
-            t("No global shortcut installed. The tray menu holds it too."),
             tooltip=t("Holds the recording without ending it. Nothing said "
                       "while it is paused is kept, and the clock stops with it."),
+            missing_tip=t("No global shortcut installed. The tray menu holds it too."),
         )
         # Stopping is what sends the recording off to be transcribed, and that
         # is the step there is no taking back. By the time the tray menu is
         # open the sentence you did not mean to dictate is already on its way.
         self._shortcut_row(
-            form, "cancel", t("Discard the recording"),
-            t("No global shortcut installed. The tray menu discards it too."),
+            form, "cancel", t("Discard"),
             tooltip=t("Throws the recording away without transcribing it. Works "
-                      "on a dictation and on a command for the agent alike, "
+                      "on a dictation and on a command for the assistant alike, "
                       "whichever is running."),
+            missing_tip=t("No global shortcut installed. The tray menu discards it too."),
         )
-        layout.addLayout(form)
 
-        self.evdev_enabled = QCheckBox(t(
-            "Use the built-in listener (/dev/input), for when the {desktop} "
-            "shortcut is not active yet", desktop=hotkey.desktop_name()
-        ))
+        asking, asking_form = self._section(t("Assistant"))
+        self._shortcut_row(
+            asking_form, "ask", t("Spoken command"),
+            missing_tip=t("No global shortcut installed. The tray menu asks it too."),
+        )
+        box = self._shortcut_row(asking_form, "assist", t("Selected text"))
+        # The key does nothing while the feature is off, so it is greyed out,
+        # all but Remove: a key installed earlier can still be taken back.
+        row = box.parentWidget()
+        self._assist_shortcut = [box, asking_form.labelForField(row)] + [
+            button for button in row.findChildren(QPushButton)
+            if button.text() != t("Remove")]
+        # Off, the key does nothing: a link to the switch that turns it on,
+        # rather than directions to it.
+        self.assist_enable_link = QPushButton(t("Enable in Assistant"))
+        self.assist_enable_link.setObjectName("link")
+        self.assist_enable_link.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.assist_enable_link.setAutoDefault(False)
+        self.assist_enable_link.setToolTip(t("Turns on Ask about the selected text."))
+        self.assist_enable_link.clicked.connect(self._go_enable_assist)
+        asking_form.addRow("", self.assist_enable_link)
+        self._assist_link_form = asking_form
+        self.selection_assist.toggled.connect(self._enable_assist_shortcut)
+        self._enable_assist_shortcut(False)
+
+        meeting_keys, meeting_form = self._section(t("Meeting"))
+        self._shortcut_row(
+            meeting_form, "meeting", t("Start and stop"),
+            missing_tip=t("No global shortcut installed. The tray menu starts a meeting too."),
+        )
+
+        how, how_form = self._section(t("How shortcuts work here"))
+        self.evdev_enabled = QCheckBox(t("Use the built-in listener (/dev/input)"))
         self.evdev_enabled.setToolTip(t(
-            "Works immediately, no session restart. The only difference: the key "
-            "combination also reaches the focused application."
-        ))
-        layout.addWidget(self.evdev_enabled)
+            "For when the {desktop} shortcut is not active yet. Works "
+            "immediately, no session restart. The only difference: the key "
+            "combination also reaches the focused application.",
+            desktop=hotkey.desktop_name()))
         # Nothing to wait for where nothing is installed: there the listener is
-        # the mechanism, always on, and not a choice to offer.
-        self.evdev_enabled.setVisible(hotkey.installs_shortcuts())
+        # the mechanism, always on, and not a choice to offer. The row is not
+        # added at all then: a hidden form row still left its spacing behind.
+        if hotkey.installs_shortcuts():
+            how_form.addRow("", self.evdev_enabled)
+        else:
+            self.evdev_enabled.setParent(how)
+            self.evdev_enabled.hide()
 
         if hotkey.shortcut_needs_restart():
+            line = t("Installed shortcuts start working after you log in again.")
             explanation = t(
                 "KWin only reads shortcut settings at startup. After 'Install' the "
                 "shortcut shows up under System Settings → Shortcuts, but it will "
@@ -2526,15 +3068,14 @@ class SettingsWindow(QDialog):
                 "built-in listener."
             )
         elif hotkey.installs_shortcuts():
-            explanation = t("The shortcut starts working as soon as it is installed.")
-        elif hotkey.backend() == hotkey.MACOS:
+            line = explanation = t("The shortcut starts working as soon as it is installed.")
+        elif hotkey.backend() in (hotkey.MACOS, hotkey.WINDOWS):
+            line = t("Dikte holds these combinations while it runs.")
             explanation = t(
                 "Dikte asks macOS for these combinations itself, while it is "
                 "running. Nothing is installed, and no other application receives "
                 "them in the meantime."
-            )
-        elif hotkey.backend() == hotkey.WINDOWS:
-            explanation = t(
+            ) if hotkey.backend() == hotkey.MACOS else t(
                 "Dikte asks Windows for these combinations itself, while it is "
                 "running. Nothing is installed, and no other application receives "
                 "them in the meantime."
@@ -2544,6 +3085,7 @@ class SettingsWindow(QDialog):
             # would be the old bug in words: there is no registry, the listener
             # is the whole mechanism, and both of its costs are permanent
             # rather than lasting until the next login.
+            line = t("Dikte listens for these combinations while it runs.")
             explanation = t(
                 "{desktop} keeps no shortcut registry, so Dikte listens for "
                 "these combinations itself while it is running. Your user has "
@@ -2553,22 +3095,34 @@ class SettingsWindow(QDialog):
                 "the last word swapped for pause, cancel, ask or meeting:",
                 desktop=hotkey.desktop_name(),
             )
-        note = QLabel(explanation)
-        note.setWordWrap(True)
-        layout.addWidget(note)
+        how_form.addRow(_with_info(_note(line), explanation))
         if hotkey.backend() == hotkey.LISTENER:
             command = QLineEdit(ipc.command_for("toggle"))
             command.setReadOnly(True)
             command.setCursorPosition(0)
-            layout.addWidget(command)
-        layout.addStretch(1)
-        return page
+            command.setToolTip(explanation)
+            how_form.addRow(t("Desktop command"), command)
+        # Wide: the dictation keys and the meeting's on the left, the
+        # assistant's and how they work on the right.
+        return self._two_columns([(keys, asking), (meeting_keys, how)])
 
     def _history_tab(self):
         page = QWidget()
         layout = QVBoxLayout(page)
-        self.history = QListWidget()
-        self.history.setWordWrap(True)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        self.history_search = QLineEdit()
+        self.history_search.setPlaceholderText(t("Search the history"))
+        self.history_search.setClearButtonEnabled(True)
+        self.history_search.setAccessibleName(t("Search the history"))
+        self.history_search.addAction(
+            widgets.glyph("search", theme.palette(self.conf["theme"])["muted"], 16),
+            QLineEdit.ActionPosition.LeadingPosition)
+        self.history_search.textChanged.connect(self._filter_history)
+        layout.addWidget(self.history_search)
+
+        self.history = widgets.row_list(QListWidget())
+        self.history.setAccessibleName(t("History"))
         self.history.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection
         )
@@ -2578,25 +3132,54 @@ class SettingsWindow(QDialog):
         delete_key.setContext(Qt.ShortcutContext.WidgetShortcut)
         delete_key.activated.connect(self._delete_history)
         self.history.itemSelectionChanged.connect(self._sync_history_actions)
-        layout.addWidget(self.history, 1)
+        # The row just chosen, all of it: a half-visible selection reads as
+        # nothing being selected.
+        self.history.currentItemChanged.connect(
+            lambda item, _old: QTimer.singleShot(0, lambda: self._reveal_history(item)))
+        self.history.setMinimumHeight(90)
+        # A filled card like every other list, not an outlined frame.
+        self.history.setProperty("card", True)
 
-        self.history_limit = QSpinBox()
-        self.history_limit.setRange(0, 10000)
-        self.history_limit.setSpecialValueText(t("no limit"))
-        self.history_limit.setSuffix(t(" entries"))
-        self.history_limit.setToolTip(t(
-            "Once the history passes this many entries, the oldest one is dropped "
-            "every time a new one arrives. Set it to 0 to keep everything."
-        ))
+        self.history_meta = QLabel("")
+        self.history_meta.setObjectName("meta")
+        self.history_meta.setWordWrap(True)
+        # A failed entry's reader opens with what went wrong, in a word.
+        self.history_error = QLabel("")
+        self.history_error.setObjectName("errorhead")
+        self.history_error.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # What went wrong and what is left to do, in full: a label rather than
+        # the scrolling reader, so it is never cut off above its buttons.
+        self.history_failure = QLabel("")
+        self.history_failure.setTextFormat(Qt.TextFormat.PlainText)
+        self.history_failure.setWordWrap(True)
+        self.history_failure.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.history_reader = QPlainTextEdit()
+        self.history_reader.setReadOnly(True)
+        self.history_reader.setAccessibleName(t("Selected entry"))
+        self.history_reader.setPlaceholderText(t("Pick an entry to read it."))
+        self.history_reader.setMinimumHeight(70)
 
-        self.history_retry = QPushButton(t("Retry"))
+        self.history_retry = QPushButton(t("Try again"))
+        self.history_retry.setObjectName("primary")
         self.history_retry.setToolTip(t(
             "Transcribe the kept recording of a failed dictation again. The "
             "text goes to the clipboard."
         ))
         self.history_retry.clicked.connect(self._retry_history)
         self.history_retry.setEnabled(False)
-        copy = QPushButton(t("Copy selected to clipboard"))
+        self.history_retry.hide()
+        # A failed entry whose recording is gone cannot be retried: what is
+        # left is to say it again, or to look at why it failed.
+        self.history_record = QPushButton(t("Record again"))
+        self.history_record.setObjectName("primary")
+        self.history_record.clicked.connect(lambda: self.history_action.emit("record"))
+        self.history_record.hide()
+        self.history_check = QPushButton(t("Check connection"))
+        self.history_check.setToolTip(t("Opens the Models page of the settings."))
+        self.history_check.clicked.connect(lambda: self.history_action.emit("check"))
+        self.history_check.hide()
+        self.history_copy = copy = QPushButton(t("Copy"))
+        copy.setToolTip(t("Copy selected to clipboard"))
         copy.clicked.connect(self._copy_history)
         # What was heard, for a row whose text is a translation of it.
         self.history_original = QPushButton(t("Copy original"))
@@ -2604,36 +3187,94 @@ class SettingsWindow(QDialog):
             "Copy the transcript as it was heard, before it was translated."))
         self.history_original.clicked.connect(self._copy_original)
         self.history_original.setEnabled(False)
-        delete = QPushButton(t("Delete selected"))
-        delete.clicked.connect(self._delete_history)
-        clear = QPushButton(t("Clear history"))
-        clear.clicked.connect(self._clear_history)
-        reload_ = QPushButton(t("Reload"))
-        reload_.clicked.connect(self._load_history)
+        self.history_original.hide()
+        # Delete and Clear are kept off the main row: one slip there costs a
+        # transcript that cannot be brought back. The list reloads itself.
+        self.history_more = self._more_button([
+            (t("Delete selected"), self._delete_history),
+            (None, None),
+            (t("Clear history"), self._clear_history),
+        ])
+        self.history_delete = self.history_more.actions_[t("Delete selected")]
+        self.history_delete.setEnabled(False)
         # Wrapped onto as many lines as the font and the language need: in one
         # fixed row the labels no longer fit the home window's column.
-        self.history_actions = row = FlowLayout()
-        for button in (self.history_retry, copy, self.history_original,
-                       delete, clear, reload_):
+        # At the right end, in the order every result card uses: Copy, then
+        # what else applies, then More.
+        self.history_actions = row = FlowLayout(align_right=True)
+        for button in (copy, self.history_original, self.history_more):
             row.addWidget(button)
-        layout.addLayout(row)
+        widgets.cap_reading(self.history_reader)
+        # A failure reads as one compact block in the middle of the reader:
+        # its badge, what went wrong, and what can be done about it directly
+        # under that, rather than buttons pinned to the far corner.
+        self.history_failed_pane = QWidget()
+        pane = QVBoxLayout(self.history_failed_pane)
+        pane.setContentsMargins(0, 8, 0, 8)
+        pane.setSpacing(10)
+        pane.addStretch(1)
+        self.history_failed_badge = widgets.Badge("failed", "danger", 44)
+        pane.addWidget(self.history_failed_badge, 0, Qt.AlignmentFlag.AlignHCenter)
+        pane.addWidget(self.history_error, 0, Qt.AlignmentFlag.AlignHCenter)
+        # Full width, centred text: a wrapped label given an alignment in its
+        # layout is sized for one line and cut off.
+        pane.addWidget(self.history_failure)
+        fixes = QHBoxLayout()
+        fixes.setSpacing(8)
+        fixes.addStretch(1)
+        for button in (self.history_retry, self.history_record, self.history_check):
+            fixes.addWidget(button)
+        fixes.addStretch(1)
+        pane.addSpacing(4)
+        pane.addLayout(fixes)
+        pane.addStretch(2)
+        self.history_failed_pane.hide()
+        reader = self._card(self.history_meta, (self.history_reader, 1),
+                            (self.history_failed_pane, 1), row)
+        # Stacked, the list and the reader share a handle: the list starts at
+        # a little over a third, never below three whole rows.
+        self.history_split = widgets.Split(self.history, reader, side=320,
+                                           threshold=820, splitter=True, name="history")
+        layout.addWidget(self.history_split, 1)
         return page
 
-    @staticmethod
-    def _prompt_page(tabs, title, intro, default):
-        """A tab holding one editable prompt, and returns its box."""
-        page = QWidget()
-        layout = QVBoxLayout(page)
-        label = QLabel(intro)
-        label.setWordWrap(True)
-        layout.addWidget(label)
+    def _instructions(self, default):
+        """A system prompt behind an "Edit instructions" disclosure: the box,
+        and the disclosure holding it with its Reset button. The status line
+        says whether the built-in instruction or your own is in use."""
         box = QPlainTextEdit()
-        layout.addWidget(box, 1)
+        box.setMinimumHeight(220)
         reset = QPushButton(t("Reset to default"))
-        reset.clicked.connect(lambda: box.setPlainText(default()))
-        layout.addWidget(reset, 0, Qt.AlignmentFlag.AlignRight)
-        tabs.addTab(page, title)
-        return box
+        reset.clicked.connect(lambda: box.setPlainText(reflow(default())))
+        content = QWidget()
+        column = QVBoxLayout(content)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.addWidget(box, 1)
+        column.addWidget(reset, 0, Qt.AlignmentFlag.AlignRight)
+        disclosure = widgets.Disclosure(t("Edit instructions"), content)
+        status = _note("")
+
+        def show_state():
+            own = box.toPlainText().strip() not in (
+                "", reflow(default()), default().strip())
+            status.setText(t("Using your own instructions.") if own
+                           else t("Using the built-in instructions."))
+        box.textChanged.connect(show_state)
+        holder = QWidget()
+        stack = QVBoxLayout(holder)
+        stack.setContentsMargins(0, 0, 0, 0)
+        stack.setSpacing(10)
+        stack.addWidget(status)
+        stack.addWidget(disclosure, 0)
+        disclosure.toggled.connect(
+            lambda expanded: stack.setStretchFactor(disclosure, 1 if expanded else 0))
+        # Opened, the editor is brought into view whole once the page has laid
+        # itself out again; otherwise it opens below the fold, one line of it
+        # showing above the footer.
+        disclosure.toggled.connect(
+            lambda expanded: expanded and QTimer.singleShot(60, lambda: _reveal(content)))
+        holder.disclosure = disclosure
+        return box, holder
 
     @staticmethod
     def _shortcut_box(placeholder=""):
@@ -2647,33 +3288,112 @@ class SettingsWindow(QDialog):
             box.lineEdit().setPlaceholderText(placeholder)
         return box
 
-    def _key_row(self, form, provider, placeholder, tester, service=""):
+    def _key_row(self, provider, variable, tester, service="", above=None, optional=False):
         """A key field, its Test button and the line the answer lands on.
 
         The field and the pair the answer needs are filed under the provider's
         name, so saving, loading and the test handler find them by name rather
-        than through three attributes each.
+        than through three attributes each. The three travel together as one
+        holder, which _place_keys moves to wherever the key is needed.
         """
         field = QLineEdit()
         field.setEchoMode(QLineEdit.EchoMode.Password)
-        field.setPlaceholderText(placeholder)
+        field.setPlaceholderText(t("Paste your key (optional)") if optional else t("Paste your key"))
+        field.setToolTip(t("Left empty, the {variable} environment variable is used.",
+                           variable=variable))
+        label = service or cfg.TRANSCRIBERS[provider].service
+        field.setAccessibleName(t("{service} key", service=label))
+        # A tick beside a field that holds a key, so the set ones can be told
+        # from the empty ones without revealing either.
+        tick = widgets.GlyphLabel("check", "accent", 16)
+        tick.setToolTip(t("Key set"))
+        tick.setAccessibleName(t("Key set"))
+        policy = tick.sizePolicy()
+        policy.setRetainSizeWhenHidden(True)
+        tick.setSizePolicy(policy)
+        tick.hide()
+        field.textChanged.connect(lambda text, tick=tick: tick.setVisible(bool(text.strip())))
         button = QPushButton(t("Test"))
         button.clicked.connect(tester)
         answer = QLabel("")
+        answer.setObjectName("muted")
         answer.setWordWrap(True)
-        label = service or cfg.TRANSCRIBERS[provider].service
-        form.addRow(label, self._row(field, button))
-        form.addRow("", answer)
+        answer.hide()
+        holder = QWidget()
+        column = QVBoxLayout(holder)
+        column.setContentsMargins(0, 0, 0, 0)
+        column.setSpacing(4)
+        if above is not None:
+            column.addWidget(above)
+        column.addWidget(self._row(field, tick, button))
+        column.addWidget(answer)
+        home = QWidget()
+        row = QHBoxLayout(home)
+        row.setContentsMargins(0, 0, 0, 0)
+        name = QLabel(label)
+        name.setMinimumWidth(130)
+        name.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
+        name.setContentsMargins(0, 6, 0, 0)
+        row.addWidget(name)
+        row.setSpacing(14)
+        self._key_names.append(name)
+        slot = QVBoxLayout()
+        slot.setContentsMargins(0, 0, 0, 0)
+        row.addLayout(slot, 1)
+        slot.addWidget(holder)
+        self.other_keys.addWidget(home)
         self._key_fields[provider] = field
         self._testers[provider] = (button, answer)
+        self._key_holders[provider] = holder
+        self._key_homes[provider] = (home, slot)
         return field
 
-    def _shortcut_row(self, form, which, label, missing, placeholder="",
-                      tooltip=""):
+    @staticmethod
+    def _key_slot():
+        slot = QWidget()
+        layout = QVBoxLayout(slot)
+        layout.setContentsMargins(0, 0, 0, 0)
+        return slot
+
+    def _place_keys(self):
+        """Put each provider's key where the job that needs it is set up."""
+        if not getattr(self, "_key_holders", None) or not hasattr(self, "cleanup_key_slot"):
+            return
+        stt = self.transcribe_provider.currentData() or "local"
+        cleaner = self.cleanup_provider.currentData() or "openrouter"
+        if cleaner == stt or not self.cleanup_enabled.isChecked():
+            cleaner = None
+        for provider, holder in self._key_holders.items():
+            home, home_slot = self._key_homes[provider]
+            if provider == stt:
+                target = self.stt_key_slot.layout()
+            elif provider == cleaner:
+                target = self.cleanup_key_slot.layout()
+            else:
+                target = home_slot
+            if target.indexOf(holder) < 0:
+                for layout in (self.stt_key_slot.layout(),
+                               self.cleanup_key_slot.layout(), home_slot):
+                    layout.removeWidget(holder)
+                target.addWidget(holder)
+                holder.show()
+            home.setVisible(target is home_slot)
+        self.stt_form.setRowVisible(self.stt_key_slot, stt in self._key_holders)
+        self.cleanup_form.setRowVisible(self.cleanup_key_slot, cleaner in self._key_holders)
+        set_up = sum(1 for provider, field in self._key_fields.items()
+                     if self._key_homes[provider][1].indexOf(self._key_holders[provider]) >= 0
+                     and field.text().strip())
+        self.other_connections.button.setText(
+            t("Other connections ({count} set)", count=set_up) if set_up
+            else t("Other connections"))
+
+    def _shortcut_row(self, form, which, label, placeholder="",
+                      tooltip="", missing_tip=""):
         """One global shortcut: the combination, Install, Remove, and a line
-        saying what the desktop has registered. `missing` is what that line
-        says when nothing is."""
-        box = self._shortcut_box(placeholder or t("none"))
+        saying what the desktop has registered. `missing_tip` is the rest of
+        that line when the desktop has nothing registered."""
+        missing = t("Not assigned.")
+        box = self._shortcut_box(placeholder or t("Not assigned"))
         if tooltip:
             box.setToolTip(tooltip)
         form.addRow(label, self._row(box, *self._install_buttons(
@@ -2681,15 +3401,49 @@ class SettingsWindow(QDialog):
             lambda: self._remove_shortcut(which),
         )))
         status = QLabel("")
+        status.setObjectName("muted")
         status.setWordWrap(True)
-        form.addRow(status)
+        form.addRow("", status)
+        form.setRowVisible(status, False)
         self._shortcut_rows[which] = (box, status, missing)
+        self._shortcut_forms[which] = form
+        self._shortcut_tips[which] = missing_tip
+        box.currentTextChanged.connect(lambda *_: self._refresh_shortcut_status(which))
         return box
+
+    def _shortcut_link(self, form, which, label, link=True):
+        """A feature page's line about its key: the combination, and a link
+        to the Shortcuts page where it is set (once per page)."""
+        current = QLabel("")
+        if link:
+            button = QPushButton(t("Change in Shortcuts"))
+            button.setObjectName("link")
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setAutoDefault(False)
+            button.clicked.connect(lambda: self.show_page("shortcuts"))
+            form.addRow(label, self._row(current, button))
+        else:
+            current.setToolTip(t("Change in Shortcuts"))
+            form.addRow(label, current)
+        if not hasattr(self, "_shortcut_summaries"):
+            self._shortcut_summaries = {}
+        self._shortcut_summaries[which] = current
+
+    def _go_enable_assist(self):
+        self.show_page("assistant")
+        self.selection_assist.setFocus(Qt.FocusReason.OtherFocusReason)
+        area = self.tabs.currentWidget()
+        if isinstance(area, QScrollArea):
+            area.ensureWidgetVisible(self.selection_assist)
 
     def _enable_assist_shortcut(self, on):
         for widget in self._assist_shortcut:
             if widget is not None:
                 widget.setEnabled(on)
+        if hasattr(self, "assist_enable_link"):
+            self._assist_link_form.setRowVisible(self.assist_enable_link, not on)
+        if "assist" in self._shortcut_rows:
+            self._refresh_shortcut_status("assist")
 
     @staticmethod
     def _install_buttons(install_handler, remove_handler):
@@ -2727,11 +3481,12 @@ class SettingsWindow(QDialog):
         conf = self.conf
         self._select_data(self.ui_language, conf["ui_language"])
         self._select_data(self.theme_choice, conf["theme"])
-        theme.apply(self, self.theme_choice.currentData())
+        self._apply_theme(self.theme_choice.currentData())
         self._select_source(self.mic, conf["mic_target"])
         self._select_data(self.language, conf["language"])
         self.auto_paste.setChecked(conf["auto_paste"])
-        self.paste_shortcut.setCurrentText(conf["paste_shortcut"])
+        self._sync_paste_key()
+        self.paste_shortcut.setCurrentText(key_label(conf["paste_shortcut"]))
         self.restore_clipboard.setChecked(conf["restore_clipboard"])
         screen_name = conf["overlay_screen"]
         if screen_name and self.indicator_screen.findData(screen_name) < 0:
@@ -2759,7 +3514,8 @@ class SettingsWindow(QDialog):
         self._shown_provider = ""
         self._select_data(self.transcribe_provider, conf["transcribe_provider"])
         self._provider_changed()  # selecting index 0 fires no signal
-        self.file_model.setCurrentText(conf["openrouter_file_model"])
+        self.file_model.setCurrentText(conf["openrouter_file_model"]
+                                       or self.file_model_default)
         binary_changed = self.local_whisper.custom_binary != conf["local_binary"]
         self.local_whisper.custom_binary = conf["local_binary"]
         processing_device = conf["local_device"]
@@ -2818,11 +3574,12 @@ class SettingsWindow(QDialog):
         # language switch the boxes still hold the old language's default, and
         # comparing against the new one would store that text as a custom
         # prompt shadowing every future improvement.
+        # Reflowed, as the editors show them: one line per paragraph.
         self._loaded_defaults = {
-            "cleanup": cfg.default_cleanup_prompt(),
-            "file": cfg.default_file_cleanup_prompt(),
-            "assistant": cfg.default_assistant_prompt(),
-            "meeting": cfg.default_meeting_prompt(),
+            "cleanup": reflow(cfg.default_cleanup_prompt()),
+            "file": reflow(cfg.default_file_cleanup_prompt()),
+            "assistant": reflow(cfg.default_assistant_prompt()),
+            "meeting": reflow(cfg.default_meeting_prompt()),
         }
         self.cleanup_prompt.setPlainText(
             conf["cleanup_prompt"] or self._loaded_defaults["cleanup"])
@@ -2905,7 +3662,7 @@ class SettingsWindow(QDialog):
         self._load_minutes()
         self._loaded_config = dict(conf.data)
 
-    def _save(self):
+    def _save(self, quiet=False):
         conf = self.conf
         before = dict(conf.data)
         conf["ui_language"] = self.ui_language.currentData() or "auto"
@@ -2913,7 +3670,12 @@ class SettingsWindow(QDialog):
         conf["mic_target"] = self.mic.currentData() or ""
         conf["language"] = self.language.currentData() or "auto"
         conf["auto_paste"] = self.auto_paste.isChecked()
-        conf["paste_shortcut"] = self.paste_shortcut.currentText().strip()
+        # Shown as "Ctrl+V", stored the way the paste code and the config
+        # always had it; the key names are read without regard to case.
+        typed = self.paste_shortcut.currentText().strip()
+        conf["paste_shortcut"] = (conf["paste_shortcut"]
+                                  if key_label(conf["paste_shortcut"]) == typed
+                                  else typed.lower())
         conf["restore_clipboard"] = self.restore_clipboard.isChecked()
         conf["overlay_screen"] = self.indicator_screen.currentData() or ""
         # Read even while it is greyed out, so that naming a screen and taking
@@ -2936,7 +3698,9 @@ class SettingsWindow(QDialog):
         for name, who in cfg.TRANSCRIBERS.items():
             conf[who.key] = self._key_fields[name].text().strip()
             conf[who.model] = self._models[name].strip() or cfg.DEFAULTS[who.model]
-        conf["openrouter_file_model"] = self.file_model.currentText().strip()
+        file_model = self.file_model.currentText().strip()
+        conf["openrouter_file_model"] = ("" if file_model == self.file_model_default
+                                         else file_model)
         conf["deepseek_api_key"] = self.deepseek_key.text().strip()
         conf["opencode_api_key"] = self.opencode_key.text().strip()
         conf["custom_base_url"] = self.custom_url.text().strip()
@@ -2998,11 +3762,13 @@ class SettingsWindow(QDialog):
         # interface language keeps switching the prompt language.
         prompt = self.cleanup_prompt.toPlainText().strip()
         conf["cleanup_prompt"] = ("" if prompt in (
-            self._loaded_defaults["cleanup"], cfg.default_cleanup_prompt())
+            self._loaded_defaults["cleanup"], cfg.default_cleanup_prompt(),
+            reflow(cfg.default_cleanup_prompt()))
             else prompt)
         file_prompt = self.file_cleanup_prompt.toPlainText().strip()
         conf["file_cleanup_prompt"] = ("" if file_prompt in (
-            self._loaded_defaults["file"], cfg.default_file_cleanup_prompt())
+            self._loaded_defaults["file"], cfg.default_file_cleanup_prompt(),
+            reflow(cfg.default_file_cleanup_prompt()))
             else file_prompt)
         dictionary_write = self.dictionary_editor.store(conf)
         self.profiles_editor.store(conf)
@@ -3045,7 +3811,8 @@ class SettingsWindow(QDialog):
         conf["selection_assist"] = self.selection_assist.isChecked()
         assistant_prompt = self.assistant_prompt.toPlainText().strip()
         conf["assistant_prompt"] = ("" if assistant_prompt in (
-            self._loaded_defaults["assistant"], cfg.default_assistant_prompt())
+            self._loaded_defaults["assistant"], cfg.default_assistant_prompt(),
+            reflow(cfg.default_assistant_prompt()))
             else assistant_prompt)
 
         conf["meeting_mic_target"] = self.meeting_mic.currentData() or ""
@@ -3066,7 +3833,8 @@ class SettingsWindow(QDialog):
         conf["meeting_keep_audio"] = self.meeting_keep_audio.isChecked()
         meeting_prompt = self.meeting_prompt.toPlainText().strip()
         conf["meeting_prompt"] = ("" if meeting_prompt in (
-            self._loaded_defaults["meeting"], cfg.default_meeting_prompt())
+            self._loaded_defaults["meeting"], cfg.default_meeting_prompt(),
+            reflow(cfg.default_meeting_prompt()))
             else meeting_prompt)
 
         if self.file_timestamps.isEnabled():
@@ -3127,7 +3895,8 @@ class SettingsWindow(QDialog):
         # when the window was built and stay behind. Asking for the rebuild
         # waits until the box is dismissed, so the window is not pulled out
         # from under a dialog it is holding up.
-        QMessageBox.information(self, t("Dikte Settings"), t("Saved successfully."))
+        if not quiet:
+            QMessageBox.information(self, t("Dikte Settings"), t("Saved successfully."))
         if i18n.language() != self._built_language and not self._work_in_flight():
             self.language_changed.emit()
 
@@ -3158,9 +3927,7 @@ class SettingsWindow(QDialog):
     # ---- api helpers -----------------------------------------------------
 
     def _toggle_local_advanced(self, expanded):
-        self.local_options_form.setRowVisible(self.local_threads, expanded)
-        self.local_advanced_toggle.setArrowType(
-            Qt.ArrowType.DownArrow if expanded else Qt.ArrowType.RightArrow)
+        self.local_advanced.set_expanded(expanded)
 
     def _local_threads_was_changed(self):
         self._local_threads_changed = True
@@ -3266,11 +4033,12 @@ class SettingsWindow(QDialog):
         # Requesty transcribes with models it does not list, so there is
         # nothing for the button to fetch.
         self.refresh_transcribe_models.setVisible(provider != "requesty")
-        self.stt_form.setRowVisible(self.transcribe_status, not local)
+        self.stt_form.setRowVisible(self.transcribe_status, False)
         self.stt_form.setRowVisible(self.local_whisper, local)
         self.stt_form.setRowVisible(self.local_options, local)
-        self.stt_form.setRowVisible(self.local_state, local)
+        self._sync_local_rows()
         self._refresh_local_box()
+        self._place_keys()
         if local:
             return
         self.transcribe_model.clear()
@@ -3292,11 +4060,16 @@ class SettingsWindow(QDialog):
         warning = ("" if api.gives_times(self._shown_provider)
                    else t("Gives no timestamps, so subtitles and meetings need "
                           "another provider."))
-        self.transcribe_status.setText("\n".join(x for x in (line, warning) if x))
+        self.transcribe_status.set(line, t("No timestamps from this provider.") if warning else "",
+                                   warning)
+        self.stt_form.setRowVisible(self.transcribe_status,
+                                    bool(self.transcribe_status.text())
+                                    and self._shown_provider != "local")
 
     def _fill_file_models(self, models):
         current = self.file_model.currentText()
         self.file_model.clear()
+        self.file_model.addItem(self.file_model_default)
         self.file_model.addItems(models)
         self.file_model.setCurrentText(current)
 
@@ -3703,6 +4476,7 @@ class SettingsWindow(QDialog):
         button, answer = self._testers[provider]
         button.setEnabled(False)
         answer.setText(t("Trying…"))
+        answer.show()
 
         def work():
             try:
@@ -3716,6 +4490,10 @@ class SettingsWindow(QDialog):
         button, answer = self._testers[provider]
         button.setEnabled(True)
         answer.setText(("✓ " if ok else "✗ ") + message)
+        answer.setObjectName("muted" if ok else "danger")
+        answer.style().unpolish(answer)
+        answer.style().polish(answer)
+        answer.show()
 
     # ---- updates ---------------------------------------------------------
 
@@ -3758,13 +4536,23 @@ class SettingsWindow(QDialog):
 
     # ---- audio file ------------------------------------------------------
 
+    def _file_say(self, text):
+        """The file tab's status line, taking no room while it is empty."""
+        self.file_status.setText(text)
+        self.file_status.setVisible(bool(text))
+
     def _choose_file(self):
         start = self.conf["file_last_dir"] or os.path.expanduser("~")
         path, _ = QFileDialog.getOpenFileName(
             self, t("Select an audio file"), start,
             f"{t('Audio and video files')} ({AUDIO_FILTER});;{t('All files')} (*)",
         )
-        if not path:
+        if path:
+            self._use_file(path)
+
+    def _use_file(self, path):
+        """The file to transcribe next, picked or dropped."""
+        if not path or self.transcriber.busy:
             return
         self.file_path = path
         self.file_label.setText(os.path.basename(path))
@@ -3796,9 +4584,11 @@ class SettingsWindow(QDialog):
             return
         self.file_output.clear()
         self.file_segments = []
-        self.file_save_srt.setEnabled(False)
+        self._set_srt(False)
         self.file_run.setEnabled(False)
+        self.file_run.hide()
         self.file_stop.setEnabled(True)
+        self.file_stop.show()
         self.transcriber.start(
             self.file_path,
             self.file_timestamps.isChecked(),
@@ -3810,28 +4600,30 @@ class SettingsWindow(QDialog):
         # The button goes dead here rather than when the run comes back, so a
         # second press cannot land while the first one is still travelling.
         self.file_stop.setEnabled(False)
-        self.file_status.setText(t("Stopping…"))
+        self._file_say(t("Stopping…"))
         self.transcriber.stop()
 
     def _on_file_progress(self, message):
-        self.file_status.setText(message)
+        self._file_say(message)
         if message == t("Stopped."):
             self._file_idle()
 
     def _on_file_finished(self, text, segments):
         self.file_output.setPlainText(text)
         self.file_segments = segments
-        self.file_save_srt.setEnabled(bool(segments))
-        self.file_status.setText(t("Done: {chars} characters.", chars=len(text)))
+        self._set_srt(bool(segments))
+        self._file_say(t("Done: {chars} characters.", chars=len(text)))
         self._file_idle()
 
     def _on_file_failed(self, error):
-        self.file_status.setText(t("Failed: {error}", error=error))
+        self._file_say(t("Failed: {error}", error=error))
         self._file_idle()
 
     def _file_idle(self):
         self.file_run.setEnabled(True)
+        self.file_run.show()
         self.file_stop.setEnabled(False)
+        self.file_stop.hide()
 
     def _save_transcript(self):
         self._write_transcript(self.file_output.toPlainText(), ".txt",
@@ -3842,7 +4634,7 @@ class SettingsWindow(QDialog):
                                     getattr(self, "file_segments", []),
                                     self.file_wrap.isChecked())
         if not srt:
-            self.file_status.setText(t("No timestamped lines to turn into subtitles."))
+            self._file_say(t("No timestamped lines to turn into subtitles."))
             return
         self._write_transcript(srt, ".srt", f"{t('Subtitle files')} (*.srt)")
 
@@ -3862,9 +4654,9 @@ class SettingsWindow(QDialog):
         try:
             with open(path, "w", encoding="utf-8") as fh:
                 fh.write(text)
-            self.file_status.setText(t("Saved: {path}", path=path))
+            self._file_say(t("Saved: {path}", path=path))
         except OSError as exc:
-            self.file_status.setText(t("Failed: {error}", error=exc))
+            self._file_say(t("Failed: {error}", error=exc))
 
     # ---- shortcuts -------------------------------------------------------
 
@@ -3905,18 +4697,47 @@ class SettingsWindow(QDialog):
         self._refresh_shortcut_status(which)
 
     def _refresh_shortcut_status(self, which):
-        _box, status, missing = self._shortcut_rows[which]
+        box, status, missing = self._shortcut_rows[which]
+        typed = box.currentText().strip()
+        summary = getattr(self, "_shortcut_summaries", {}).get(which)
+        if summary is not None:
+            shown = typed or (hotkey.default_combo(which) if which == "toggle" else "")
+            summary.setText(shown or t("Not assigned"))
+            summary.setObjectName("" if shown else "muted")
+            summary.style().unpolish(summary)
+            summary.style().polish(summary)
         current = hotkey.shortcut_status(hotkey.SHORTCUTS[which].desktop_id)
-        if not current:
-            status.setText(missing)
-        elif hotkey.installs_shortcuts():
+        status.setToolTip("")
+        if which == "assist" and hasattr(self, "selection_assist") \
+                and not self.selection_assist.isChecked():
+            # The link under the row says how to turn it on; a line repeating
+            # it would be the same thing twice.
+            status.setText("")
+        elif current and hotkey.installs_shortcuts():
             status.setText(t("Registered in {desktop}: {shortcut}",
                              desktop=hotkey.desktop_name(), shortcut=current))
-        else:
+        elif current:
             # Nothing was written anywhere: this is the combination the running
             # process is holding, which is the only sense in which it exists.
             status.setText(t("Held by Dikte while it runs: {shortcut}",
                              shortcut=current))
+        elif not typed and which != "toggle":
+            # The empty box already says "Not assigned"; a line under it
+            # saying it again is noise.
+            status.setText("")
+        elif not hotkey.installs_shortcuts():
+            # Where there is no registry, a combination in the box is the one
+            # Dikte takes as it starts. The page says that once, under "How
+            # shortcuts work here"; a line under every key repeating it is noise.
+            status.setText("")
+        else:
+            status.setText(t("Not registered with the desktop."))
+            status.setToolTip(self._shortcut_tips.get(which, ""))
+        form = self._shortcut_forms.get(which)
+        if form is not None:
+            form.setRowVisible(status, bool(status.text()))
+        else:
+            status.setVisible(bool(status.text()))
 
     def _cleanup_provider_changed(self):
         provider = self.cleanup_provider.currentData() or "openrouter"
@@ -3938,39 +4759,37 @@ class SettingsWindow(QDialog):
                                         provider == "custom")
         self.cleanup_form.setRowVisible(self.cleanup_agy_model,
                                         provider == "agy")
-        self.cleanup_form.setRowVisible(self.cleanup_reasoning,
-                                        provider != "local")
+        self.cleanup_advanced_form.setRowVisible(self.cleanup_reasoning,
+                                                 provider != "local")
+        self.cleanup_advanced_form.setRowVisible(self.local_llm_reasoning,
+                                                 provider == "local")
         self.cleanup_form.setRowVisible(self.local_llm, provider == "local")
         self.cleanup_form.setRowVisible(self.local_llm_options, provider == "local")
-        self.cleanup_form.setRowVisible(self.local_llm_state, provider == "local")
+        self._sync_local_rows()
         self._refresh_local_box()
+        self._place_keys()
         binary = cleanup.executable(provider)
         found = shutil.which(binary) if binary else ""
-        if provider == "local":
-            self.models_label.setText(t("Runs on this machine, on llama.cpp."))
-        elif provider == "gemini":
-            self.models_label.setText(t("Runs on Google AI Studio."))
-        elif provider == "opencode":
-            self.models_label.setText(t("Runs on OpenCode Go."))
-        elif provider == "deepseek":
-            self.models_label.setText(t("Runs on DeepSeek."))
-        elif provider == "requesty":
-            self.models_label.setText(t("Runs on Requesty."))
-        elif provider == "custom":
-            self.models_label.setText(t("Runs on your custom server."))
-        elif not binary:
-            self.models_label.setText(t("Runs on OpenRouter."))
+        # The provider box already says where cleanup runs; the line under it
+        # only speaks for a program that has to be found on this machine.
+        if not binary:
+            self.models_label.set()
         elif found:
-            self.models_label.setText(t("Found: {path}", path=found))
+            self.models_label.set(t("Found: {path}", path=found))
         else:
-            self.models_label.setText(t(
-                "{binary} is not on your PATH, so cleanup would fail and the raw "
-                "transcript would be pasted. Install it, or pick another one "
-                "above.", binary=binary,
-            ))
+            self.models_label.warn(
+                t("{binary} was not found on your PATH.", binary=binary), t(
+                    "{binary} is not on your PATH, so cleanup would fail and the raw "
+                    "transcript would be pasted. Install it, or pick another one "
+                    "above.", binary=binary))
+        self.cleanup_form.setRowVisible(self.models_label, bool(self.models_label.text()))
 
     def _assistant_provider_changed(self):
         provider = self.assistant_provider.currentData() or "claude"
+        # A chat provider runs nothing, anywhere: a working directory for it
+        # would be a setting that silently does nothing.
+        self.assistant_how_form.setRowVisible(
+            self.assistant_dir_row, provider in ("claude", "codex", "agy"))
         self.claude_box.setVisible(provider == "claude")
         self.codex_box.setVisible(provider == "codex")
         self.openrouter_box.setVisible(provider == "openrouter")
@@ -3983,26 +4802,28 @@ class SettingsWindow(QDialog):
         provider = self.assistant_provider.currentData() or "claude"
         binary = assistant.executable(provider)
         found = shutil.which(binary) if binary else ""
+        # A chat provider needs nothing on this machine; that is the
+        # provider's tooltip, not a line of its own under it.
+        needs = ""
         if not binary:
             if provider == "opencode":
-                self.assistant_found.setText(
-                    t("Needs no program installed, only an OpenCode Go key.")
-                )
+                needs = t("Needs no program installed, only an OpenCode Go key.")
             elif provider == "requesty":
-                self.assistant_found.setText(
-                    t("Needs no program installed, only a Requesty key.")
-                )
+                needs = t("Needs no program installed, only a Requesty key.")
             else:
-                self.assistant_found.setText(
-                    t("Needs no program installed, only the OpenRouter key.")
-                )
+                needs = t("Needs no program installed, only the OpenRouter key.")
+        self.assistant_provider.setToolTip(needs)
+        if not binary:
+            self.assistant_found.set()
         elif found:
             self.assistant_found.setText(t("Found: {path}", path=found))
         else:
-            self.assistant_found.setText(t(
-                "{binary} is not on your PATH, so this cannot run yet. Install "
-                "it, or pick another one above.", binary=binary,
-            ))
+            self.assistant_found.warn(
+                t("{binary} was not found on your PATH.", binary=binary), t(
+                    "{binary} is not on your PATH, so this cannot run yet. Install "
+                    "it, or pick another one above.", binary=binary))
+        self.assistant_how_form.setRowVisible(self.assistant_found,
+                                              bool(self.assistant_found.text()))
         age = assistant.session_age()
         if age is None:
             self.assistant_session_status.setText(t("No conversation going."))
@@ -4034,41 +4855,221 @@ class SettingsWindow(QDialog):
     # ---- minutes ---------------------------------------------------------
 
     def _load_minutes(self):
+        # Read again whenever the page is opened or a meeting moves on: the
+        # meeting being read stays the one in the reader.
+        chosen = (self._selected_meeting() or {}).get("base")
+        live = getattr(self, "_live_meeting", None)
+        self.minutes_list.blockSignals(True)
         self.minutes_list.clear()
+        self.minutes_list.blockSignals(False)
+        self._live_item = None
+        if live:
+            self.set_live_meeting(*live)
+            if not chosen:
+                # The live row stays the one picked, as it was.
+                self.minutes_list.setCurrentItem(self._live_item)
         for row in reversed(cfg.read_meetings()):
             title = row.get("title") or t("Meeting")
             head = f"{row.get('ts', '')}  ·  {meeting.length_label(row.get('duration', 0))}"
+            brief = (f"{widgets.short_time(row.get('ts', ''))}  ·  "
+                     f"{meeting.length_label(row.get('duration', 0))}")
             state = MEETING_STATUS.get(row.get("status", ""), "")
             if state:
                 head += "  ·  " + t(state)
+                brief += "  ·  " + t(state)
             item = QListWidgetItem(f"{head}\n{title}")
             item.setData(Qt.ItemDataRole.UserRole, row)
+            item.setData(widgets.META_ROLE, brief)
+            item.setData(widgets.BODY_ROLE, title)
+            item.setData(widgets.KIND_ROLE,
+                         "failed" if row.get("status") == "failed"
+                         else "doc" if row.get("status", "done") == "done" else "history")
             self.minutes_list.addItem(item)
+            if chosen and row.get("base") == chosen:
+                self.minutes_list.setCurrentItem(item)
+        self.minutes_split._place()
+        if self._selected_meeting() is None:
+            self._show_minutes()
         if not self.minutes_list.count():
-            self.minutes_view.clear()
+            self._set_minutes_text("")
             self.minutes_retry.setEnabled(False)
+            self.minutes_retry.hide()
+        self._sync_minutes_actions()
+
+    def use_profile_now(self, name):
+        """Switch the profile dictation uses, from outside this window (the
+        home window's chip), and keep it: the same change as Use this profile
+        and Apply, touching nothing else that is waiting to be applied."""
+        editor = self.profiles_editor
+        # Checked against the profiles as stored, which is what the chip
+        # offered: an unapplied rename in the editor must not turn the
+        # choice into Default.
+        stored = [profile["name"] for profile in profiles.named_profiles(self.conf)]
+        chosen = name if name in stored else ""
+        editor.use_profile(chosen)
+        if self.conf["profile_override"] != chosen:
+            self.conf["profile_override"] = chosen
+            self.conf.save()
+        # The saved copy now has it too, so it is not listed as an edit.
+        entries = self._form_entries()
+        saved = getattr(self, "_saved_form", None)
+        if saved is not None and len(saved) == len(entries):
+            for index, (page, value) in enumerate(entries):
+                if page == "profiles" and isinstance(value, list) and len(value) == 7:
+                    stored = copy.deepcopy(saved[index])
+                    stored[6] = chosen
+                    saved[index] = stored
+        self._show_dirty()
+
+    def set_live_meeting(self, title="", meta=""):
+        """Pin a row for the meeting being recorded at the top of the list, or
+        take it away with no title. It comes in picked, so the reader shows
+        the recording live rather than an older meeting; picking another row
+        reads that one meanwhile."""
+        item = getattr(self, "_live_item", None)
+        if not title:
+            self._live_meeting = None
+            if item is not None:
+                try:
+                    self.minutes_list.takeItem(self.minutes_list.row(item))
+                except RuntimeError:
+                    pass
+                self._live_item = None
+                self.minutes_split._place()
+            return
+        self._live_meeting = (title, meta)
+        if item is None:
+            item = QListWidgetItem(title)
+            item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            item.setData(widgets.KIND_ROLE, "mic")
+            self.minutes_list.insertItem(0, item)
+            self._live_item = item
+            self.minutes_list.setCurrentItem(item)
+            self.minutes_split._place()
+        item.setText(title)
+        item.setData(widgets.BODY_ROLE, title)
+        item.setData(widgets.META_ROLE, meta)
+
+    def _sync_minutes_actions(self):
+        """Copy and Delete only with a meeting in the reader to act on."""
+        chosen = self._selected_meeting() is not None
+        self.minutes_copy.setEnabled(chosen and bool(self._minutes_text))
+        self.minutes_delete.setEnabled(chosen)
 
     def _selected_meeting(self):
         item = self.minutes_list.currentItem()
         return item.data(Qt.ItemDataRole.UserRole) if item is not None else None
 
+    def set_live_panel(self, panel):
+        """The widget the reader shows while the live recording's row is
+        picked (elapsed time, the meters)."""
+        self.minutes_live_panel = panel
+        self.minutes_reader.addWidget(panel)
+        self._show_minutes()
+
     def _show_minutes(self, *_):
         row = self._selected_meeting()
+        live = (self.minutes_live_panel is not None
+                and getattr(self, "_live_item", None) is not None
+                and self.minutes_list.currentItem() is self._live_item)
+        self.minutes_reader.setCurrentWidget(self.minutes_live_panel if live
+                                             else self.minutes_view)
         if not row:
-            self.minutes_view.clear()
+            self._set_minutes_text("")
             self.minutes_retry.setEnabled(False)
+            self.minutes_retry.hide()
+            self._sync_minutes_actions()
             return
         doc_path, _wav = cfg.meeting_paths(row["base"])
         try:
-            self.minutes_view.setPlainText(doc_path.read_text(encoding="utf-8"))
+            self._set_minutes_text(doc_path.read_text(encoding="utf-8"), markdown=True)
         except OSError:
-            self.minutes_view.setPlainText(
+            self._set_minutes_text(
                 row.get("error") or t("Nothing has been written yet.")
             )
         busy = self.meetings is not None and self.meetings.busy
+        self.minutes_retry.setVisible(row.get("status") != "done")
         self.minutes_retry.setEnabled(
             self.meetings is not None and not busy and row.get("status") != "done"
         )
+        self._sync_minutes_actions()
+
+    def _set_minutes_text(self, text, markdown=False):
+        """Show minutes rendered, and keep their text for Copy."""
+        self._minutes_text = text
+        if markdown:
+            self.minutes_view.setHtml(self._minutes_html(text, self.minutes_view.font()))
+        else:
+            self.minutes_view.setPlainText(text)
+
+    @staticmethod
+    def _minutes_html(text, font):
+        """Markdown as HTML set like a short document.
+
+        Read straight into a styled viewer, Markdown headings all came out at
+        the text's own size, and Qt's own sizes are poster sized and run into
+        each other. Here the title is one step under a page heading, sections
+        a step above the text with room above them, paragraphs sit close, and
+        a bullet keeps a space between itself and its line."""
+        document = QTextDocument()
+        document.setDefaultFont(font)
+        # Raw HTML in the model's text stays text; Markdown links still render.
+        document.setMarkdown(text, QTextDocument.MarkdownFeature.MarkdownDialectGitHub
+                             | QTextDocument.MarkdownFeature.MarkdownNoHTML)
+        base = font.pointSizeF() if font.pointSizeF() > 0 else 10.0
+        # Points from pixels at the 96 dpi the stylesheet's px assume.
+        sizes = {1: 15.0, 2: 11.75, 3: max(base, 10.5)}
+        cursor = QTextCursor(document)
+        block = document.begin()
+        lists = []
+        while block.isValid():
+            fmt = block.blockFormat()
+            level = fmt.headingLevel()
+            listed = block.textList()
+            if level:
+                fmt.setTopMargin(0 if block == document.begin() else 12)
+                fmt.setBottomMargin(4)
+                cursor.setPosition(block.position())
+                cursor.setPosition(block.position() + block.length() - 1,
+                                   QTextCursor.MoveMode.KeepAnchor)
+                char = QTextCharFormat()
+                # Markdown headings carry a relative size step as well, which
+                # Qt adds on top of any size set here.
+                char.setProperty(QTextFormat.Property.FontSizeAdjustment, 0)
+                char.setFontPointSize(sizes.get(level, base))
+                char.setFontWeight(QFont.Weight.DemiBold)
+                cursor.mergeCharFormat(char)
+            elif listed is not None:
+                lists.append((block, listed))
+            else:
+                fmt.setTopMargin(0)
+                fmt.setBottomMargin(6)
+            cursor.setPosition(block.position())
+            cursor.setBlockFormat(fmt)
+            block = block.next()
+        # A list item becomes a paragraph with its own marker and a hanging
+        # indent: Qt draws a list's bullet tight against the text.
+        for block, listed in lists:
+            style = listed.format().style()
+            if style in (QTextListFormat.Style.ListDecimal, QTextListFormat.Style.ListLowerAlpha,
+                         QTextListFormat.Style.ListUpperAlpha):
+                marker = listed.itemText(block)
+            else:
+                marker = "\u2022"
+            depth = listed.format().indent()
+            listed.remove(block)
+            fmt = block.blockFormat()
+            fmt.setIndent(0)
+            fmt.setLeftMargin(10 + 18 * depth)
+            fmt.setTextIndent(-14)
+            fmt.setTopMargin(0)
+            fmt.setBottomMargin(3)
+            cursor.setPosition(block.position())
+            cursor.setBlockFormat(fmt)
+            cursor.insertText(marker + "\u2002")
+        # Read back in, an <h1> adds Qt's own size step on top of the size the
+        # span sets; as a paragraph the sizes above are the ones shown.
+        return re.sub(r"<(/?)h[1-6]\b", r"<\1p", document.toHtml())
 
     def _retry_minutes(self):
         row = self._selected_meeting()
@@ -4125,7 +5126,7 @@ class SettingsWindow(QDialog):
                 error = (row.get("error") or "").replace("\n", " ")
                 preview = t("Failed: {error}", error=error[:110])
                 if _retryable(row):
-                    preview += "\n" + t("The recording was kept; select it and press Retry.")
+                    preview += "\n" + t("The recording was kept; select it and press Try again.")
             elif row.get("mode") == "ask":
                 # The text of an answer says nothing about what was asked, and
                 # out of that context half of them read like non sequiturs.
@@ -4139,10 +5140,71 @@ class SettingsWindow(QDialog):
             header += history_marks(row)
             item = QListWidgetItem(f"{header}\n{preview}")
             item.setData(Qt.ItemDataRole.UserRole, row)
+            # The list says when and which profile in a few words; the full
+            # header, seconds and all, is the reader's.
+            item.setData(widgets.META_ROLE, history_brief(row))
+            item.setData(Qt.ItemDataRole.UserRole + 20, history_detail(row))
+            # The full header, program and seconds and all, for whoever hovers.
+            item.setToolTip(header)
+            # A failure's row says what failed; why is on the line under it.
+            item.setData(widgets.BODY_ROLE, history_title(row))
+            item.setData(widgets.KIND_ROLE, history_kind(row))
             self.history.addItem(item)
             if cfg._row_key(row) in chosen:
                 item.setSelected(True)
+        self._filter_history()
         self._sync_history_actions()
+        self.history_split._place()
+
+    def _filter_history(self, *_):
+        needle = self.history_search.text().strip().casefold()
+        for index in range(self.history.count()):
+            item = self.history.item(index)
+            item.setHidden(bool(needle) and needle not in item.text().casefold())
+        self.history_split._place()
+
+    def _reveal_history(self, item):
+        try:
+            if item is not None and item.listWidget() is self.history:
+                self.history.scrollToItem(item, QAbstractItemView.ScrollHint.EnsureVisible)
+        except RuntimeError:
+            pass  # the list was reloaded and the item deleted meanwhile
+
+    def _show_history_entry(self):
+        """The newest selected entry, in full, in the reader beside the list."""
+        items = sorted(self.history.selectedItems(), key=self.history.row)
+        failed = bool(items) and bool(items[0].data(Qt.ItemDataRole.UserRole).get("failed"))
+        for part in (self.history_failed_badge, self.history_error, self.history_failure):
+            part.setVisible(failed)
+        # The fixes show under a reader too, for a selection whose newest
+        # entry worked but which holds a failure that can be tried again.
+        fixes = any(not button.isHidden() for button in
+                    (self.history_retry, self.history_record, self.history_check))
+        self.history_failed_pane.setVisible(failed or fixes)
+        self.history_reader.setVisible(not failed)
+        layout = self.history_failed_pane.parentWidget().layout()
+        layout.setStretchFactor(self.history_failed_pane, 1 if failed else 0)
+        if not items:
+            self.history_meta.setText("")
+            self.history_reader.setPlainText("")
+            return
+        row = items[0].data(Qt.ItemDataRole.UserRole)
+        self.history_meta.setText(items[0].data(Qt.ItemDataRole.UserRole + 20) or "")
+        if failed:
+            self.history_error.setText(t("Transcription failed"))
+            text = (row.get("error") or "").strip()
+            text += "\n\n" + (t("The recording was kept, so it can be tried again.")
+                               if _retryable(row) else
+                               t("Recording unavailable. Record it again, or check "
+                                 "the connection if this keeps happening."))
+            self.history_failure.setText(text.strip())
+            self.history_reader.setPlainText(text.strip())
+            return
+        if row.get("mode") == "ask":
+            text = (row.get("question") or row.get("raw") or "") + "\n\n" + (row.get("text") or "")
+        else:
+            text = row.get("text") or ""
+        self.history_reader.setPlainText(text.strip())
 
     def _retryable_selection(self):
         """Selected failed dictations whose recording is still there, oldest
@@ -4150,8 +5212,25 @@ class SettingsWindow(QDialog):
         return [row for row in reversed(self._selected_rows()) if _retryable(row)]
 
     def _sync_history_actions(self):
-        self.history_retry.setEnabled(bool(self._retryable_selection()))
-        self.history_original.setEnabled(bool(self._translated_selection()))
+        rows = self._selected_rows()
+        retryable = bool(self._retryable_selection())
+        translated = bool(self._translated_selection())
+        # A failure with nothing to retry: the newest selected is one, and no
+        # selected row could be tried again.
+        stranded = bool(rows and rows[0].get("failed") and not retryable)
+        self.history_retry.setEnabled(retryable)
+        self.history_retry.setVisible(retryable)
+        self.history_record.setVisible(stranded)
+        self.history_check.setVisible(stranded)
+        self.history_original.setEnabled(translated)
+        self.history_original.setVisible(translated)
+        readable = any(not row.get("failed") for row in rows)
+        self.history_copy.setEnabled(readable)
+        # A failure has no text to copy or open: the buttons are left out
+        # rather than shown greyed beside the ones that do something.
+        self.history_copy.setVisible(readable or not rows)
+        self.history_delete.setEnabled(bool(rows))
+        self._show_history_entry()
 
     def _translated_selection(self):
         return [row for row in self._selected_rows()
@@ -4224,7 +5303,7 @@ class SettingsWindow(QDialog):
         if item is not None and not item.isSelected():
             self.history.setCurrentItem(item)
         menu = QMenu(self)
-        retry = menu.addAction(t("Retry"))
+        retry = menu.addAction(t("Try again"))
         retry.setEnabled(bool(self._retryable_selection()))
         copy = menu.addAction(t("Copy selected to clipboard"))
         original = menu.addAction(t("Copy original"))

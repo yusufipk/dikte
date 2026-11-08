@@ -305,7 +305,7 @@ def ask(prompt, conf, on_stage=None, should_stop=None, keep_session=True,
     if not shutil.which(binary):
         raise AssistantError(t(
             "{binary} not found. Install it, or pick another provider under "
-            "Settings → Agent.", binary=binary,
+            "Settings → Assistant.", binary=binary,
         ))
 
     run = {"claude": _ask_claude, "codex": _ask_codex, "agy": _ask_agy}[name]
