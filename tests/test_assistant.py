@@ -754,7 +754,7 @@ class AskOpenCode(DikteTest):
                            opencode_api_key="opencode-test-key")
         with fake_urlopen({"choices": [{"message": {"content": "on Thursday"}}]}):
             assistant.ask("when is it", conf)
-        stored = assistant.read_messages("opencode", 1800)
+        stored = assistant.read_messages(assistant.chat_session(conf), 1800)
         self.assertEqual([row["content"] for row in stored],
                          ["when is it", "on Thursday"])
 
@@ -789,7 +789,7 @@ class AskRequesty(DikteTest):
                            requesty_api_key="rqsty-test-key")
         with fake_urlopen({"choices": [{"message": {"content": "on Thursday"}}]}):
             assistant.ask("when is it", conf)
-        stored = assistant.read_messages("requesty", 1800)
+        stored = assistant.read_messages(assistant.chat_session(conf), 1800)
         self.assertEqual([row["content"] for row in stored],
                          ["when is it", "on Thursday"])
 

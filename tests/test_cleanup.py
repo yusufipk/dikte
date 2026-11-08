@@ -127,7 +127,8 @@ class DeepSeek(DikteTest):
             (text, key, model, prompt),
             ("uh, done", "sk-deepseek-test", "deepseek-flash", "the rules"),
         )
-        self.assertEqual(call.call_args.kwargs["provider"], "deepseek")
+        self.assertEqual(call.call_args.kwargs["provider"], "custom")
+        self.assertEqual(call.call_args.kwargs["preset"], "deepseek")
         self.assertEqual(call.call_args.kwargs["service"], "DeepSeek")
         self.assertEqual(call.call_args.kwargs["base_url"],
                          "https://api.deepseek.com")
@@ -155,7 +156,8 @@ class OpenCode(DikteTest):
         self.assertEqual((text, key, model, prompt),
                          ("uh, done", "opencode-test-key", "some/model", "the rules"))
         self.assertEqual(call.call_args.kwargs["reasoning"], "low")
-        self.assertEqual(call.call_args.kwargs["provider"], "opencode")
+        self.assertEqual(call.call_args.kwargs["provider"], "custom")
+        self.assertEqual(call.call_args.kwargs["preset"], "opencode")
         self.assertEqual(call.call_args.kwargs["service"], "OpenCode Go")
         self.assertEqual(call.call_args.kwargs["base_url"],
                          "https://opencode.ai/zen/go/v1")
@@ -181,7 +183,8 @@ class Requesty(DikteTest):
         self.assertEqual((text, key, model, prompt),
                          ("uh, done", "rqsty-test-key", "some/model", "the rules"))
         self.assertEqual(call.call_args.kwargs["reasoning"], "low")
-        self.assertEqual(call.call_args.kwargs["provider"], "requesty")
+        self.assertEqual(call.call_args.kwargs["provider"], "custom")
+        self.assertEqual(call.call_args.kwargs["preset"], "requesty")
         self.assertEqual(call.call_args.kwargs["service"], "Requesty")
         self.assertEqual(call.call_args.kwargs["base_url"],
                          "https://router.requesty.ai/v1")

@@ -43,6 +43,13 @@ class HomeFixture(DikteTest):
 
 
 class Home(HomeFixture):
+    def test_empty_gateway_model_is_not_called_a_custom_server_default(self):
+        conf = self.fixture.config(cleanup_provider="groq", cleanup_groq_model="", cleanup_enabled=True)
+        location = home_ui.processing_locations(conf)
+        self.assertNotIn("Custom server default model", location)
+        conf["cleanup_custom_preset"] = "other"
+        self.assertIn("Custom server default model", home_ui.processing_locations(conf))
+
     def test_daily_tasks_are_reachable_outside_configuration(self):
         for mode in ("dictation", "file", "meeting", "ask", "history"):
             self.window.show_mode(mode)
@@ -409,7 +416,8 @@ class Home(HomeFixture):
         self.assertEqual(self.settings.dirty_label.text(), "")
 
     def test_cached_provider_model_edits_remain_dirty_after_switching_back(self):
-        self.settings._select_data(self.settings.transcribe_provider, "groq")
+        self.settings._select_data(self.settings.transcribe_provider, "custom")
+        self.settings._select_data(self.settings._preset_widgets["transcribe"]["preset"], "groq")
         self.settings.transcribe_model.setCurrentText("my-groq-model")
         self.settings._select_data(self.settings.transcribe_provider, "openai")
         self.assertEqual(self.settings.dirty_label.text(), "Unsaved changes")
@@ -720,6 +728,35 @@ class Round8(HomeFixture):
                          "large-v3-turbo-q5_0")
         self.assertEqual(home_ui.model_name("", "local"), "")
 
+    def test_the_footer_chip_names_a_gateway_preset_and_where_it_runs(self):
+        self.conf["transcribe_provider"] = "custom"
+        self.conf["transcribe_custom_preset"] = "groq"
+        self.conf["groq_transcribe_model"] = "whisper-large-v3-turbo"
+        self.assertEqual(self.chip(), "Speech: whisper-large-v3-turbo")
+        self.assertIn("Provider: Groq", self.window.footer.toolTip())
+        # A gateway has no server default; an empty box is a model to choose.
+        self.conf["groq_transcribe_model"] = ""
+        self.assertEqual(self.chip(), "Speech: Model not selected")
+
+    def test_the_assistant_model_of_a_custom_server(self):
+        self.conf["assistant_provider"] = "custom"
+        self.conf["assistant_custom_preset"] = "other"
+        self.conf["assistant_custom_model"] = ""
+        self.assertEqual(home_ui.assistant_model(self.conf), "Custom server default model")
+        self.conf["assistant_custom_preset"] = "opencode"
+        self.conf["assistant_opencode_model"] = "glm-5.3"
+        self.assertEqual(home_ui.assistant_model(self.conf), "glm-5.3")
+        self.conf["assistant_opencode_model"] = ""
+        self.assertEqual(home_ui.assistant_model(self.conf), "")
+        self.assertIn("Model not selected", home_ui.processing_locations(self.conf, "ask"))
+
+    def test_history_names_the_gateway_an_older_row_was_asked(self):
+        from dikte import settings_ui
+        self.assertEqual(settings_ui.agent_name("requesty"), "Requesty")
+        self.assertEqual(settings_ui.agent_name("custom"), "Custom server")
+        self.assertEqual(settings_ui.agent_name(None), "Claude")
+        self.assertEqual(settings_ui.agent_name("", ""), "")
+
     def test_the_dictation_title_and_meter_share_the_button_axis(self):
         self.window.resize(850, 860)
         axis = lambda widget: widget.mapTo(self.window, widget.rect().center()).x()
@@ -768,8 +805,11 @@ class Setup(HomeFixture):
             dialog.finished_setup.connect(lambda: done.append(True))
             dialog._save_cloud()
         stored = cfg.Config()
-        self.assertEqual(stored["transcribe_provider"], "groq")
+        # Groq is a Custom server preset now, and saved as one.
+        self.assertEqual((stored["transcribe_provider"], stored.custom_preset("transcribe")),
+                         ("custom", "groq"))
         self.assertEqual(stored["groq_api_key"], "gsk-test")
+        self.assertTrue(stored.transcribe_ready())
         # No OpenRouter key to clean up with, so cleanup is left off rather
         # than failing on every dictation.
         self.assertFalse(stored["cleanup_enabled"])
@@ -784,6 +824,44 @@ class Setup(HomeFixture):
         stored = cfg.Config()
         self.assertEqual((stored["transcribe_provider"], stored["cleanup_provider"],
                           stored["cleanup_enabled"]), ("openrouter", "openrouter", True))
+
+    def test_a_gateway_key_that_cleans_up_too_sets_both_presets(self):
+        from dikte import setup_ui
+        self.conf["openrouter_api_key"] = ""
+        self.settings._discard_changes()
+        with mock.patch.dict("os.environ", {}, clear=True):
+            dialog = setup_ui.SetupDialog(self.settings, "cloud")
+            self.addCleanup(dialog.deleteLater)
+            dialog.service.setCurrentIndex(dialog.service.findData("gemini"))
+            self.assertEqual(dialog.service.currentText(), "Google AI Studio")
+            dialog.key.setText("AIza-test")
+            dialog._save_cloud()
+        stored = cfg.Config()
+        self.assertEqual((stored["transcribe_provider"], stored.custom_preset("transcribe"),
+                          stored["cleanup_provider"], stored.custom_preset("cleanup"),
+                          stored["cleanup_enabled"]),
+                         ("custom", "gemini", "custom", "gemini", True))
+        self.assertEqual(stored["gemini_api_key"], "AIza-test")
+
+    def test_a_stored_gateway_key_is_offered_again(self):
+        from dikte import setup_ui
+        self.conf["requesty_api_key"] = "rq-stored"
+        self.settings._discard_changes()
+        dialog = setup_ui.SetupDialog(self.settings, "cloud")
+        self.addCleanup(dialog.deleteLater)
+        dialog.service.setCurrentIndex(dialog.service.findData("requesty"))
+        self.assertEqual(dialog.key.text(), "rq-stored")
+
+    def test_every_offered_service_has_a_key_page_and_a_tester(self):
+        from dikte import setup_ui, settings_ui
+        for name in setup_ui.CLOUD:
+            with self.subTest(service=name):
+                self.assertIn(name, setup_ui.KEY_PAGES)
+                self.assertTrue(name in cfg.TRANSCRIBERS or cfg.PRESETS[name].transcription)
+        with mock.patch.object(settings_ui.api, "preset_models", return_value=["a", "b"]) as fetch:
+            self.assertIn("2", settings_ui.key_check("groq", "gsk", "https://x"))
+        self.assertEqual(fetch.call_args.args[0], "groq")
+        self.assertTrue(fetch.call_args.kwargs["test_key"])
 
 
 class LocalSetup(HomeFixture):

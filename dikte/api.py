@@ -17,9 +17,9 @@ refused for it rather than handed times that were made up.
 What is on this machine has no key, and its base URL is not known until a server
 is up, which is the one thing this module has to fill in for it.
 
-A custom server is anything else that speaks the same two endpoints: the user's
-own API, a whisper server, vLLM, LiteLLM. Its address is typed in, its key may
-be empty, and it is sent nothing that belongs to one provider in particular.
+Custom server uses presets for gateways and Other for an address typed in by
+the user. Other permits an empty key; preset capabilities retain each gateway's
+protocol, reasoning and model catalog.
 """
 
 import array
@@ -42,15 +42,15 @@ import urllib.request
 import wave
 
 from . import ggml
+from .presets import PRESETS, capabilities
 from .i18n import t
 
 APP_URL = "https://github.com/yusufipk/dikte"
 USER_AGENT = f"dikte/1.0 (+{APP_URL})"
 OPENAI_URL = "https://api.openai.com/v1"
-GROQ_URL = "https://api.groq.com/openai/v1"
 OPENROUTER_URL = "https://openrouter.ai/api/v1"
-REQUESTY_URL = "https://router.requesty.ai/v1"
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+REQUESTY_URL = PRESETS["requesty"].base_url
+GEMINI_URL = PRESETS["gemini"].base_url
 
 # The floor for a local request. The timeouts elsewhere are sized for a hosted
 # API, where a slow answer is a bill running; here the only thing being spent is
@@ -63,8 +63,8 @@ LOCAL_TIMEOUT = 3600
 # branches on. `file_model` is what a timestamped run asks for instead of
 # `model`, where the two differ; empty means the provider's own whisper.
 Target = collections.namedtuple(
-    "Target", "provider service api_key base_url model file_model",
-    defaults=[""])
+    "Target", "provider service api_key base_url model file_model preset",
+    defaults=["", ""])
 
 # What answers with segment times on OpenRouter when nothing else was chosen.
 OPENROUTER_FILE_MODEL = "openai/whisper-1"
@@ -121,14 +121,10 @@ def custom_base(base_url, service):
     return base
 
 
-# What transcribes without any segment times at all, so there is no other
-# model on it to send a timestamped run to.
-UNTIMED = frozenset({"gemini"})
-
-
-def gives_times(provider):
-    """Whether subtitles and meeting transcripts can be made on this provider."""
-    return provider not in UNTIMED
+def gives_times(provider, preset=""):
+    """Whether subtitles and meeting transcripts can be made on this endpoint."""
+    who = capabilities(provider, preset)
+    return not who or who.timing != "none"
 
 
 def no_times(service):
@@ -137,7 +133,7 @@ def no_times(service):
                       "provider in Settings.", service=service))
 
 
-def timestamp_model(provider, selected="", file_model=""):
+def timestamp_model(provider, selected="", file_model="", preset=""):
     """Which model answers with segment times.
 
     OpenAI keeps them to whisper-1. Everything Groq transcribes with is a
@@ -152,14 +148,15 @@ def timestamp_model(provider, selected="", file_model=""):
     there is no telling what else it serves. Google AI Studio has no model that
     returns times, so it keeps its own and the run is refused further on.
     """
-    if provider == "custom" or provider in UNTIMED:
-        return selected
-    if provider in ("groq", "local"):
+    who = capabilities(provider, preset)
+    if who and who.timing == "file":
+        return REQUESTY_FILE_MODEL
+    if (who and who.timing == "whisper") or provider == "local":
         return selected or "whisper-large-v3-turbo"
+    if provider == "custom" or (who and who.timing == "none"):
+        return selected
     if provider == "openrouter":
         return file_model or OPENROUTER_FILE_MODEL
-    if provider == "requesty":
-        return REQUESTY_FILE_MODEL
     return "whisper-1"
 
 
@@ -430,7 +427,7 @@ def _multipart(fields, file_field, file_path):
     return bytes(out), f"multipart/form-data; boundary={boundary}"
 
 
-def _headers(provider, api_key, content_type=None):
+def _headers(provider, api_key, content_type=None, preset=""):
     headers = {"User-Agent": USER_AGENT}
     # A server on this machine has nothing to authorise, and sending it a
     # bearer token would only be a made-up one.
@@ -438,7 +435,8 @@ def _headers(provider, api_key, content_type=None):
         headers["Authorization"] = f"Bearer {api_key}"
     if content_type:
         headers["Content-Type"] = content_type
-    if provider in ("openrouter", "requesty"):
+    who = capabilities(provider, preset)
+    if provider == "openrouter" or (who and who.attribution):
         # What OpenRouter attributes the calls to on its app leaderboard.
         # Requesty takes the same two.
         headers["HTTP-Referer"] = APP_URL
@@ -479,7 +477,8 @@ def _transcribe_request(target, audio_path, language, prompt, response_format,
         timeout = max(timeout, LOCAL_TIMEOUT)
     elif target.provider == "custom":
         target = target._replace(base_url=custom_base(target.base_url, target.service))
-    elif not target.api_key:
+    if not target.api_key and target.provider != "local" and (
+            target.provider != "custom" or target.preset not in ("", "other")):
         raise ApiError(t("{service} API key is empty. Add it in Settings.",
                          service=target.service))
     fields = [("model", target.model), ("response_format", response_format)]
@@ -508,7 +507,7 @@ def _transcribe_request(target, audio_path, language, prompt, response_format,
         with held:
             return _request(
                 f"{target.base_url.rstrip('/')}/audio/transcriptions", body,
-                _headers(target.provider, target.api_key, ctype), timeout=timeout,
+                _headers(target.provider, target.api_key, ctype, target.preset), timeout=timeout,
                 aborter=aborter,
             )
     except ApiError as exc:
@@ -816,7 +815,7 @@ def _gemini_request(target, audio, audio_format, language, prompt, timeout, abor
         # the thinking is the seconds this provider is chosen to save.
         payload["reasoning_effort"] = "minimal"
     url = f"{target.base_url.rstrip('/')}/chat/completions"
-    headers = _headers(target.provider, target.api_key, "application/json")
+    headers = _headers(target.provider, target.api_key, "application/json", target.preset)
 
     def send():
         return _request(url, json.dumps(payload).encode("utf-8"), headers,
@@ -892,7 +891,8 @@ def _gemini_transcribe(target, audio_path, language, prompt, timeout, aborter,
 def transcribe(target, audio_path, language="", prompt="", timeout=300, aborter=None,
                heard=None):
     """The words in the recording. `heard` is a Heard kept across retries."""
-    if target.provider == "gemini":
+    who = capabilities(target.provider, target.preset)
+    if who and who.audio_chat:
         text = _gemini_transcribe(target, audio_path, language, prompt, timeout,
                                   aborter, heard)
     else:
@@ -950,10 +950,10 @@ def transcribe_detected(target, audio_path, language="", prompt="", timeout=300,
 def transcribe_segments(target, audio_path, language="", prompt="", timeout=300,
                         aborter=None):
     """[(start_seconds, end_seconds, text)] using whisper-1's verbose response."""
-    if not gives_times(target.provider):
+    if not gives_times(target.provider, target.preset):
         raise no_times(target.service)
     target = target._replace(model=timestamp_model(target.provider, target.model,
-                                                   target.file_model))
+                                                   target.file_model, target.preset))
     ask = dict(language=language, prompt=prompt, response_format="verbose_json",
                timeout=timeout, aborter=aborter)
     # Word times are the way out of a model that does not mark segments, and
@@ -1082,7 +1082,7 @@ REQUESTY_EFFORT = {"minimal": "low"}
 CUSTOM_EFFORT = {"minimal": "low", "xhigh": "high", "max": "high"}
 
 
-def _thinking(payload, provider, reasoning):
+def _thinking(payload, provider, reasoning, preset=""):
     """Ask for as much thinking as this provider understands, or for none.
 
     An empty level means "whatever the model does on its own", so nothing is
@@ -1093,18 +1093,20 @@ def _thinking(payload, provider, reasoning):
     """
     if not reasoning:
         return
+    who = capabilities(provider, preset)
+    mode = who.reasoning if who else ("custom" if provider == "custom" else "router")
     if provider == "local-llm":
         # What llama.cpp passes to the chat template. The models that think read
         # it; the ones that do not ignore it.
         payload["chat_template_kwargs"] = {"enable_thinking": reasoning != "none"}
-    elif provider == "gemini":
+    elif mode == "gemini":
         # Google's compatibility layer takes OpenAI's flat field rather than
         # OpenRouter's object, and it has no word for off, so "none" is asked
         # for as the lowest rung it has rather than skipped: a Flash model left
         # to decide for itself thinks, and thinking about a comma is the second
         # this provider was chosen to save.
         payload["reasoning_effort"] = GEMINI_EFFORT.get(reasoning, reasoning)
-    elif provider == "deepseek":
+    elif mode == "deepseek":
         payload["thinking"] = {
             "type": "disabled" if reasoning == "none" else "enabled"
         }
@@ -1112,10 +1114,10 @@ def _thinking(payload, provider, reasoning):
             payload["reasoning_effort"] = {
                 "minimal": "low", "medium": "high", "xhigh": "high",
             }.get(reasoning, reasoning)
-    elif provider == "requesty":
+    elif mode == "requesty":
         # Explicit Off must remain distinct from the model's default.
         payload["reasoning_effort"] = REQUESTY_EFFORT.get(reasoning, reasoning)
-    elif provider == "custom":
+    elif mode == "custom":
         # OpenAI's own field, the one an OpenAI-compatible server is likeliest
         # to know; OpenRouter's object would be an unknown parameter there.
         # Only the three rungs every such server takes are sent, and Off is
@@ -1185,10 +1187,14 @@ def local_ceiling(text, reasoning="", context=0, prompt=""):
 
 def cleanup(text, api_key, model, system_prompt, reasoning="",
             base_url=OPENROUTER_URL, timeout=180, provider="openrouter",
-            service="OpenRouter", aborter=None, context=0):
+            service="OpenRouter", aborter=None, context=0, preset=""):
     if provider == "custom":
         base_url = custom_base(base_url, service)
-    elif not api_key and provider != "local-llm":
+    if not model and provider == "custom" and preset not in ("", "other"):
+        # A gateway has no model of its own to fall back on; sending an empty
+        # name only earns a 400 that does not say what is missing.
+        raise ApiError(t("Choose a {service} model in Settings.", service=service))
+    if not api_key and provider != "local-llm" and (provider != "custom" or preset not in ("", "other")):
         raise ApiError(t("{service} API key is empty. Add it in Settings.",
                          service=service))
     payload = {
@@ -1199,18 +1205,18 @@ def cleanup(text, api_key, model, system_prompt, reasoning="",
             {"role": "user", "content": f"<transcript>\n{text}\n</transcript>"},
         ],
     }
-    if not model and provider == "custom":
+    if not model and provider == "custom" and preset in ("", "other"):
         # Left empty on purpose: a server with one model loaded answers with it.
         del payload["model"]
     if provider == "local-llm":
         payload["max_tokens"] = local_ceiling(text, reasoning, context,
                                               system_prompt)
-    _thinking(payload, provider, reasoning)
+    _thinking(payload, provider, reasoning, preset)
     try:
         data = _request(
             f"{base_url.rstrip('/')}/chat/completions",
             json.dumps(payload).encode("utf-8"),
-            _headers(provider, api_key, "application/json"),
+            _headers(provider, api_key, "application/json", preset),
             timeout=timeout, aborter=aborter,
         )
     except ApiError as exc:
@@ -1240,28 +1246,37 @@ def cleanup(text, api_key, model, system_prompt, reasoning="",
 
 def chat(messages, api_key, model, system_prompt, reasoning="",
          base_url=OPENROUTER_URL, timeout=180, provider="openrouter",
-         service="OpenRouter"):
+         service="OpenRouter", preset=""):
     """A conversation, rather than one transcript rewritten.
 
     The messages are the whole history and come back unchanged; the caller keeps
     them, because there is no session on the provider's side to resume.
     """
-    if not api_key:
+    if provider == "custom":
+        base_url = custom_base(base_url, service)
+    if not model and provider == "custom" and preset not in ("", "other"):
+        # A gateway has no model of its own to fall back on; sending an empty
+        # name only earns a 400 that does not say what is missing.
+        raise ApiError(t("Choose a {service} model in Settings.", service=service))
+    if not api_key and (provider != "custom" or preset not in ("", "other")):
         raise ApiError(t("{service} API key is empty. Add it in Settings.",
                          service=service))
     payload = {
         "model": model,
         "messages": [{"role": "system", "content": system_prompt}] + list(messages),
     }
-    if reasoning and provider == "requesty":
-        _thinking(payload, provider, reasoning)
-    elif reasoning:
+    if provider == "custom" and preset in ("", "other") and not model:
+        del payload["model"]
+    who = capabilities(provider, preset)
+    if reasoning and ((not who and provider != "custom") or (who and who.reasoning == "router")):
         payload["reasoning"] = {"effort": reasoning, "exclude": True}
+    else:
+        _thinking(payload, provider, reasoning, preset)
     try:
         data = _request(
             f"{base_url.rstrip('/')}/chat/completions",
             json.dumps(payload).encode("utf-8"),
-            _headers(provider, api_key, "application/json"),
+            _headers(provider, api_key, "application/json", preset),
             timeout=timeout,
         )
     except ApiError as exc:
@@ -1408,6 +1423,25 @@ def gemini_models(api_key, base_url=GEMINI_URL):
     ids = [(m.get("id") or "").removeprefix("models/") for m in data.get("data", [])]
     return sorted(i for i in ids
                   if i.startswith("gemini") and not any(w in i for w in NOT_CHAT))
+
+
+def preset_models(preset, api_key, base_url, transcription=False, test_key=False):
+    who = PRESETS[preset]
+    if transcription and not who.transcription:
+        raise ApiError(t("{service} does not support transcription.", service=who.service))
+    if test_key and who.catalog in ("audio", "managed"):
+        return openai_models(api_key, base_url, who.service)
+    if who.catalog == "managed":
+        return requesty_models(api_key, base_url, transcription)
+    if who.catalog == "gemini":
+        return gemini_models(api_key, base_url)
+    if who.catalog == "custom":
+        return custom_models(api_key, base_url, t("Custom server"), transcription)
+    if who.catalog == "audio" and not transcription:
+        if not api_key:
+            raise ApiError(t("{service} API key is empty. Add it in Settings.", service=who.service))
+        return custom_models(api_key, base_url, who.service)
+    return openai_models(api_key, base_url, who.service)
 
 
 def custom_models(api_key, base_url, service, transcription=False):

@@ -159,7 +159,7 @@ class FileTranscriber(QObject):
             # Before the conversion, which on a film is a minute spent on a run
             # that was never going to give back a timed line.
             target = conf.transcribe_target()
-            if timestamps and not api.gives_times(target.provider):
+            if timestamps and not api.gives_times(target.provider, target.preset):
                 raise api.no_times(target.service)
 
             workdir = tempfile.mkdtemp(prefix="dikte-file-", dir=paths.scratch_dir())
@@ -263,7 +263,8 @@ class FileTranscriber(QObject):
         whole = _to_mp3(wav_path, workdir, "audio.mp3", self._abort)
         duration = wav_seconds(wav_path)
         # Google takes the audio inside a JSON body as base64, and so takes less.
-        limit = api.GEMINI_AUDIO_LIMIT if target.provider == "gemini" else UPLOAD_LIMIT
+        who = api.capabilities(target.provider, target.preset)
+        limit = api.GEMINI_AUDIO_LIMIT if who and who.audio_chat else UPLOAD_LIMIT
         seconds = chunk_seconds(whole, duration, limit)
         if speakers:
             seconds = min(seconds or duration, DIARIZE_CHUNK_SECONDS)

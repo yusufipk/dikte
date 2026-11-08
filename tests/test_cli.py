@@ -9,6 +9,7 @@ socket is faked, and everything that runs locally runs for real.
 import contextlib
 import io
 import json
+import os
 import sys
 import unittest
 import webbrowser
@@ -521,6 +522,13 @@ class Providers(DikteTest):
         self.assertEqual(calls[0].full_url, "https://example.invalid/v1/models")
         self.assertEqual(calls[0].get_header("Authorization"), "Bearer test-only")
 
+    def test_doctor_names_missing_gateway_transcription_keys(self):
+        for name in ("groq", "requesty", "gemini"):
+            self.write_config({"transcribe_provider": name})
+            with mock.patch.dict(os.environ, {}, clear=True), mock.patch.object(ipc, "send", return_value=None):
+                _, output, _ = self.run_cmd(cli.cmd_doctor)
+            self.assertIn(f"✗ {cfg.PRESETS[name].service} key, transcribing on", output)
+
     def test_deepseek_has_no_transcription_model_catalog(self):
         code, output, _ = self.run_cmd(cli.cmd_models, provider="deepseek", transcription=True)
         self.assertEqual(code, 1)
@@ -684,7 +692,7 @@ class Doctor(DikteTest):
     def test_cleanup_on_opencode_is_a_question_about_its_own_key(self):
         reply = self.run_doctor(cleanup_provider="opencode",
                                 cleanup_opencode_model="glm-5.3")
-        self.assertEqual(reply["cleanup"]["provider"], "opencode")
+        self.assertEqual(reply["cleanup"]["provider"], "custom")
         self.assertEqual(reply["cleanup"]["model"], "glm-5.3")
         self.assertIn("OpenCode Go key, cleaning up on glm-5.3",
                       self.run_doctor(as_json=False, cleanup_provider="opencode",
@@ -693,7 +701,7 @@ class Doctor(DikteTest):
     def test_cleanup_on_deepseek_is_a_question_about_its_own_key(self):
         reply = self.run_doctor(cleanup_provider="deepseek",
                                 cleanup_deepseek_model="deepseek-flash")
-        self.assertEqual(reply["cleanup"]["provider"], "deepseek")
+        self.assertEqual(reply["cleanup"]["provider"], "custom")
         self.assertEqual(reply["cleanup"]["model"], "deepseek-flash")
         self.assertIn(
             "DeepSeek key, cleaning up on deepseek-flash",
@@ -703,7 +711,7 @@ class Doctor(DikteTest):
     def test_cleanup_on_requesty_is_a_question_about_its_own_key(self):
         reply = self.run_doctor(cleanup_provider="requesty",
                                 cleanup_requesty_model="gpt-5.4-mini")
-        self.assertEqual(reply["cleanup"]["provider"], "requesty")
+        self.assertEqual(reply["cleanup"]["provider"], "custom")
         self.assertEqual(reply["cleanup"]["model"], "gpt-5.4-mini")
         self.assertIs(reply["cleanup"]["key"], False)
         self.assertIn("Requesty key, cleaning up on gpt-5.4-mini",
@@ -768,7 +776,7 @@ class Doctor(DikteTest):
         for provider in ("openrouter", "opencode", "requesty"):
             with self.subTest(provider=provider):
                 reply = self.run_doctor(assistant_provider=provider)
-                self.assertEqual(reply["agent"]["provider"], provider)
+                self.assertEqual(reply["agent"]["provider"], "custom" if provider in cfg.ALIASES else provider)
                 for cli_name in ("claude", "codex", "agy"):
                     self.assertNotIn(cli_name, reply["programs"])
 
@@ -776,7 +784,7 @@ class Doctor(DikteTest):
         for provider, binary in (("claude", "claude"), ("codex", "codex"), ("agy", "agy")):
             with self.subTest(provider=provider):
                 reply = self.run_doctor(assistant_provider=provider)
-                self.assertEqual(reply["agent"]["provider"], provider)
+                self.assertEqual(reply["agent"]["provider"], "custom" if provider in cfg.ALIASES else provider)
                 self.assertIn(binary, reply["programs"])
 
 

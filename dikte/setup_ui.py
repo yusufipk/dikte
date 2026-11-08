@@ -24,6 +24,8 @@ from .i18n import t
 
 # The services offered here, OpenRouter first: its one key also writes meeting
 # minutes and cleans transcripts up, so it is the one that needs nothing else.
+# OpenRouter and OpenAI are providers of their own; the rest are presets of
+# the Custom server provider and are saved as one.
 CLOUD = ("openrouter", "openai", "groq", "gemini", "requesty")
 # Where each service hands out its keys.
 KEY_PAGES = {
@@ -36,6 +38,13 @@ KEY_PAGES = {
 # The services whose key can clean the transcript up as well, so choosing one
 # of them turns cleanup on with nothing more to set up.
 CLEANS = ("openrouter", "gemini", "requesty")
+
+
+def service_name(name):
+    """What a named provider or a Custom server preset is called on screen."""
+    if name in cfg.PRESETS:
+        return t(cfg.PRESETS[name].service)
+    return t(cfg.TRANSCRIBERS[name].service)
 
 
 def friendly_model(name):
@@ -138,7 +147,7 @@ class SetupDialog(QDialog):
         form.setHorizontalSpacing(14)
         self.service = QComboBox()
         for name in CLOUD:
-            self.service.addItem(cfg.TRANSCRIBERS[name].service, name)
+            self.service.addItem(service_name(name), name)
         self.service.setItemData(0, t("One key also writes meeting minutes and cleans "
                                       "transcripts up."), Qt.ItemDataRole.ToolTipRole)
         self.service.currentIndexChanged.connect(self._service_changed)
@@ -173,12 +182,22 @@ class SetupDialog(QDialog):
     def provider(self):
         return self.service.currentData() if self.route == "cloud" else "local"
 
+    def _stored_key(self, name):
+        """The key Settings already holds for a service or preset, as typed."""
+        settings = self.settings
+        if name in cfg.PRESETS:
+            # A job showing that preset holds the key as typed now.
+            for role, shown in settings._preset_shown.items():
+                if shown == name:
+                    return settings._preset_widgets[role]["key"].text()
+            return settings._custom_values.get(cfg.PRESETS[name].key, "")
+        field = settings._key_fields.get(name)
+        return field.text() if field is not None else ""
+
     def _service_changed(self, *_):
-        provider = self.provider()
         # A key already in Settings for this service is offered again rather
         # than asked for twice.
-        field = self.settings._key_fields.get(provider)
-        self.key.setText(field.text() if field is not None else "")
+        self.key.setText(self._stored_key(self.provider()))
         self.answer.set()
 
     def _get_key(self):
@@ -187,7 +206,8 @@ class SetupDialog(QDialog):
     def _test(self):
         provider = self.provider()
         key = self.key.text().strip()
-        base = self.conf[cfg.TRANSCRIBERS[provider].url]
+        base = (self.conf.get(f"{provider}_base_url", cfg.PRESETS[provider].base_url)
+                if provider in cfg.PRESETS else self.conf[cfg.TRANSCRIBERS[provider].url])
         self.test.setEnabled(False)
         self._testing = True
         self.answer.set(t("Trying…"))
@@ -212,9 +232,14 @@ class SetupDialog(QDialog):
     def _save_cloud(self):
         provider, key = self.provider(), self.key.text().strip()
         settings = self.settings
-        settings.transcribe_provider.setCurrentIndex(
-            settings.transcribe_provider.findData(provider))
-        settings._key_fields[provider].setText(key)
+        if provider in cfg.PRESETS:
+            settings.transcribe_provider.setCurrentIndex(
+                settings.transcribe_provider.findData("custom"))
+            self._use_preset("transcribe", provider, key)
+        else:
+            settings.transcribe_provider.setCurrentIndex(
+                settings.transcribe_provider.findData(provider))
+            settings._key_fields[provider].setText(key)
         self._sensible_cleanup(provider)
         self._finish()
 
@@ -303,15 +328,48 @@ class SetupDialog(QDialog):
         settings = self.settings
         if not settings.cleanup_enabled.isChecked():
             return ""
-        cleaner = settings.cleanup_provider.currentData() or ""
-        if cleaner == "local":
-            return ""
-        field = settings._key_fields.get(cleaner)
-        if field is not None and not (field.text().strip()
-                                      or self.conf.api_key(f"{cleaner}_api_key")):
+        cleaner = self._cleanup_service()
+        if cleaner == "local" or self._cleanup_keyless():
             # No key: _sensible_cleanup turns it off on the way out.
             return ""
+        if settings.cleanup_provider.currentData() == "custom" and cleaner != "other":
+            return service_name(cleaner)
         return settings.cleanup_provider.currentText()
+
+    def _cleanup_service(self):
+        """Which service cleans up: a named provider, or the Custom server
+        preset when that is the provider."""
+        settings = self.settings
+        cleaner = settings.cleanup_provider.currentData() or ""
+        if cleaner == "custom":
+            return settings._preset_widgets["cleanup"]["preset"].currentData() or "other"
+        return cleaner
+
+    def _cleanup_keyless(self):
+        """Whether cleanup points at a service it has no key (or, for a server
+        of your own, no address) for."""
+        settings = self.settings
+        cleaner = settings.cleanup_provider.currentData() or ""
+        if cleaner == "custom":
+            rows = settings._preset_widgets["cleanup"]
+            name = rows["preset"].currentData() or "other"
+            if name == "other":
+                return not rows["url"].text().strip()
+            return not (rows["key"].text().strip()
+                        or self.conf.api_key(cfg.PRESETS[name].key))
+        field = settings._key_fields.get(cleaner)
+        return field is not None and not (field.text().strip()
+                                          or self.conf.api_key(f"{cleaner}_api_key"))
+
+    def _use_preset(self, role, name, key=None):
+        """Point a job's Custom server rows at preset `name`, with `key` if
+        one is given; the other jobs on that preset share it."""
+        settings = self.settings
+        rows = settings._preset_widgets[role]
+        settings._select_data(rows["preset"], name)
+        if key is not None:
+            rows["key"].setText(key)
+            settings._share_preset_key(role)
 
     def _show_privacy(self, *_):
         cleaner = self._cleaner()
@@ -434,16 +492,19 @@ class SetupDialog(QDialog):
         a service with no key: that would turn every dictation into a warning.
         The full form changes it later."""
         settings = self.settings
-        cleaner = settings.cleanup_provider.currentData()
-        field = settings._key_fields.get(cleaner)
-        keyless = field is not None and not (field.text().strip()
-                                             or self.conf.api_key(f"{cleaner}_api_key"))
+        cleaner = self._cleanup_service()
+        keyless = self._cleanup_keyless()
         if provider in CLEANS and (keyless or cleaner == provider):
             # A different cleaner that already has its key is the user's
             # choice and stays; otherwise the service just connected cleans
             # up too, since it can.
-            settings.cleanup_provider.setCurrentIndex(
-                settings.cleanup_provider.findData(provider))
+            if provider in cfg.PRESETS:
+                settings.cleanup_provider.setCurrentIndex(
+                    settings.cleanup_provider.findData("custom"))
+                self._use_preset("cleanup", provider)
+            else:
+                settings.cleanup_provider.setCurrentIndex(
+                    settings.cleanup_provider.findData(provider))
             settings.cleanup_enabled.setChecked(True)
             return
         if keyless:

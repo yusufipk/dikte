@@ -1,13 +1,12 @@
 """Handing a dictation to an agent as a command, and pasting back its answer.
 
-Six of them, because not everyone has the same one installed:
+A CLI or a chat endpoint, because not everyone has the same one installed:
 
   Claude Code   `claude -p`, the session you would have opened yourself
   Codex         `codex exec`, the same idea from the other shop
   Antigravity   `agy -p`, Google's, with a browser of its own attached
   OpenRouter    a plain chat request, over the key that is already configured
-  OpenCode Go   a plain chat request, over a subscription to open coding models
-  Requesty      a plain chat request, the same as OpenRouter's
+  Custom server a plain chat request, with presets for compatible gateways
 
 The first three are the whole machine: they run commands, read files, and reach
 whatever skills and services you have connected, which is what makes "put that
@@ -30,6 +29,7 @@ indistinguishable from a hang, so every tool they pick up is named in the corner
 while they work.
 """
 
+import hashlib
 import json
 import os
 import re
@@ -46,13 +46,12 @@ from . import paths
 from .i18n import t
 
 SESSION_FILE = cfg.DATA_DIR / "assistant.json"
-PROVIDERS = ("claude", "codex", "agy", "openrouter", "opencode", "requesty")
+PROVIDERS = ("claude", "codex", "agy", "openrouter", "custom")
 
 # What each one is called where a person reads it: the tray, the corner of
 # the screen, and the line an error is written in.
 SERVICES = {"claude": "Claude", "codex": "Codex", "agy": "Antigravity",
-            "openrouter": "OpenRouter", "opencode": "OpenCode Go",
-            "requesty": "Requesty"}
+            "openrouter": "OpenRouter", "custom": "Custom server"}
 
 # How many messages of a chat provider's conversation are carried forward. The
 # two CLIs keep their own history and need no such number; here every turn is
@@ -169,16 +168,15 @@ def model(conf):
         return conf["assistant_agy_model"].strip() or "agy"
     if name == "openrouter":
         return conf["assistant_openrouter_model"]
-    if name == "opencode":
-        return conf["assistant_opencode_model"]
-    if name == "requesty":
-        return conf["assistant_requesty_model"]
+    if name == "custom":
+        return conf.custom_target("assistant").model or "custom"
     return conf["assistant_model"]
 
 
 def display_name(conf):
     """What to call the thing being asked, in the tray and in the corner."""
-    return SERVICES.get(provider(conf), "OpenRouter")
+    return (conf.custom_target("assistant").service if provider(conf) == "custom"
+            else SERVICES.get(provider(conf), "OpenRouter"))
 
 
 # --- the conversation -----------------------------------------------------
@@ -238,9 +236,16 @@ def clear_session():
         pass
 
 
-def stored_provider():
-    """Whose conversation is on disk, whatever the setting says now."""
-    return str(_read_session().get("provider", ""))
+def stored_provider(conf=None):
+    """The stored owner, or custom when the selected endpoint can resume it."""
+    name = str(_read_session().get("provider", ""))
+    if conf is not None and provider(conf) == "custom":
+        legacy = name in ("requesty", "opencode") and name == conf.custom_preset("assistant")
+        if name == chat_session(conf) or legacy:
+            return "custom"
+    # Another endpoint's owner ends in a hash of its address, which is noise
+    # to a reader; the preset is enough, and it still differs from "custom".
+    return ":".join(name.split(":")[:2]) if name.startswith("custom:") else name
 
 
 def session_age():
@@ -264,7 +269,7 @@ def working_dir(conf):
 # takes an empty tool list, and the chat requests, which never had any. Codex
 # and Antigravity keep a shell, MCP servers or a browser whatever they are
 # told for one run, so text the user did not write is never handed to them.
-TOOL_FREE = ("claude", "openrouter", "opencode", "requesty")
+TOOL_FREE = ("claude", "openrouter", "custom")
 
 
 def can_run_tool_free(conf):
@@ -297,8 +302,8 @@ def ask(prompt, conf, on_stage=None, should_stop=None, keep_session=True,
         raise AssistantError(t(
             "{name} cannot run without tools, so selected text is not sent to "
             "it. Use Claude Code or a chat provider.", name=SERVICES[name]))
-    if name in ("openrouter", "opencode", "requesty"):
-        return _ask_chat(name, SERVICES[name], prompt, conf, on_stage,
+    if name in ("openrouter", "custom"):
+        return _ask_chat(name, display_name(conf), prompt, conf, on_stage,
                          keep_session, system)
 
     binary = executable(name)
@@ -579,7 +584,15 @@ def agy_models():
     return ids
 
 
-# --- OpenRouter, OpenCode Go and Requesty ---------------------------------
+# --- Chat endpoints ---------------------------------
+
+def chat_session(conf):
+    if provider(conf) != "custom":
+        return provider(conf)
+    target = conf.custom_target("assistant")
+    endpoint = hashlib.sha256(target.base_url.encode("utf-8")).hexdigest()
+    return f"custom:{target.preset}:{endpoint}"
+
 
 def _ask_chat(name, service, prompt, conf, on_stage, keep=True, system=None):
     """A plain question and answer, over a chat provider's key.
@@ -591,23 +604,27 @@ def _ask_chat(name, service, prompt, conf, on_stage, keep=True, system=None):
     """
     if on_stage:
         on_stage(t("Thinking…"))
-    history = (read_messages(name, conf["assistant_session_minutes"] * 60)
-               if keep else [])
+    target = (conf.custom_target("assistant") if name == "custom" else
+              api.Target(name, service, conf.openrouter_key(),
+                         conf["openrouter_base_url"], conf["assistant_openrouter_model"]))
+    # A preset or endpoint switch must not send another server's conversation.
+    owner = chat_session(conf)
+    history = read_messages(owner, conf["assistant_session_minutes"] * 60) if keep else []
+    # The first run after migrating a gateway can carry its existing chat on.
+    if keep and name == "custom" and target.preset in ("requesty", "opencode") and stored_provider() == target.preset:
+        history = read_messages(target.preset, conf["assistant_session_minutes"] * 60)
     messages = history + [{"role": "user", "content": prompt}]
-    # Each of them keeps its model, address and key under its own name.
-    model = conf[f"assistant_{name}_model"]
-    base_url = conf[f"{name}_base_url"]
-    key = conf.api_key(f"{name}_api_key")
     try:
         answer = api.chat(
-            messages, key, model, system or conf.assistant_prompt(),
-            reasoning=conf["assistant_reasoning"], base_url=base_url,
+            messages, target.api_key, target.model, system or conf.assistant_prompt(),
+            reasoning=conf["assistant_reasoning"], base_url=target.base_url,
             timeout=conf["assistant_timeout"], provider=name, service=service,
+            preset=target.preset,
         )
     except api.ApiError as exc:
         raise AssistantError(str(exc)) from exc
     if keep:
-        write_session(name, messages=messages
+        write_session(owner, messages=messages
                       + [{"role": "assistant", "content": answer}])
     return answer, ""
 

@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 
 from . import api, assistant, audio, cleanup, config as cfg, ggml, overlay, profiles
 from .i18n import t
-from .settings_ui import (CLEANUP_PROVIDERS, _retryable, history_brief, history_context,
+from .settings_ui import (CLEANUP_PROVIDERS, _retryable, agent_name, history_brief, history_context,
                           history_kind, history_title)
 from .setup_ui import SetupDialog
 from . import theme
@@ -154,7 +154,7 @@ def speech_model(conf, mode="dictation", file_timestamps=None):
     model = target.model
     timestamps = conf["file_timestamps"] if file_timestamps is None else file_timestamps
     if mode == "meeting" or (mode == "file" and timestamps):
-        model = api.timestamp_model(target.provider, target.model, target.file_model)
+        model = api.timestamp_model(target.provider, target.model, target.file_model, target.preset)
     return target, (model or "").strip()
 
 
@@ -175,7 +175,7 @@ def processing_parts(conf, mode="dictation", file_cleanup=None, file_timestamps=
     """Each model a mode uses, as "model (where)"; keyed by its job."""
     target, sound_model = speech_model(conf, mode, file_timestamps)
     local = ggml.state()
-    if target.provider == "custom" and not sound_model:
+    if target.provider == "custom" and target.preset == "other" and not sound_model:
         sound_model = t("{name} default model", name=target.service)
     sound = _model_location(sound_model, target.provider, local.get("whisper"))
     enabled = conf["cleanup_enabled"]
@@ -189,7 +189,7 @@ def processing_parts(conf, mode="dictation", file_cleanup=None, file_timestamps=
     model = cleanup.model(conf)
     if provider in ("codex", "agy") and not conf[f"cleanup_{provider}_model"].strip():
         model = t("{name} default model", name="Codex" if provider == "codex" else "Antigravity")
-    elif provider == "custom" and not conf["cleanup_custom_model"].strip():
+    elif provider == "custom" and conf.custom_preset("cleanup") == "other" and not conf.custom_target("cleanup").model:
         model = t("{name} default model", name=t("Custom server"))
     text = _model_location(model, provider, local.get("llama")) if enabled else t("Editing off")
     parts = {"sound": sound, "text": text}
@@ -197,11 +197,25 @@ def processing_parts(conf, mode="dictation", file_cleanup=None, file_timestamps=
         parts["minutes"] = _model_location(conf["meeting_model"], "openrouter")
     elif mode == "ask":
         provider = assistant.provider(conf)
-        model = assistant.model(conf)
-        if provider in ("codex", "agy") and not conf[f"assistant_{provider}_model"].strip():
-            model = t("{name} default model", name=assistant.display_name(conf))
-        parts["assistant"] = _model_location(model, provider)
+        parts["assistant"] = _model_location(assistant_model(conf), provider)
     return parts
+
+
+def assistant_model(conf):
+    """The agent's model as a person reads it: a CLI or a server of your own
+    left to choose is its default model, and a gateway preset with none chosen
+    is empty (the caller says "not selected")."""
+    provider = assistant.provider(conf)
+    if provider in ("codex", "agy") and not conf[f"assistant_{provider}_model"].strip():
+        return t("{name} default model", name=assistant.display_name(conf))
+    if provider == "custom":
+        target = conf.custom_target("assistant")
+        if target.model:
+            return target.model
+        if target.preset == "other":
+            return t("{name} default model", name=t("Custom server"))
+        return ""
+    return assistant.model(conf)
 
 
 class CaptureButton(QPushButton):
@@ -1145,7 +1159,7 @@ class HomeWindow(QWidget):
         self._exchanges = [
             (row.get("question") or row.get("raw") or "", row.get("text") or "",
              widgets.meta_line(relative_time(row["ts"]) if row.get("ts") else "",
-                               assistant.SERVICES.get(row.get("assistant"), "")))
+                               agent_name(row.get("assistant"), "")))
             for row in conversation(rows, self.conf["assistant_session_minutes"],
                                     self._reset_at)]
         self._set_result(result, answer)
@@ -1623,7 +1637,9 @@ class HomeWindow(QWidget):
         # (cleanup, minutes, the assistant) are in its tooltip.
         if model:
             name = model_name(model, target.provider)
-        elif target.provider == "custom":
+        elif target.provider == "custom" and target.preset in ("", "other"):
+            # Only a server of your own picks for itself; a gateway preset
+            # with no model is one still to be chosen.
             name = t("Server default")
         else:
             name = t("Model not selected")
@@ -1740,9 +1756,7 @@ class HomeWindow(QWidget):
             chips.append(("doc", directory, t("Working directory: {directory}", directory=directory)))
         self.ask_scope.set_chips(chips, t(
             "A spoken command goes to the assistant. Its reply is copied without automatic pasting."))
-        model = assistant.model(conf)
-        if provider in ("codex", "agy") and not conf[f"assistant_{provider}_model"].strip():
-            model = t("{name} default model", name=assistant.display_name(conf))
+        model = assistant_model(conf) or t("Model not selected")
         facts = {"provider": assistant.display_name(conf), "model": model,
                  "permissions": short, "shortcut": shortcut or t("Not assigned"),
                  "directory": directory}
@@ -1814,9 +1828,10 @@ class HomeWindow(QWidget):
         binary = assistant.executable(provider)
         if binary:
             return bool(shutil.which(binary))
-        if provider == "requesty":
-            return bool(self.conf.requesty_key())
-        return bool(self.conf.opencode_key() if provider == "opencode" else self.conf.openrouter_key())
+        if provider == "custom":
+            target = self.conf.custom_target("assistant")
+            return bool(target.base_url) and (target.preset == "other" or bool(target.api_key))
+        return bool(self.conf.openrouter_key())
 
     def _assign_shortcut(self):
         self._open_setup("shortcuts")
