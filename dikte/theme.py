@@ -108,6 +108,8 @@ QPushButton#primary[footer="true"] { padding: 7px 16px; }
 QPushButton#primary[footer="true"]:disabled {
     background: @primary_idle; color: @disabled_text; border: 1px solid @primary_idle;
 }
+QPushButton[roomy="true"] { padding: 6px 16px; }
+QToolButton#tool[roomy="true"] { padding: 5px 14px 5px 11px; }
 QPushButton#ghost {
     background: transparent; border: 1px solid @border; padding: 7px 14px;
 }

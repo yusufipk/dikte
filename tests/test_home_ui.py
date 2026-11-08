@@ -99,8 +99,7 @@ class Home(HomeFixture):
         centred too. Settings pages are centred in their pane."""
         self.window.resize(1900, 1000)
         sides = {"dictation": self.window.recent_panel, "ask": self.window.ask_side_panel}
-        splits = {"file": self.settings.file_split, "meeting": self.settings.minutes_split,
-                  "history": self.settings.history_split}
+        splits = {"file": self.settings.file_split, "meeting": self.settings.minutes_split}
         for mode, area in self.window.mode_pages.items():
             self.window.show_mode(mode)
             QApplication.processEvents()
@@ -108,6 +107,9 @@ class Home(HomeFixture):
                 if mode in sides:
                     self.assertGreater(area.widget().width(), 1000)
                     self.assertFalse(sides[mode].isHidden())
+                elif mode == "history":
+                    # One list, as wide as the page.
+                    self.assertGreater(self.settings.history.width(), 1000)
                 else:
                     self.assertGreater(area.widget().width(), 1000)
                     self.assertTrue(splits[mode].wide)
@@ -166,73 +168,33 @@ class Home(HomeFixture):
         self.window.refresh_results()
         self.assertTrue(self.window.original_button.isHidden())
 
-    def test_every_history_button_fits_at_the_default_width(self):
-        """The actions in English and in Turkish, in the column the window's
-        default width leaves them: none may be clipped, at the default font or
-        at a large one (Windows' UI font draws them nearly twice as wide)."""
-        default = QApplication.font()
-        self.addCleanup(QApplication.setFont, default)
-        # A font set in pixels has no point size, and the large pass would
-        # quietly run at the default one.
-        self.assertGreater(default.pointSizeF(), 0)
-        # Windows already draws this font about twice as wide as Linux does,
-        # so its default pass is the large one; 1.8 times that is a size no
-        # Windows setting reaches, and there the column does not widen to fit
-        # (not reproduced off Windows, left as a known limit).
-        # os.name, not sys.platform, which the settings fixture stands in for.
-        scales = (1,) if os.name == "nt" else (1, 1.8)
-        for scale in scales:
-            for language in ("en", "tr"):
-                with self.subTest(scale=scale, language=language):
-                    font = QFont(default)
-                    font.setPointSizeF(default.pointSizeF() * scale)
-                    QApplication.setFont(font)
+    def test_history_is_one_list_the_width_of_the_page(self):
+        """No reader beside or under the list: the list takes the page, the
+        search runs over its whole width, and nothing is clipped, in English
+        and Turkish at the owner's window size and at a narrow one."""
+        from PyQt6.QtWidgets import QPlainTextEdit
+        cfg.append_history({"ts": "2026-11-08 10:00:00", "text": "One two three"})
+        for language in ("en", "tr"):
+            for width in (850, 460):
+                with self.subTest(language=language, width=width):
                     i18n.set_language(language)
                     settings = self.fixture.window(self.conf)
                     window = home_ui.HomeWindow(self.controller, settings)
                     self.addCleanup(window.deleteLater)
                     self.addCleanup(window.close)
+                    window.resize(width, 860)
                     window.show()
                     window.show_mode("history")
                     QApplication.processEvents()
                     page = window.mode_pages["history"]
-                    # Copy and Open, and More holding Delete and Clear;
-                    # Retry and Copy original join them for the rows they fit.
-                    buttons = [b for b in page.findChildren(QAbstractButton)
-                               if b.isVisible() and not isinstance(b.parentWidget(), QLineEdit)]
-                    self.assertGreaterEqual(len(buttons), 3)
-                    for button in buttons:
-                        self.assertGreaterEqual(button.width(),
-                                                button.sizeHint().width(), button.text())
-                        self.assertGreaterEqual(button.height(),
-                                                button.sizeHint().height(), button.text())
-                        # At the default font everything is in view; at a
-                        # very large one a button wider than the column may
-                        # scroll sideways, but it is never cut off.
-                        if scale == 1:
-                            corner = button.mapTo(page, button.rect().bottomRight())
-                            right = page.viewport().width()
-                        else:
-                            corner = button.mapTo(page.widget(), button.rect().bottomRight())
-                            right = page.widget().width()
-                        self.assertLess(corner.x(), right, button.text())
-                        # A row the layout was given no height for is drawn
-                        # below its parent and cut off.
-                        host = button.parentWidget()
-                        bottom = button.mapTo(host, button.rect().bottomRight()).y()
-                        self.assertLess(bottom, host.height(), button.text())
-                        right_in_host = button.mapTo(host, button.rect().bottomRight()).x()
-                        self.assertLess(right_in_host, host.width(), button.text())
-                    for a, b in itertools.combinations(buttons, 2):
-                        self.assertFalse(a.geometry().intersects(b.geometry())
-                                         and a.parentWidget() is b.parentWidget(),
-                                         (a.text(), b.text()))
-                    # Open selected text stays with the actions on the
-                    # selection, right after Copy as on every result card.
-                    actions = settings.history_actions
-                    self.assertEqual(
-                        actions.itemAt(actions.indexOf(settings.history_copy) + 1)
-                        .widget().toolTip(), i18n.t("Open selected text"))
+                    self.assertFalse([box for box in page.findChildren(QPlainTextEdit)
+                                      if box.isVisible()])
+                    content = page.widget().width()
+                    self.assertGreaterEqual(settings.history.width(), content - 2)
+                    self.assertGreaterEqual(settings.history_search.width(),
+                                            settings.history.width() - 2)
+                    self.assertGreater(settings.history.height(), 500 if width == 850 else 250)
+                    self.assertFalse(page.horizontalScrollBar().isVisible())
 
     def test_clearing_history_removes_the_latest_preview(self):
         cfg.append_history({"text": "Remove this preview"})
@@ -247,7 +209,10 @@ class Home(HomeFixture):
     def test_missing_local_model_opens_setup_without_recording(self):
         self.conf["transcribe_provider"] = "local"
         self.window.refresh()
-        self.assertEqual(self.window.capture_status.text(), "Welcome to Dikte")
+        # The welcome is over the setup tiles; the state title is empty.
+        self.assertEqual(self.window.capture_status.text(), "")
+        self.assertEqual(self.window.capture_status.accessibleName(), "Welcome to Dikte")
+        self.assertEqual(self.window.welcome.text(), "Welcome to Dikte")
         # The ways to set up, and no microphone that cannot work yet, nor
         # anything left over from a setup that is not there.
         self.assertFalse(self.window.setup_tile.isHidden())
@@ -516,7 +481,9 @@ class Home(HomeFixture):
     def test_turkish_task_labels_and_runtime_status(self):
         i18n.set_language("tr")
         self.window.refresh()
-        self.assertEqual(self.window.capture_status.text(), "Konuşmaya hazır")
+        # Idle, no title on screen, but the state still has its name.
+        self.assertEqual(self.window.capture_status.text(), "")
+        self.assertEqual(self.window.capture_status.accessibleName(), "Konuşmaya hazır")
         self.assertIn("Dikte:", self.window.footer.toolTip())
         self.assertIn("Temizleme:", self.window.footer.toolTip())
 
@@ -763,6 +730,10 @@ class Round8(HomeFixture):
             QApplication.processEvents()
             button = axis(self.window.capture_button)
             title = self.window.capture_status
+            if state == "idle":
+                # Idle has no title at all, and takes no room for one.
+                self.assertTrue(title.isHidden())
+                continue
             self.assertEqual(title.alignment() & Qt.AlignmentFlag.AlignHCenter,
                              Qt.AlignmentFlag.AlignHCenter)
             margins = title.contentsMargins()
@@ -772,8 +743,8 @@ class Round8(HomeFixture):
                 self.assertLessEqual(abs(axis(self.window.capture_meter) - button), 1)
 
     def test_reading_boxes_wrap_and_never_scroll_sideways(self):
-        for editor in (self.window.latest_text, self.settings.history_reader,
-                       self.settings.minutes_view, self.settings.file_output):
+        for editor in (self.window.latest_text, self.settings.minutes_view,
+                       self.settings.file_output):
             self.assertEqual(editor.horizontalScrollBarPolicy(),
                              Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
 
@@ -894,3 +865,136 @@ class Indicator(DikteTest):
         self.assertEqual(indicator.accessibleName(), "Failed. No connection")
         indicator._anim.stop()
         indicator._hide_timer.stop()
+
+
+class OwnerRound(HomeFixture):
+    """No title that only repeats the tab, and History as a list that copies."""
+
+    def test_no_tab_repeats_its_name_as_a_title_while_idle(self):
+        self.window.resize(850, 860)
+        for mode in ("dictation", "file", "meeting", "ask", "history"):
+            self.window.show_mode(mode)
+            QApplication.processEvents()
+            page = self.window.mode_pages[mode]
+            titles = [label.text() for label in page.findChildren(home_ui.QLabel)
+                      if label.objectName() == "heading" and label.isVisible()]
+            with self.subTest(mode=mode):
+                self.assertEqual(titles, [])
+
+    def test_a_state_keeps_its_title_and_the_button_stays_put(self):
+        self.window.resize(850, 860)
+        QApplication.processEvents()
+        button = self.window.capture_button
+        before = button.mapTo(self.window, button.rect().topLeft())
+        self.controller.state = "recording"
+        self.controller.recording = True
+        self.window.refresh()
+        QApplication.processEvents()
+        self.assertTrue(self.window.capture_status.isVisible())
+        self.assertIn("01:05", self.window.capture_status.text())
+        self.assertEqual(button.mapTo(self.window, button.rect().topLeft()), before)
+        self.controller.ask_state = "recording"
+        self.window.show_mode("ask")
+        self.window.refresh()
+        QApplication.processEvents()
+        self.assertTrue(self.window.ask_status.isVisible())
+        self.assertIn("01:05", self.window.ask_status.text())
+
+    def test_the_assistant_rows_breathe(self):
+        from dikte import widgets
+        self.window.resize(850, 860)
+        self.window.show_mode("ask")
+        QApplication.processEvents()
+        ask, new = self.window.ask_action, self.window.ask_new
+        self.assertGreaterEqual(self.window.ask_button.width(), widgets.PRIMARY_MIN)
+        gap = new.mapTo(self.window, new.rect().topLeft()).x() - \
+            ask.mapTo(self.window, ask.rect().topRight()).x()
+        self.assertGreaterEqual(gap, widgets.BUTTON_GAP)
+        chips = self.window.ask_scope
+        under = ask.mapTo(self.window, ask.rect().topLeft()).y() - \
+            chips.mapTo(self.window, chips.rect().bottomLeft()).y()
+        self.assertGreaterEqual(under, 12)
+
+    def rows(self):
+        kept = cfg.RECORDINGS_DIR / "kept.wav"
+        cfg.RECORDINGS_DIR.mkdir(parents=True, exist_ok=True)
+        kept.write_bytes(b"RIFF0000WAVE")
+        cfg.append_history({"ts": "2026-11-08 09:00:00", "failed": True, "error": "Gone",
+                            "text": "", "raw": ""})
+        cfg.append_history({"ts": "2026-11-08 09:30:00", "failed": True, "error": "Timed out",
+                            "audio": str(kept), "text": "", "raw": ""})
+        cfg.append_history({"ts": "2026-11-08 10:00:00", "text": "Plain words"})
+        self.window.refresh_results()
+        self.window.show_mode("history")
+        QApplication.processEvents()
+        return self.settings.history
+
+    def glyphs(self, history, number):
+        delegate = history.itemDelegate()
+        return [name for name, _tip, _call in
+                delegate.actions_for(history.model().index(number, 0))]
+
+    def test_each_row_offers_what_it_is_for(self):
+        history = self.rows()
+        self.assertEqual(self.glyphs(history, 0), ["copy", "more"])
+        self.assertEqual(self.glyphs(history, 1), ["retry", "more"])
+        self.assertEqual(self.glyphs(history, 2), ["mic", "more"])
+
+    def test_copying_a_row_copies_it_and_says_so(self):
+        from dikte import widgets
+        history = self.rows()
+        QApplication.clipboard().clear()
+        delegate = history.itemDelegate()
+        index = history.model().index(0, 0)
+        delegate.actions_for(index)[0][2](0)
+        self.assertEqual(QApplication.clipboard().text(), "Plain words")
+        self.assertTrue(history.item(0).isSelected())
+        self.assertEqual(delegate.flash(index), "Copied")
+        self.assertEqual(self.glyphs(history, 0)[0], "check")
+        self.settings._copied_timer.timeout.emit()
+        self.assertEqual(delegate.flash(index), "")
+        self.assertIsInstance(delegate, widgets.RowDelegate)
+
+    def test_keys_and_a_double_click_copy_the_selection(self):
+        from PyQt6.QtGui import QKeySequence
+        from PyQt6.QtTest import QTest
+        history = self.rows()
+        history.setCurrentRow(0)
+        history.setFocus()
+        for press in (lambda: QTest.keySequence(history, QKeySequence.StandardKey.Copy),
+                      lambda: QTest.keyClick(history, Qt.Key.Key_Return),
+                      lambda: history.itemDoubleClicked.emit(history.item(0))):
+            QApplication.clipboard().clear()
+            press()
+            QApplication.processEvents()
+            self.assertEqual(QApplication.clipboard().text(), "Plain words")
+        # A failure has nothing to copy.
+        history.setCurrentRow(1)
+        QApplication.clipboard().setText("kept")
+        self.settings._copy_history()
+        self.assertEqual(QApplication.clipboard().text(), "kept")
+
+    def test_open_and_retry_stay_reachable(self):
+        history = self.rows()
+        history.setCurrentRow(0)
+        with mock.patch.object(self.window, "_open_text") as opened:
+            self.settings.history_open.trigger()
+        opened.assert_called_once_with("Plain words")
+        asked = []
+        self.settings.retry_requested.connect(asked.append)
+        history.itemDelegate().actions_for(history.model().index(1, 0))[0][2](1)
+        self.assertEqual(asked[0]["error"], "Timed out")
+        history.setCurrentRow(2)
+        self.assertTrue(self.settings.history_record.isVisible())
+        self.assertFalse(self.settings.history_copy.isVisible())
+
+    def test_show_in_history_selects_the_row_in_the_list(self):
+        history = self.rows()
+        self.window.show_mode("dictation")
+        self.settings.history_search.setText("nothing like it")
+        self.window._show_failure()
+        self.assertEqual(self.window.mode, "history")
+        self.assertEqual(self.settings.history_search.text(), "")
+        self.assertEqual(history.currentRow(), 1)
+        self.assertEqual([item.text() for item in history.selectedItems()],
+                         [history.item(1).text()])

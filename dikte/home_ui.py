@@ -8,7 +8,8 @@ import time
 from PyQt6.QtCore import QEvent, QRectF, Qt, QSize, QTimer
 from PyQt6.QtGui import QActionGroup, QColor, QIcon, QPainter, QPen, QPixmap
 from PyQt6.QtWidgets import (
-    QApplication, QButtonGroup, QDialog, QFormLayout, QFrame, QHBoxLayout, QLabel, QMenu,
+    QAbstractItemView, QApplication, QButtonGroup, QDialog, QFormLayout, QFrame, QGridLayout, QHBoxLayout,
+    QLabel, QMenu,
     QListWidget, QListWidgetItem, QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy,
     QStackedWidget, QTextBrowser, QToolButton, QVBoxLayout, QWidget,
 )
@@ -630,12 +631,13 @@ class HomeWindow(QWidget):
 
     @staticmethod
     def _template(headline, *rows, fit=False):
-        """The page every task shares: a headline, then its rows."""
+        """The page every task shares: a headline (or None), then its rows."""
         page = QWidget()
         layout = _FitLayout(page) if fit else QVBoxLayout(page)
         layout.setContentsMargins(0, 6, 0, 0)
         layout.setSpacing(10)
-        layout.addWidget(headline)
+        if headline is not None:
+            layout.addWidget(headline)
         for row in rows:
             if isinstance(row, tuple):
                 layout.addWidget(row[0], row[1])
@@ -688,7 +690,9 @@ class HomeWindow(QWidget):
         # What the next dictation uses: picking by the program in front, the
         # profile chosen by hand, and a translation if it makes one. A menu
         # switches it, the way Use this profile does under Settings.
-        self.profile_chip = QToolButton()
+        # Parented from the start: shown before it is placed in a layout,
+        # a parentless chip would come up as a window of its own.
+        self.profile_chip = QToolButton(self)
         self.profile_chip.setObjectName("profilechip")
         self.profile_chip.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.profile_chip.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
@@ -698,11 +702,11 @@ class HomeWindow(QWidget):
         self.profile_menu.aboutToShow.connect(self._fill_profile_menu)
         self.profile_chip.setMenu(self.profile_menu)
         self.profile_chip.hide()
-        # The state, its meter and every status line on the capture button's
-        # axis; the profile chip in the corner, where it does not pull the
-        # title off it.
-        header = self.capture_header = widgets.StateHeader(
-            self.capture_status, [self.capture_meter], corner=self.profile_chip)
+        # The state and its meter on the capture button's axis, under the
+        # button rather than over it: the title is there only while something
+        # records or transcribes, and appearing over the button it would push
+        # the button out from under the pointer that just pressed it.
+        self.capture_header = widgets.StateHeader(self.capture_status, [self.capture_meter])
         self.capture_button = CaptureButton()
         self.capture_button.setObjectName("capture")
         self.capture_button.setAutoDefault(False)
@@ -721,8 +725,22 @@ class HomeWindow(QWidget):
         capture_column = self._capture_column = QVBoxLayout(self.capture_row)
         capture_column.setContentsMargins(0, 8, 0, 0)
         capture_column.setSpacing(6)
-        capture_column.addLayout(self._centered(self.pause_button, self.capture_button,
-                                                self.cancel_button))
+        # The button row, with the profile chip at its top right corner when
+        # the row has room on both sides of the button, or on a line of its
+        # own above it when not (_place_profile_chip).
+        self._capture_buttons = QWidget()
+        self._capture_buttons.setLayout(self._centered(self.pause_button, self.capture_button,
+                                                       self.cancel_button))
+        self._capture_top = QGridLayout()
+        self._capture_top.setContentsMargins(0, 0, 0, 0)
+        self._capture_top.setVerticalSpacing(widgets.GROUP_GAP)
+        self._capture_top.addWidget(self._capture_buttons, 1, 0)
+        # In the layout from the start; _place_profile_chip moves it once the
+        # row's width is known.
+        self._capture_top.addWidget(self.profile_chip, 0, 0, Qt.AlignmentFlag.AlignRight
+                                    | Qt.AlignmentFlag.AlignTop)
+        self._chip_up = None
+        capture_column.addLayout(self._capture_top)
         # What the button does, on it rather than in a sentence under it:
         # Record, then Stop and copy. The button only copies; the shortcut
         # is what pastes, and the line under this one says so.
@@ -732,6 +750,7 @@ class HomeWindow(QWidget):
         policy.setRetainSizeWhenHidden(True)
         self.capture_action.setSizePolicy(policy)
         capture_column.addWidget(self.capture_action)
+        capture_column.addWidget(self.capture_header)
         # The shortcut as keycaps and where its text goes, one line; right
         # after setup the same line carries the invitation instead.
         self.capture_hint = widgets.KeyHint()
@@ -753,6 +772,8 @@ class HomeWindow(QWidget):
         tiles = QVBoxLayout(self.setup_tile)
         tiles.setContentsMargins(0, 4, 0, 0)
         tiles.setSpacing(10)
+        self.welcome = _label(t("Welcome to Dikte"), "heading", True)
+        tiles.addWidget(self.welcome)
         self.setup_tiles = [
             SetupTile("key", t("Cloud service"),
                       t("Paste a key from OpenRouter, OpenAI, Groq or Google."),
@@ -802,7 +823,9 @@ class HomeWindow(QWidget):
         # (_stretch_latest) and its actions stay at its foot.
         self.latest_card = self._card(top, self.latest_text, self.latest_warning, actions)
         self.latest_card.layout().insertStretch(3, 1)
-        main, layout = self._template(header, self.setup_tile, self.capture_row,
+        widgets.roomy(self.copy_button, self.open_button, self.original_button)
+        actions.setSpacing(widgets.BUTTON_GAP)
+        main, layout = self._template(None, self.setup_tile, self.capture_row,
                                       self.capture_hint, self.capture_error, self.latest_card)
         layout.addStretch(1)
         self._dictation_layout = layout
@@ -838,12 +861,11 @@ class HomeWindow(QWidget):
         return page
 
     def _file_page(self):
-        self.file_heading = _label(t("Transcribe a file"), "heading")
+        # No title: the tab says what the page is, and the page's own state
+        # (a file transcribing) is in its card.
         files = self.settings.task_pages["file"]
         files.show()
-        self.file_header = widgets.StateHeader(self.file_heading)
-        self._follow_split(self.settings.file_split, self.file_header)
-        page, _layout = self._template(self.file_header, (files, 1), fit=True)
+        page, _layout = self._template(None, (files, 1), fit=True)
         return page
 
     def _meeting_page(self):
@@ -885,6 +907,8 @@ class HomeWindow(QWidget):
         # nothing records.
         self.meeting_live.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Ignored)
         self.meeting_meters = self.meeting_live
+        widgets.roomy(self.meeting_button, self.meeting_cancel)
+        self.meeting_button.setMinimumWidth(widgets.PRIMARY_MIN)
         header = self.meeting_header = widgets.StateHeader(
             self.meeting_status, [self.meeting_hint], [self.meeting_cancel, self.meeting_button])
         self._follow_split(self.settings.minutes_split, header)
@@ -896,6 +920,7 @@ class HomeWindow(QWidget):
         # Open, as in History: the minutes in a window of their own, for
         # reading at length.
         self.minutes_open = _button(t("Open"), self._open_minutes)
+        widgets.roomy(self.minutes_open)
         self.minutes_open.setToolTip(t("Open the minutes in a window"))
         actions = self.settings.minutes_actions
         actions.insertWidget(actions.indexOf(self.settings.minutes_copy) + 1, self.minutes_open)
@@ -938,6 +963,10 @@ class HomeWindow(QWidget):
         self.ask_new.setText(t("New"))
         self.ask_new.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.ask_new.clicked.connect(self._new_conversation)
+        widgets.roomy(self.ask_button, self.ask_stop, self.ask_new)
+        # The primary action of the page, wide enough to read as one.
+        for button in (self.ask_button, self.ask_stop):
+            button.setMinimumWidth(widgets.PRIMARY_MIN)
         header = self.ask_header = widgets.StateHeader(
             self.ask_status, [self.ask_meter, self.ask_scope],
             [self.ask_pause, self.ask_action, self.ask_cancel, self.ask_new])
@@ -969,6 +998,7 @@ class HomeWindow(QWidget):
             self.ask_fact_labels[key] = value
         side.addLayout(self.ask_facts)
         self.ask_side_new = _button(t("New conversation"), self._new_conversation)
+        widgets.roomy(self.ask_side_new)
         side.addWidget(self.ask_side_new, 0, Qt.AlignmentFlag.AlignLeft)
         side.addStretch(1)
         self.ask_side_panel = QWidget()
@@ -987,46 +1017,21 @@ class HomeWindow(QWidget):
         return page
 
     def _history_page(self):
-        self.history_heading = _label(t("History"), "heading")
-        # The search goes up beside the title, where the other pages keep
-        # their actions.
-        search = self.settings.history_search
-        holder = search.parentWidget()
-        if holder is not None and holder.layout() is not None:
-            holder.layout().removeWidget(search)
-        search.setMinimumWidth(180)
-        search.setMaximumWidth(320)
-        search.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        # No title and no reader: the list is the page, its search over its
+        # whole width, and each row copies itself.
         history = self.settings.task_pages["history"]
         history.show()
-        actions = self.settings.history_actions
-        # Beside Copy, before the rest and More.
-        self.history_open = _button(t("Open"), self._open_selected)
-        self.history_open.setToolTip(t("Open selected text"))
-        actions.insertWidget(actions.indexOf(self.settings.history_copy) + 1,
-                             self.history_open)
-        self.settings.history.itemDoubleClicked.connect(self._open_selected)
-        # Open does something only for a row with text, like Copy beside it.
-        self.settings.history.itemSelectionChanged.connect(self._sync_history_open)
         self.settings.history_action.connect(self._history_action)
-        self._sync_history_open()
-        self.history_header = widgets.StateHeader(self.history_heading, (), [search])
-        self._follow_split(self.settings.history_split, self.history_header)
-        page, _layout = self._template(self.history_header, (history, 1), fit=True)
-        search.show()
+        page, _layout = self._template(None, (history, 1), fit=True)
         return page
 
-    def _sync_history_open(self):
-        rows = self.settings._selected_rows()
-        readable = any(not row.get("failed") for row in rows)
-        self.history_open.setEnabled(readable)
-        # Left out beside a failure, like Copy, rather than shown greyed.
-        self.history_open.setVisible(readable or not rows)
-
     def _history_action(self, action):
-        """A failed entry with no recording left: say it again, or look at
-        the connection."""
-        if action == "check":
+        """What a history row asks of the window: its text in a window of its
+        own, or for a failed entry with no recording left, say it again or
+        look at the connection."""
+        if action == "open":
+            self._open_selected()
+        elif action == "check":
             self._open_setup("api")
         elif action == "record":
             self.show_mode("dictation")
@@ -1034,14 +1039,21 @@ class HomeWindow(QWidget):
 
     def _show_failure(self):
         """The newest failed dictation, selected in the history."""
+        self._select_in_history(lambda row: bool(row.get("failed")))
+
+    def _select_in_history(self, wanted):
+        """History, with the newest row `wanted` accepts selected and
+        scrolled into view; the search is cleared so the row is there."""
         self.show_mode("history")
+        self.settings.history_search.clear()
         history = self.settings.history
-        for row in range(history.count()):
-            item = history.item(row)
-            if (item.data(Qt.ItemDataRole.UserRole) or {}).get("failed"):
+        for number in range(history.count()):
+            item = history.item(number)
+            if wanted(item.data(Qt.ItemDataRole.UserRole) or {}):
                 history.clearSelection()
-                history.setCurrentRow(row)
-                history.scrollToItem(item)
+                history.setCurrentRow(number)
+                history.scrollToItem(item, QAbstractItemView.ScrollHint.PositionAtCenter)
+                history.setFocus()
                 break
 
     def _retry_failure(self):
@@ -1173,16 +1185,7 @@ class HomeWindow(QWidget):
     def _open_recent(self, item):
         """The entry clicked in Recent, selected in the history."""
         key = cfg._row_key(item.data(Qt.ItemDataRole.UserRole) or {})
-        self.show_mode("history")
-        self.settings.history_search.clear()
-        history = self.settings.history
-        for row in range(history.count()):
-            found = history.item(row)
-            if cfg._row_key(found.data(Qt.ItemDataRole.UserRole) or {}) == key:
-                history.clearSelection()
-                history.setCurrentRow(row)
-                history.scrollToItem(found)
-                break
+        self._select_in_history(lambda row: cfg._row_key(row) == key)
 
     def _arrange_dictation(self):
         """Recent entries beside the capture area once the window is wide, and
@@ -1196,6 +1199,7 @@ class HomeWindow(QWidget):
             self.latest_text.setMaximumHeight(360 if wide else 110)
             self._stretch_latest(wide)
         QTimer.singleShot(0, self._fit_latest)
+        QTimer.singleShot(0, self._place_profile_chip)
         if wide != self.ask_side_panel.isVisibleTo(self._ask_page):
             self.ask_side_panel.setVisible(wide)
             self.ask_header.set_centred(not wide)
@@ -1314,8 +1318,11 @@ class HomeWindow(QWidget):
             self._busy_since = time.monotonic()
         elif not busy:
             self._busy_since = None
-        title = t("Ready to speak") if ready else t("Welcome to Dikte")
-        words = title
+        # Idle, the page has no title: the tab already says where you are.
+        # A recording or a transcription says so, with its clock; first run
+        # has its welcome over the setup tiles.
+        title = ""
+        words = t("Ready to speak") if ready else t("Welcome to Dikte")
         if recording:
             seconds = int(app._recorded_seconds())
             title = words = t("Paused") if app.paused else t("Recording")
@@ -1400,8 +1407,7 @@ class HomeWindow(QWidget):
         self._refresh_ask(messages, ready)
         # Titles and the buttons beside them changed: the corner chip and the
         # action rows find their place again.
-        for header in (self.capture_header, self.file_header, self.meeting_header,
-                       self.ask_header, self.history_header):
+        for header in (self.capture_header, self.meeting_header, self.ask_header):
             header.fit()
         live = recording or app.meeting_state == "recording" or app.ask_state == "recording"
         if live and not self._meter_timer.isActive() and self.isVisible():
@@ -1479,6 +1485,24 @@ class HomeWindow(QWidget):
         except RuntimeError:
             pass  # the window went while the timer ran
 
+    def _place_profile_chip(self):
+        """The profile chip at the top right of the capture button's row when
+        the row has room for it on both sides of the button, so the button
+        stays on the page's axis; on a line of its own above it when not."""
+        try:
+            chip = self.profile_chip
+            need = (self._capture_buttons.sizeHint().width()
+                    + 2 * (chip.sizeHint().width() + widgets.GROUP_GAP))
+            up = self.capture_row.width() >= need
+            if up == self._chip_up:
+                return
+            self._chip_up = up
+            self._capture_top.removeWidget(chip)
+            self._capture_top.addWidget(chip, 1 if up else 0, 0,
+                                        Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+        except RuntimeError:
+            pass  # the window went while the timer ran
+
     def _profile_choice(self):
         """What the next dictation uses: (words on the chip, tooltip), from
         the settings as they are stored, never from the last result."""
@@ -1508,6 +1532,8 @@ class HomeWindow(QWidget):
         self.profile_chip.setVisible(useful and not first_run)
         if self.profile_chip.text() != words:
             self.profile_chip.setText(words)
+            self._chip_up = None
+        self._place_profile_chip()
         self.profile_chip.setToolTip(tip)
         self.profile_chip.setAccessibleName(t("Profile for the next dictation: {profile}",
                                               profile=words))
@@ -1619,7 +1645,9 @@ class HomeWindow(QWidget):
         elif audio.sound() is audio.COREAUDIO:
             hint = t("Needs BlackHole or Loopback on macOS.")
             tip = t("On macOS, set up BlackHole or Loopback and select the system audio source in Settings first.")
-        title = words = t("Meeting")
+        # Idle, no title: the tab names the page. Recording and writing up
+        # are states, and say so.
+        title, words = "", t("Meeting")
         recording = state == "recording"
         if recording:
             seconds = int(app.meeting_elapsed.elapsed() / 1000)
@@ -1729,7 +1757,8 @@ class HomeWindow(QWidget):
             self._ask_since = time.monotonic()
         elif not busy:
             self._ask_since = None
-        title = words = t("Assistant")
+        # Idle, no title: the tab names the page.
+        title, words = "", t("Assistant")
         if recording:
             title = words = t("Paused") if app.paused else t("Recording")
             title += "  " + self._clock(int(app._recorded_seconds()))

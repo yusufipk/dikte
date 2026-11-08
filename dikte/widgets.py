@@ -54,6 +54,22 @@ SELECT_WIDTH = 260
 LABEL_MAX = 200
 # Between the parts of a meta line ("Today 10:44 · 18 s · Team chat").
 META_SEP = "  ·  "
+# The home tabs' spacing scale, so every row of controls breathes the same:
+# between chips, between buttons, and between a row of chips or lines and
+# the buttons under it.
+CHIP_GAP = 8
+BUTTON_GAP = 10
+GROUP_GAP = 14
+# A page's primary action is never narrower than this.
+PRIMARY_MIN = 140
+
+
+def roomy(*buttons):
+    """Give buttons the home tabs' horizontal padding (theme: roomy)."""
+    for button in buttons:
+        button.setProperty("roomy", True)
+        button.style().unpolish(button)
+        button.style().polish(button)
 
 
 def meta_line(*parts):
@@ -213,6 +229,23 @@ def _draw(painter, name, color):
         p.drawPolyline(QPointF(9.5, 6), QPointF(15.5, 12), QPointF(9.5, 18))
     elif name == "check":
         p.drawPolyline(QPointF(5, 12.5), QPointF(10, 17.5), QPointF(19, 7))
+    elif name == "copy":
+        p.drawRoundedRect(QRectF(8.5, 8.5, 11.5, 12), 2, 2)
+        path = QPainterPath(QPointF(15.5, 8.5))
+        path.lineTo(15.5, 5.5)
+        path.quadTo(15.5, 4, 14, 4)
+        path.lineTo(5.5, 4)
+        path.quadTo(4, 4, 4, 5.5)
+        path.lineTo(4, 15)
+        path.quadTo(4, 16.5, 5.5, 16.5)
+        path.lineTo(8.5, 16.5)
+        p.drawPath(path)
+    elif name == "retry":
+        p.drawArc(QRectF(4.5, 4.5, 15, 15), 60 * 16, 280 * 16)
+        path = QPainterPath(QPointF(16.2, 2.8))
+        path.lineTo(16.2, 6.8)
+        path.lineTo(12.2, 6.8)
+        p.drawPath(path)
     elif name == "plus":
         p.drawLine(QPointF(12, 5), QPointF(12, 19))
         p.drawLine(QPointF(5, 12), QPointF(19, 12))
@@ -852,7 +885,7 @@ class ChipRow(QWidget):
         self.max_width = max_width
         self.layout_ = QHBoxLayout(self)
         self.layout_.setContentsMargins(0, 0, 0, 0)
-        self.layout_.setSpacing(6)
+        self.layout_.setSpacing(CHIP_GAP)
         self.align = align
         self._spec = None
         self.chips = []
@@ -1186,22 +1219,39 @@ class RowDelegate(QStyledItemDelegate):
     BADGE = 30
     ACTION = 26
 
-    def __init__(self, view, lines=2, actions=(), marks=False, badges=True, inline=False):
+    def __init__(self, view, lines=2, actions=(), marks=False, badges=True, inline=False,
+                 slots=0, flash=None, flash_word=""):
         """`actions` are (glyph, tooltip, callback) drawn at the right end of
-        the row under the pointer, each called with the row's index when
-        pressed. `marks` keeps room at the right end for CHECK_ROLE.
+        the row under the pointer and on the selected row, each called with
+        the row's index when pressed. It may also be a function of a row's
+        model index returning that list, for rows whose actions differ; then
+        `slots` is the most actions any row has, the room every row keeps.
+        `flash` is a function of a row's index returning a short word to
+        show in place of the actions (a confirmation), or ""; every row
+        keeps room for `flash_word`, the longest it says, so the word never
+        lies over the row's text.
+        `marks` keeps room at the right end for CHECK_ROLE.
         `badges` False leaves the leading badge out (a plain list of words);
         `inline` puts the meta text after the body on the same line, for
         compact one-line rows."""
         super().__init__(view)
         self.view = view
         self.lines = 1 if inline else lines
-        self.actions = list(actions)
+        self.actions = actions if callable(actions) else list(actions)
+        self.slots = slots if callable(actions) else len(self.actions)
+        self.flash = flash
+        self.flash_word = flash_word
         self.marks = marks
         self.badges = badges
         self.inline = inline
-        if self.actions:
+        if self.slots:
             view.viewport().installEventFilter(self)
+
+    def actions_for(self, index):
+        """The actions of the row at `index`."""
+        if callable(self.actions):
+            return list(self.actions(index)) if index.isValid() else []
+        return self.actions
 
     def _fonts(self, option):
         body = QFont(option.font)
@@ -1212,8 +1262,11 @@ class RowDelegate(QStyledItemDelegate):
     def _trailing(self):
         """What the right end of every row keeps free: the actions, or the
         check mark, so the text never runs under either."""
-        if self.actions:
-            return len(self.actions) * (self.ACTION + 4) + 4
+        if self.slots:
+            room = self.slots * (self.ACTION + 4) + 4
+            if self.flash_word:
+                room = max(room, self._pill_size(self.view.font(), self.flash_word)[0] + 4)
+            return room
         return 24 if self.marks else 0
 
     def _lead(self):
@@ -1223,36 +1276,48 @@ class RowDelegate(QStyledItemDelegate):
     def _text_width(self, width):
         return max(80, width - self.PAD_H * 2 - self._lead() - self._trailing())
 
-    def action_rects(self, rect):
+    def action_rects(self, rect, actions=None):
         """Where each action of a row drawn in `rect` sits."""
         rects = []
         right = rect.right() - self.PAD_H
-        for _ in self.actions:
+        for _ in (self.actions if actions is None else actions):
             rects.insert(0, QRect(right - self.ACTION, rect.center().y() - self.ACTION // 2,
                                   self.ACTION, self.ACTION))
             right -= self.ACTION + 4
         return rects
 
+    def action_at(self, point):
+        """The (row, action) under `point` in the viewport, or None."""
+        index = self.view.indexAt(point)
+        if not index.isValid():
+            return None
+        if self.flash and self.flash(index):
+            return None  # the Copied pill covers the buttons for a moment
+        actions = self.actions_for(index)
+        for rect, action in zip(self.action_rects(self.view.visualRect(index), actions),
+                                actions):
+            if rect.contains(point):
+                return index, action
+        return None
+
     def eventFilter(self, viewport, event):
-        if event.type() == QEvent.Type.MouseButtonRelease and self.actions:
-            point = event.position().toPoint()
-            index = self.view.indexAt(point)
-            if index.isValid():
-                for rect, (_glyph, _tip, callback) in zip(
-                        self.action_rects(self.view.visualRect(index)), self.actions):
-                    if rect.contains(point):
-                        callback(index.row())
-                        return True
-        if event.type() == QEvent.Type.ToolTip and self.actions:
+        kind = event.type()
+        if kind in (QEvent.Type.MouseButtonPress, QEvent.Type.MouseButtonDblClick,
+                    QEvent.Type.MouseButtonRelease) and self.slots \
+                and event.button() == Qt.MouseButton.LeftButton:
+            hit = self.action_at(event.position().toPoint())
+            if hit is not None:
+                # The press and a double click are the action's, not the
+                # row's: they would select the row or activate it as well.
+                if kind == QEvent.Type.MouseButtonRelease:
+                    hit[1][2](hit[0].row())
+                return True
+        if kind == QEvent.Type.ToolTip and self.slots:
             from PyQt6.QtWidgets import QToolTip
-            point = event.pos()
-            index = self.view.indexAt(point)
-            if index.isValid():
-                for rect, (_glyph, tip, _callback) in zip(
-                        self.action_rects(self.view.visualRect(index)), self.actions):
-                    if rect.contains(point):
-                        QToolTip.showText(event.globalPos(), tip, self.view)
-                        return True
+            hit = self.action_at(event.pos())
+            if hit is not None:
+                QToolTip.showText(event.globalPos(), hit[1][1], self.view)
+                return True
         return super().eventFilter(viewport, event)
 
     def _body_lines(self, text, metrics, width):
@@ -1335,13 +1400,19 @@ class RowDelegate(QStyledItemDelegate):
             painter.drawPixmap(QRect(rect.right() - self.PAD_H - mark,
                                      rect.center().y() - mark // 2, mark, mark),
                                glyph_pixmap("check", colors["accent"], mark))
-        if self.actions and (hovered or selected):
-            for spot, (name, _tip, _callback) in zip(self.action_rects(rect), self.actions):
+        flash = self.flash(index) if self.flash else ""
+        if flash:
+            self._paint_flash(painter, rect, flash, option, colors, selected)
+        elif self.slots and (hovered or selected):
+            actions = self.actions_for(index)
+            for spot, (name, _tip, _callback) in zip(self.action_rects(rect, actions), actions):
                 icon = 16
+                tone = (colors["danger"] if name == "trash"
+                        else colors["accent"] if name == "check"
+                        else colors["text"] if selected else colors["muted"])
                 painter.drawPixmap(QRect(spot.center().x() - icon // 2 + 1,
                                          spot.center().y() - icon // 2 + 1, icon, icon),
-                                   glyph_pixmap(name, colors["danger"] if name == "trash"
-                                                else colors["muted"], icon))
+                                   glyph_pixmap(name, tone, icon))
         body, meta = self._fonts(option)
         left = int(badge.right()) + 12 if self.badges else rect.x() + self.PAD_H + 4
         width = self._text_width(rect.width())
@@ -1369,6 +1440,38 @@ class RowDelegate(QStyledItemDelegate):
                                                  Qt.TextElideMode.ElideRight, width))
         painter.restore()
 
+    @staticmethod
+    def _pill_font(base):
+        font = QFont(base)
+        font.setPointSizeF(max(7.0, font.pointSizeF() - 1.0))
+        font.setWeight(QFont.Weight.DemiBold)
+        return font
+
+    def _pill_size(self, base, word):
+        """The width and height of the confirmation pill saying `word`."""
+        metrics = QFontMetrics(self._pill_font(base))
+        return 14 + 6 + metrics.horizontalAdvance(word) + 20, max(14, metrics.height()) + 10
+
+    def _paint_flash(self, painter, rect, word, option, colors, selected):
+        """A short confirmation (a check and a word) in a pill at the right
+        end of the row, over whatever the row draws there."""
+        font = self._pill_font(option.font)
+        icon = 14
+        width, height = self._pill_size(option.font, word)
+        pill = QRectF(rect.right() - self.PAD_H - width, rect.center().y() - height / 2,
+                      width, height)
+        back = mix(colors["surface"], colors["accent"], 0.2) if selected else colors["surface"]
+        painter.setPen(QPen(QColor(colors["accent"]), 1))
+        painter.setBrush(QColor(mix(back, colors["accent"], 0.18)))
+        painter.drawRoundedRect(pill, height / 2, height / 2)
+        x = int(pill.x()) + 10
+        painter.drawPixmap(QRect(x, int(pill.center().y() - icon / 2), icon, icon),
+                           glyph_pixmap("check", colors["accent"], icon))
+        painter.setFont(font)
+        painter.setPen(QColor(colors["text"]))
+        painter.drawText(QRectF(x + icon + 6, pill.y(), width, pill.height()),
+                         Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, word)
+
     def _paint_inline(self, painter, index, rect, left, width, body, meta, colors, kind):
         """One line: the body, then the meta text muted after it, the body
         keeping its whole width first and the meta elided into what is left."""
@@ -1390,11 +1493,13 @@ class RowDelegate(QStyledItemDelegate):
                              meta_metrics.elidedText(extra, Qt.TextElideMode.ElideRight, rest))
 
 
-def row_list(view, lines=2, actions=(), marks=False, badges=True, inline=False):
+def row_list(view, lines=2, actions=(), marks=False, badges=True, inline=False,
+             slots=0, flash=None, flash_word=""):
     """Give a QListWidget the row delegate and the settings it relies on."""
     from PyQt6.QtWidgets import QListView
     view.setObjectName("rows")
-    view.setItemDelegate(RowDelegate(view, lines, actions, marks, badges, inline))
+    view.setItemDelegate(RowDelegate(view, lines, actions, marks, badges, inline,
+                                     slots, flash, flash_word))
     view.setMouseTracking(True)
     view.setUniformItemSizes(False)
     view.setResizeMode(QListView.ResizeMode.Adjust)
@@ -1586,7 +1691,10 @@ class StateHeader(QWidget):
 
     As a row, for a page whose panes sit side by side, the title and its
     lines start at the left and the actions end at the right, as a toolbar
-    over both panes."""
+    over both panes.
+
+    A title is there only to say a state (recording, working): an empty
+    title takes no room, and a header with nothing to show hides itself."""
 
     GAP = 12
 
@@ -1601,7 +1709,7 @@ class StateHeader(QWidget):
         self.action_row = QWidget()
         self._row = QHBoxLayout(self.action_row)
         self._row.setContentsMargins(0, 0, 0, 0)
-        self._row.setSpacing(8)
+        self._row.setSpacing(BUTTON_GAP)
         for action in self.actions:
             self._row.addWidget(action, 0, Qt.AlignmentFlag.AlignVCenter)
         if corner is not None:
@@ -1679,7 +1787,17 @@ class StateHeader(QWidget):
         if margins.left() != reserve:
             self.title.setContentsMargins(reserve, 0, reserve, 0)
         in_row = list(self.actions) + ([corner] if corner is not None and not up else [])
-        self.action_row.setVisible(any(not item.isHidden() for item in in_row))
+        acting = any(not item.isHidden() for item in in_row)
+        self.action_row.setVisible(acting)
+        titled = bool(self.title.text())
+        self.title.setVisible(titled)
+        above = titled or any(not item.isHidden() for item in self.below)
+        # Centred, the buttons sit a group gap under the lines above them;
+        # with nothing above, they start at the top.
+        gap = GROUP_GAP - self.grid.verticalSpacing() if self.centred and above else 0
+        if self._row.contentsMargins().top() != gap:
+            self._row.setContentsMargins(0, gap, 0, 0)
+        self.setVisible(above or acting or (shown and up))
 
     def resizeEvent(self, event):
         super().resizeEvent(event)

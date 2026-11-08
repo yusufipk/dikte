@@ -10,7 +10,7 @@ import sys
 import threading
 
 from PyQt6.QtCore import QEvent, QObject, QRect, QSize, Qt, QTimer, QUrl, QSignalBlocker, pyqtSignal
-from PyQt6.QtGui import (QDesktopServices, QFont, QGuiApplication, QKeySequence, QShortcut,
+from PyQt6.QtGui import (QAction, QDesktopServices, QFont, QGuiApplication, QKeySequence, QShortcut,
                          QTextCharFormat, QTextCursor, QTextDocument, QTextFormat,
                          QTextListFormat)
 from PyQt6.QtWidgets import (
@@ -1120,7 +1120,7 @@ def history_marks(row, program=True):
 
 def history_brief(row):
     """The muted line under a history row: when, in a word or two, and which
-    profile or assistant. The full timestamp and marks are in the reader."""
+    profile or assistant. The full timestamp and marks are in its tooltip."""
     parts = [widgets.short_time(row.get("ts", ""))]
     if row.get("failed"):
         # The row is titled by what failed; why is said here, in a word.
@@ -1152,16 +1152,6 @@ def history_context(row):
         parts.append(t("into {language}", language=language) if row.get("translated")
                      else t("translation failed"))
     return parts
-
-
-def history_detail(row):
-    """The line over an entry in the reader: the day and the minute, how
-    long it was, and the profile or the assistant, the way a person says it
-    ("Today 10:44  ·  18 s  ·  Team chat"). The program it was matched by is
-    the list's tooltip, not this."""
-    duration = t("{seconds} s", seconds=row.get("duration")) if row.get("duration") else ""
-    return widgets.meta_line(widgets.day_time(row.get("ts", "")), duration,
-                             *history_context(row))
 
 
 def history_title(row):
@@ -2843,7 +2833,9 @@ class SettingsWindow(QDialog):
         # change under a window that was built in the other one.
         self.minutes_delete = more.actions_[t("Delete selected")]
         self.minutes_delete.setEnabled(False)
+        widgets.roomy(copy, self.minutes_retry)
         row = QHBoxLayout()
+        row.setSpacing(widgets.BUTTON_GAP)
         row.addWidget(self.minutes_status, 1)
         row.addWidget(copy)
         row.addWidget(self.minutes_retry)
@@ -2928,8 +2920,12 @@ class SettingsWindow(QDialog):
         self.file_stop.clicked.connect(self._stop_file)
         self.file_stop.setEnabled(False)
         self.file_stop.hide()
+        widgets.roomy(self.file_run, self.file_stop)
+        self.file_run.setMinimumWidth(widgets.PRIMARY_MIN)
+        self.file_stop.setMinimumWidth(widgets.PRIMARY_MIN)
         run_row = QHBoxLayout()
         run_row.setContentsMargins(0, 6, 0, 0)
+        run_row.setSpacing(widgets.BUTTON_GAP)
         run_row.addWidget(self.file_run)
         run_row.addWidget(self.file_stop)
         run_row.addStretch(1)
@@ -2962,7 +2958,9 @@ class SettingsWindow(QDialog):
         )
         self.file_save_srt.clicked.connect(self._save_subtitles)
         self._set_srt(False)
+        widgets.roomy(copy, save, self.file_save_srt)
         out_row = QHBoxLayout()
+        out_row.setSpacing(widgets.BUTTON_GAP)
         out_row.addStretch(1)
         out_row.addWidget(copy)
         out_row.addWidget(save)
@@ -3107,10 +3105,14 @@ class SettingsWindow(QDialog):
         return self._two_columns([(keys, asking), (meeting_keys, how)])
 
     def _history_tab(self):
+        """The history as one list, the page's whole width and height, with
+        the search over it. Each row is the tool: its copy button, its More
+        menu, Ctrl+C, a double click or Enter. There is no reader: Open puts
+        an entry in a window of its own."""
         page = QWidget()
         layout = QVBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(widgets.BUTTON_GAP)
         self.history_search = QLineEdit()
         self.history_search.setPlaceholderText(t("Search the history"))
         self.history_search.setClearButtonEnabled(True)
@@ -3121,16 +3123,33 @@ class SettingsWindow(QDialog):
         self.history_search.textChanged.connect(self._filter_history)
         layout.addWidget(self.history_search)
 
-        self.history = widgets.row_list(QListWidget())
+        # Rows copied a moment ago, by key, and the timer that lets their
+        # confirmation go again.
+        self._copied_keys = set()
+        self._copied_timer = QTimer(self)
+        self._copied_timer.setSingleShot(True)
+        self._copied_timer.setInterval(1500)
+        self._copied_timer.timeout.connect(self._end_copied)
+        self.history = widgets.row_list(QListWidget(), lines=4,
+                                        actions=self._history_row_actions, slots=2,
+                                        flash=self._history_flash, flash_word=t("Copied"))
         self.history.setAccessibleName(t("History"))
+        self.history.setAccessibleDescription(t(
+            "Enter or a double click copies the entry; Ctrl+C copies the selection. "
+            "The context menu has the other actions."))
         self.history.setSelectionMode(
             QAbstractItemView.SelectionMode.ExtendedSelection
         )
         self.history.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.history.customContextMenuRequested.connect(self._history_menu)
-        delete_key = QShortcut(QKeySequence.StandardKey.Delete, self.history)
-        delete_key.setContext(Qt.ShortcutContext.WidgetShortcut)
-        delete_key.activated.connect(self._delete_history)
+        for keys, handler in ((QKeySequence.StandardKey.Delete, self._delete_history),
+                              (QKeySequence.StandardKey.Copy, self._copy_history),
+                              (QKeySequence(Qt.Key.Key_Return), self._copy_history),
+                              (QKeySequence(Qt.Key.Key_Enter), self._copy_history)):
+            shortcut = QShortcut(keys, self.history)
+            shortcut.setContext(Qt.ShortcutContext.WidgetShortcut)
+            shortcut.activated.connect(handler)
+        self.history.itemDoubleClicked.connect(lambda _item: self._copy_history())
         self.history.itemSelectionChanged.connect(self._sync_history_actions)
         # The row just chosen, all of it: a half-visible selection reads as
         # nothing being selected.
@@ -3139,104 +3158,88 @@ class SettingsWindow(QDialog):
         self.history.setMinimumHeight(90)
         # A filled card like every other list, not an outlined frame.
         self.history.setProperty("card", True)
+        layout.addWidget(self.history, 1)
 
-        self.history_meta = QLabel("")
-        self.history_meta.setObjectName("meta")
-        self.history_meta.setWordWrap(True)
-        # A failed entry's reader opens with what went wrong, in a word.
-        self.history_error = QLabel("")
-        self.history_error.setObjectName("errorhead")
-        self.history_error.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        # What went wrong and what is left to do, in full: a label rather than
-        # the scrolling reader, so it is never cut off above its buttons.
-        self.history_failure = QLabel("")
-        self.history_failure.setTextFormat(Qt.TextFormat.PlainText)
-        self.history_failure.setWordWrap(True)
-        self.history_failure.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.history_reader = QPlainTextEdit()
-        self.history_reader.setReadOnly(True)
-        self.history_reader.setAccessibleName(t("Selected entry"))
-        self.history_reader.setPlaceholderText(t("Pick an entry to read it."))
-        self.history_reader.setMinimumHeight(70)
-
-        self.history_retry = QPushButton(t("Try again"))
-        self.history_retry.setObjectName("primary")
-        self.history_retry.setToolTip(t(
-            "Transcribe the kept recording of a failed dictation again. The "
-            "text goes to the clipboard."
-        ))
-        self.history_retry.clicked.connect(self._retry_history)
-        self.history_retry.setEnabled(False)
-        self.history_retry.hide()
+        # What a row offers beyond copying, in its More menu and in the
+        # context menu alike, enabled for what is selected.
+        def action(label, handler, tip=""):
+            item = QAction(label, self)
+            if tip:
+                item.setToolTip(tip)
+            item.triggered.connect(handler)
+            return item
+        self.history_open = action(t("Open"), lambda: self.history_action.emit("open"),
+                                   t("Open selected text"))
+        self.history_copy = action(t("Copy"), self._copy_history,
+                                   t("Copy selected to clipboard"))
+        # What was heard, for a row whose text is a translation of it.
+        self.history_original = action(
+            t("Copy original"), self._copy_original,
+            t("Copy the transcript as it was heard, before it was translated."))
+        self.history_retry = action(
+            t("Try again"), self._retry_history,
+            t("Transcribe the kept recording of a failed dictation again. The "
+              "text goes to the clipboard."))
         # A failed entry whose recording is gone cannot be retried: what is
         # left is to say it again, or to look at why it failed.
-        self.history_record = QPushButton(t("Record again"))
-        self.history_record.setObjectName("primary")
-        self.history_record.clicked.connect(lambda: self.history_action.emit("record"))
-        self.history_record.hide()
-        self.history_check = QPushButton(t("Check connection"))
-        self.history_check.setToolTip(t("Opens the Models page of the settings."))
-        self.history_check.clicked.connect(lambda: self.history_action.emit("check"))
-        self.history_check.hide()
-        self.history_copy = copy = QPushButton(t("Copy"))
-        copy.setToolTip(t("Copy selected to clipboard"))
-        copy.clicked.connect(self._copy_history)
-        # What was heard, for a row whose text is a translation of it.
-        self.history_original = QPushButton(t("Copy original"))
-        self.history_original.setToolTip(t(
-            "Copy the transcript as it was heard, before it was translated."))
-        self.history_original.clicked.connect(self._copy_original)
-        self.history_original.setEnabled(False)
-        self.history_original.hide()
-        # Delete and Clear are kept off the main row: one slip there costs a
-        # transcript that cannot be brought back. The list reloads itself.
-        self.history_more = self._more_button([
-            (t("Delete selected"), self._delete_history),
-            (None, None),
-            (t("Clear history"), self._clear_history),
-        ])
-        self.history_delete = self.history_more.actions_[t("Delete selected")]
-        self.history_delete.setEnabled(False)
-        # Wrapped onto as many lines as the font and the language need: in one
-        # fixed row the labels no longer fit the home window's column.
-        # At the right end, in the order every result card uses: Copy, then
-        # what else applies, then More.
-        self.history_actions = row = FlowLayout(align_right=True)
-        for button in (copy, self.history_original, self.history_more):
-            row.addWidget(button)
-        widgets.cap_reading(self.history_reader)
-        # A failure reads as one compact block in the middle of the reader:
-        # its badge, what went wrong, and what can be done about it directly
-        # under that, rather than buttons pinned to the far corner.
-        self.history_failed_pane = QWidget()
-        pane = QVBoxLayout(self.history_failed_pane)
-        pane.setContentsMargins(0, 8, 0, 8)
-        pane.setSpacing(10)
-        pane.addStretch(1)
-        self.history_failed_badge = widgets.Badge("failed", "danger", 44)
-        pane.addWidget(self.history_failed_badge, 0, Qt.AlignmentFlag.AlignHCenter)
-        pane.addWidget(self.history_error, 0, Qt.AlignmentFlag.AlignHCenter)
-        # Full width, centred text: a wrapped label given an alignment in its
-        # layout is sized for one line and cut off.
-        pane.addWidget(self.history_failure)
-        fixes = QHBoxLayout()
-        fixes.setSpacing(8)
-        fixes.addStretch(1)
-        for button in (self.history_retry, self.history_record, self.history_check):
-            fixes.addWidget(button)
-        fixes.addStretch(1)
-        pane.addSpacing(4)
-        pane.addLayout(fixes)
-        pane.addStretch(2)
-        self.history_failed_pane.hide()
-        reader = self._card(self.history_meta, (self.history_reader, 1),
-                            (self.history_failed_pane, 1), row)
-        # Stacked, the list and the reader share a handle: the list starts at
-        # a little over a third, never below three whole rows.
-        self.history_split = widgets.Split(self.history, reader, side=320,
-                                           threshold=820, splitter=True, name="history")
-        layout.addWidget(self.history_split, 1)
+        self.history_record = action(t("Record again"),
+                                     lambda: self.history_action.emit("record"))
+        self.history_check = action(t("Check connection"),
+                                    lambda: self.history_action.emit("check"),
+                                    t("Opens the Models page of the settings."))
+        self.history_delete = action(t("Delete selected"), self._delete_history)
+        self.history_clear = action(t("Clear history"), self._clear_history)
+        self._sync_history_actions()
         return page
+
+    def _history_row_actions(self, index):
+        """The buttons at the right end of a history row: the one thing the
+        row is for (copy it, or for a failure try it again or say it again),
+        then More."""
+        row = index.data(Qt.ItemDataRole.UserRole) or {}
+        number = index.row()
+        more = ("more", t("More"), lambda at: self._history_more(at))
+        if row.get("failed"):
+            if _retryable(row):
+                return [("retry", t("Try again"), self._retry_row), more]
+            return [("mic", t("Record again"),
+                     lambda _at: self.history_action.emit("record")), more]
+        copied = cfg._row_key(row) in self._copied_keys
+        return [("check" if copied else "copy", t("Copied") if copied else t("Copy"),
+                 self._copy_row), more]
+
+    def _history_flash(self, index):
+        row = index.data(Qt.ItemDataRole.UserRole) or {}
+        return t("Copied") if cfg._row_key(row) in self._copied_keys else ""
+
+    def _pick_history_row(self, number):
+        """Make the row at `number` the selection, unless it already is part
+        of it: a button on a selected row acts on the whole selection."""
+        item = self.history.item(number)
+        if item is not None and not item.isSelected():
+            self.history.setCurrentRow(number)
+
+    def _copy_row(self, number):
+        self._pick_history_row(number)
+        self._copy_history()
+
+    def _retry_row(self, number):
+        self._pick_history_row(number)
+        self._retry_history()
+
+    def _history_more(self, number):
+        self._pick_history_row(number)
+        item = self.history.item(number)
+        rect = self.history.visualRect(self.history.indexFromItem(item))
+        spot = self.history.itemDelegate().action_rects(rect, [None, None])[-1]
+        self._history_menu(spot.bottomLeft(), on_row=False)
+
+    def _end_copied(self):
+        self._copied_keys = set()
+        try:
+            self.history.viewport().update()
+        except RuntimeError:
+            pass  # the window went while the timer ran
 
     def _instructions(self, default):
         """A system prompt behind an "Edit instructions" disclosure: the box,
@@ -5113,13 +5116,16 @@ class SettingsWindow(QDialog):
     # ---- history ---------------------------------------------------------
 
     def _load_history(self):
+        # A retry's result reloads the list, so what was queued is settled.
+        self._queued_retries = set()
         # A reload arrives whenever a dictation settles, so whatever was
         # selected is selected again rather than lost under the user's hand.
         chosen = {cfg._row_key(row) for row in self._selected_rows()}
         self.history.clear()
         for row in reversed(cfg.read_history(self.conf["history_limit"])):
-            text = (row.get("text") or "").replace("\n", " ")
-            preview = text[:110] + ("…" if len(text) > 110 else "")
+            # The whole text: the row shows what fits in its lines, and the
+            # search looks through all of it.
+            preview = (row.get("text") or "").replace("\n", " ")
             header = t("{ts}  ({duration} s)",
                        ts=row.get("ts", ""), duration=row.get("duration", 0))
             if row.get("failed"):
@@ -5140,10 +5146,8 @@ class SettingsWindow(QDialog):
             header += history_marks(row)
             item = QListWidgetItem(f"{header}\n{preview}")
             item.setData(Qt.ItemDataRole.UserRole, row)
-            # The list says when and which profile in a few words; the full
-            # header, seconds and all, is the reader's.
+            # The list says when and which profile in a few words.
             item.setData(widgets.META_ROLE, history_brief(row))
-            item.setData(Qt.ItemDataRole.UserRole + 20, history_detail(row))
             # The full header, program and seconds and all, for whoever hovers.
             item.setToolTip(header)
             # A failure's row says what failed; why is on the line under it.
@@ -5154,14 +5158,15 @@ class SettingsWindow(QDialog):
                 item.setSelected(True)
         self._filter_history()
         self._sync_history_actions()
-        self.history_split._place()
 
     def _filter_history(self, *_):
         needle = self.history_search.text().strip().casefold()
         for index in range(self.history.count()):
             item = self.history.item(index)
-            item.setHidden(bool(needle) and needle not in item.text().casefold())
-        self.history_split._place()
+            hidden = bool(needle) and needle not in item.text().casefold()
+            item.setHidden(hidden)
+            if hidden:
+                item.setSelected(False)
 
     def _reveal_history(self, item):
         try:
@@ -5169,42 +5174,6 @@ class SettingsWindow(QDialog):
                 self.history.scrollToItem(item, QAbstractItemView.ScrollHint.EnsureVisible)
         except RuntimeError:
             pass  # the list was reloaded and the item deleted meanwhile
-
-    def _show_history_entry(self):
-        """The newest selected entry, in full, in the reader beside the list."""
-        items = sorted(self.history.selectedItems(), key=self.history.row)
-        failed = bool(items) and bool(items[0].data(Qt.ItemDataRole.UserRole).get("failed"))
-        for part in (self.history_failed_badge, self.history_error, self.history_failure):
-            part.setVisible(failed)
-        # The fixes show under a reader too, for a selection whose newest
-        # entry worked but which holds a failure that can be tried again.
-        fixes = any(not button.isHidden() for button in
-                    (self.history_retry, self.history_record, self.history_check))
-        self.history_failed_pane.setVisible(failed or fixes)
-        self.history_reader.setVisible(not failed)
-        layout = self.history_failed_pane.parentWidget().layout()
-        layout.setStretchFactor(self.history_failed_pane, 1 if failed else 0)
-        if not items:
-            self.history_meta.setText("")
-            self.history_reader.setPlainText("")
-            return
-        row = items[0].data(Qt.ItemDataRole.UserRole)
-        self.history_meta.setText(items[0].data(Qt.ItemDataRole.UserRole + 20) or "")
-        if failed:
-            self.history_error.setText(t("Transcription failed"))
-            text = (row.get("error") or "").strip()
-            text += "\n\n" + (t("The recording was kept, so it can be tried again.")
-                               if _retryable(row) else
-                               t("Recording unavailable. Record it again, or check "
-                                 "the connection if this keeps happening."))
-            self.history_failure.setText(text.strip())
-            self.history_reader.setPlainText(text.strip())
-            return
-        if row.get("mode") == "ask":
-            text = (row.get("question") or row.get("raw") or "") + "\n\n" + (row.get("text") or "")
-        else:
-            text = row.get("text") or ""
-        self.history_reader.setPlainText(text.strip())
 
     def _retryable_selection(self):
         """Selected failed dictations whose recording is still there, oldest
@@ -5225,12 +5194,13 @@ class SettingsWindow(QDialog):
         self.history_original.setEnabled(translated)
         self.history_original.setVisible(translated)
         readable = any(not row.get("failed") for row in rows)
-        self.history_copy.setEnabled(readable)
-        # A failure has no text to copy or open: the buttons are left out
-        # rather than shown greyed beside the ones that do something.
-        self.history_copy.setVisible(readable or not rows)
+        # A failure has no text to copy or open: those are left out of its
+        # menu rather than shown greyed beside the ones that do something.
+        for item in (self.history_copy, self.history_open):
+            item.setEnabled(readable)
+            item.setVisible(readable or not rows)
         self.history_delete.setEnabled(bool(rows))
-        self._show_history_entry()
+        self.history_clear.setEnabled(self.history.count() > 0)
 
     def _translated_selection(self):
         return [row for row in self._selected_rows()
@@ -5243,8 +5213,11 @@ class SettingsWindow(QDialog):
                 "\n\n".join(row["raw"] for row in rows))
 
     def _retry_history(self):
-        rows = self._retryable_selection()
+        queued = self.__dict__.setdefault("_queued_retries", set())
+        rows = [row for row in self._retryable_selection()
+                if cfg._row_key(row) not in queued]
         for row in rows:
+            queued.add(cfg._row_key(row))
             self.retry_requested.emit(row)
         if rows:
             # Until the result reloads the list, a second press would queue
@@ -5257,12 +5230,14 @@ class SettingsWindow(QDialog):
         return [item.data(Qt.ItemDataRole.UserRole) for item in items]
 
     def _copy_history(self):
-        rows = self._selected_rows()
-        if rows:
-            QGuiApplication.clipboard().setText(
-                "\n\n".join(row.get("text", "") for row in rows
-                             if not row.get("failed"))
-            )
+        rows = [row for row in self._selected_rows() if not row.get("failed")]
+        if not rows:
+            return
+        QGuiApplication.clipboard().setText("\n\n".join(row.get("text", "") for row in rows))
+        # Each copied row says so for a moment, where its copy button was.
+        self._copied_keys = {cfg._row_key(row) for row in rows}
+        self._copied_timer.start()
+        self.history.viewport().update()
 
     def _delete_history(self):
         rows = self._selected_rows()
@@ -5298,31 +5273,22 @@ class SettingsWindow(QDialog):
             QMessageBox.warning(self, t("History"), t("Failed: {error}", error=exc))
         self._load_history()
 
-    def _history_menu(self, pos):
-        item = self.history.itemAt(pos)
-        if item is not None and not item.isSelected():
-            self.history.setCurrentItem(item)
+    def _history_menu(self, pos, on_row=True):
+        """The context menu, and the row's More menu: every action on the
+        selection, with what does not apply to it left out or greyed."""
+        if on_row:
+            item = self.history.itemAt(pos)
+            if item is not None and not item.isSelected():
+                self.history.setCurrentItem(item)
+        self._sync_history_actions()
         menu = QMenu(self)
-        retry = menu.addAction(t("Try again"))
-        retry.setEnabled(bool(self._retryable_selection()))
-        copy = menu.addAction(t("Copy selected to clipboard"))
-        original = menu.addAction(t("Copy original"))
-        original.setEnabled(bool(self._translated_selection()))
-        delete = menu.addAction(t("Delete selected"))
+        menu.setToolTipsVisible(True)
+        for item in (self.history_copy, self.history_open, self.history_original,
+                     self.history_retry, self.history_record, self.history_check):
+            if item.isVisible():
+                menu.addAction(item)
         menu.addSeparator()
-        clear = menu.addAction(t("Clear history"))
-        has_selection = bool(self.history.selectedItems())
-        copy.setEnabled(has_selection)
-        delete.setEnabled(has_selection)
-        clear.setEnabled(self.history.count() > 0)
-        chosen = menu.exec(self.history.viewport().mapToGlobal(pos))
-        if chosen is retry:
-            self._retry_history()
-        elif chosen is copy:
-            self._copy_history()
-        elif chosen is original:
-            self._copy_original()
-        elif chosen is delete:
-            self._delete_history()
-        elif chosen is clear:
-            self._clear_history()
+        menu.addAction(self.history_delete)
+        menu.addAction(self.history_clear)
+        menu.exec(self.history.viewport().mapToGlobal(pos))
+        menu.deleteLater()

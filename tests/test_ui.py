@@ -859,7 +859,7 @@ class Settings(DikteTest):
         self.assertFalse(window.history_retry.isEnabled())
         window.history.item(0).setSelected(True)
         self.assertTrue(window.history_retry.isEnabled())
-        window.history_retry.click()
+        window.history_retry.trigger()
         self.assertEqual(asked, [failed])
         self.assertFalse(window.history_retry.isEnabled())
 
@@ -3092,15 +3092,17 @@ class Round6(Settings):
             disclosure.set_expanded(not disclosure.expanded())
         relayout.assert_called_once_with(disclosure)
 
-    def test_a_failed_entry_reads_as_one_centred_block(self):
+    def test_a_failed_entry_offers_its_fixes_and_no_copy(self):
         cfg.append_history({"ts": "2026-11-08 10:00:00", "failed": True,
                             "error": "Timed out", "text": "", "raw": ""})
         window = self.window(self.config())
         window._load_history()
         window.history.setCurrentRow(0)
-        self.assertFalse(window.history_failed_pane.isHidden())
-        self.assertTrue(window.history_reader.isHidden())
-        self.assertIs(window.history_record.parentWidget(), window.history_failed_pane)
+        self.assertTrue(window.history_record.isVisible())
+        self.assertTrue(window.history_check.isVisible())
+        self.assertFalse(window.history_copy.isVisible())
+        self.assertFalse(window.history_open.isVisible())
+        self.assertEqual(window.history.item(0).data(widgets.KIND_ROLE), "failed")
 
     def test_the_live_meeting_row_comes_in_picked(self):
         window = self.window(self.config())
