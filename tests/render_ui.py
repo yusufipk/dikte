@@ -27,11 +27,10 @@ SAMPLE = "Bir sonraki sürüm için kayıt kontrollerini tamamlayalım. Ayarlar�
 CASES = (
     ("dictation", 620, 560), ("dictation-wide", 1900, 1000),
     ("file", 620, 640), ("meeting", 680, 760), ("ask", 680, 640),
-    ("settings-general", 720, 760), ("settings-display", 720, 640),
+    ("settings-general", 720, 760),
     ("settings-api", 720, 760), ("settings-assistant", 720, 760),
     ("settings-shortcuts", 720, 640), ("overlay", 220, 48),
 )
-SETTINGS_PAGES = {"general": 0, "display": 1, "api": 2, "assistant": 5, "shortcuts": 7}
 
 
 def settle():
@@ -111,7 +110,7 @@ def capture_theme(name, output):
         images = []
         for case, width, height in CASES:
             if case.startswith("settings-"):
-                settings.tabs.setCurrentIndex(SETTINGS_PAGES[case.removeprefix("settings-")])
+                settings.show_page(case.removeprefix("settings-"))
                 widget = settings
             elif case == "overlay":
                 indicator.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)

@@ -131,7 +131,6 @@ TR = {
 
     # --- tray ---------------------------------------------------------
     "Start recording": "Kaydı başlat",
-    "Stop and transcribe": "Kaydı bitir ve yaz",
     "Working…": "İşleniyor…",
     "Pause the recording": "Kaydı duraklat",
     "Resume the recording": "Kayda devam et",
@@ -150,7 +149,7 @@ TR = {
     "Cleaning up…": "Temizleniyor…",
     "Pasting…": "Yapıştırılıyor…",
     "Pasted": "Yapıştırıldı",
-    "Copied": "Panoya kopyalandı",
+    "Copied": "Kopyalandı",
     "{action}: {preview}": "{action}: {preview}",
     "Cleanup skipped: {error}": "Temizleme atlandı: {error}",
     "Pasted raw, cleanup failed: {error}": "Ham metin yapıştırıldı, temizleme başarısız: {error}",
@@ -287,8 +286,6 @@ TR = {
     "top-right": "sağ-üst",
     "Longest recording": "En uzun kayıt",
     " s": " sn",
-    "Skip silent recordings (don't call the API)":
-        "Sessiz kayıtları atla (API'ye gönderme)",
     "Silence threshold": "Sessizlik eşiği",
     "Keep audio files ({path})": "Ses kayıtlarını sakla ({path})",
 
@@ -338,6 +335,9 @@ TR = {
     "sk-or-… (falls back to OPENROUTER_API_KEY)": "sk-or-… (boşsa OPENROUTER_API_KEY kullanılır)",
     "Custom server": "Özel sunucu",
     "Custom server address": "Özel sunucu adresi",
+    "Address": "Adres",
+    "Connection works. {count} models visible.":
+        "Bağlantı tamam. {count} model görünüyor.",
     "Empty: the server's default model": "Boş: sunucunun varsayılan modeli",
     "Pick a model from the list": "Listeden bir model seçin",
     "Choose a {service} model in Settings.": "Ayarlar'da bir {service} modeli seçin.",
@@ -492,9 +492,9 @@ TR = {
         "Kaydı bitirmeden duraklatır. Duraklatıldığı sürede konuşulanlar "
         "kaydedilmez, süre sayacı da onunla birlikte durur.",
     "Throws the recording away without transcribing it. Works on a dictation "
-    "and on a command for the agent alike, whichever is running.":
+    "and on a command for the assistant alike, whichever is running.":
         "Kaydı yazıya dökmeden atar. Hangisi çalışıyorsa ona işler: dikteye de, "
-        "ajana verilen komuta da.",
+        "asistana verilen komuta da.",
     "Shortcut saved: {shortcut}": "Kısayol kaydedildi: {shortcut}",
     "Could not register the GNOME shortcut: {error}":
         "GNOME kısayolu kaydedilemedi: {error}",
@@ -607,8 +607,8 @@ TR = {
     "Stop {name}": "{name} durdur",
     "Stopping…": "Durduruluyor…",
     "{name} starts fresh next time.": "{name} bir sonrakine sıfırdan başlayacak.",
-    "Dikte: talking to Claude": "Dikte: ajanla konuşuyor",
-    "Dikte: recording for Claude": "Dikte: ajan için kaydediyor",
+    "Dikte: talking to Claude": "Dikte: asistanla konuşuyor",
+    "Dikte: recording for Claude": "Dikte: asistan için kaydediyor",
     "Asking {name}…": "{name} soruluyor…",
     "{name}: {preview}": "{name}: {preview}",
     "{name} answered, but: {error}": "{name} cevapladı, ama: {error}",
@@ -626,8 +626,8 @@ TR = {
     "Using {name}…": "{name} kullanıyor…",
     "Thinking…": "Düşünüyor…",
     "{binary} not found. Install it, or pick another provider under "
-    "Settings → Agent.":
-        "{binary} bulunamadı. Kur ya da Ayarlar → Ajan sekmesinden başka bir "
+    "Settings → Assistant.":
+        "{binary} bulunamadı. Kur ya da Ayarlar → Asistan sayfasından başka bir "
         "sağlayıcı seç.",
     "Could not run {binary}: {error}": "{binary} çalıştırılamadı: {error}",
     "{service} exited with code {code}.": "{service} {code} koduyla çıktı.",
@@ -734,9 +734,9 @@ TR = {
     "and cleanup costs an API call and a second or two.":
         "Varsayılan olarak kapalı: Claude “eee” ve “hani”yi yardımsız da okur, "
         "temizlik ise bir API çağrısına ve bir iki saniyeye mal olur.",
-    "Told to the agent alongside every command, on top of whatever your own "
-    "configuration already says.":
-        "Her komutla birlikte ajana söylenir, kendi yapılandırmanın zaten "
+    "Told to the assistant alongside every command, on top of whatever your "
+    "own configuration already says.":
+        "Her komutla birlikte asistana söylenir, kendi yapılandırmanın zaten "
         "söylediklerinin üstüne eklenir.",
     "  ·  asked {who}: {question}": "  ·  {who} soruldu: {question}",
 
@@ -1171,14 +1171,14 @@ TR = {
     "Selected text": "Seçili metin",
     "Ask about the selected text": "Seçili metin hakkında sor",
     "Select text, press the shortcut and say what to do with it. The answer "
-    "opens in a window; nothing is pasted until you press Apply. The "
-    "selection goes to the agent with no tools, and Codex and Antigravity are "
-    "not sent it. The history keeps your instruction and the reply, not the "
-    "selection.":
+    "opens in a window; nothing is pasted until you press Replace selection. "
+    "The selection goes to the assistant with no tools, and Codex and "
+    "Antigravity are not sent it. The history keeps your instruction and the "
+    "reply, not the selection.":
         "Metni seç, kısayola bas ve onunla ne yapılacağını söyle. Cevap bir "
-        "pencerede açılır; Uygula'ya basmadan hiçbir şey yapıştırılmaz. Seçim "
-        "ajana araçsız gönderilir; Codex ve Antigravity'ye hiç gönderilmez. "
-        "Geçmişte seçim değil, talimatın ve cevap saklanır.",
+        "pencerede açılır; Seçimi değiştir'e basmadan hiçbir şey yapıştırılmaz. "
+        "Seçim asistana araçsız gönderilir; Codex ve Antigravity'ye hiç "
+        "gönderilmez. Geçmişte seçim değil, talimatın ve cevap saklanır.",
     "The clipboard was left alone, so no selection was read.":
         "Panoya dokunulmadı, bu yüzden seçim okunmadı.",
     "The selection was not shown in time, so it was not sent.":
@@ -1203,7 +1203,7 @@ TR = {
         "Seçim hakkında ({count} karakter): {preview}",
     "Selected ({count} characters): {preview}": "Seçili ({count} karakter): {preview}",
     "Nothing selected": "Seçili metin yok",
-    "This agent does not read the selection.": "Bu ajan seçili metni okumaz.",
+    "This assistant does not read the selection.": "Bu asistan seçili metni okumaz.",
     "Apply": "Uygula",
     "Replaces the selected text in the window it came from. Nothing is pasted "
     "until you press this.":
@@ -1219,6 +1219,8 @@ TR = {
     "Default": "Varsayılan",
     "Profiles": "Profiller",
     "Copy original": "Orijinali kopyala",
+    "Enter or a double click copies the entry; Ctrl+C copies the selection. The context menu has the other actions.":
+        "Enter ya da çift tıklama kaydı kopyalar; Ctrl+C seçimi kopyalar. Diğer işlemler sağ tık menüsünde.",
     "Copy the transcript as it was heard, before it was translated.": "Transkripti çevrilmeden önce, duyulduğu haliyle kopyala.",
     "  ·  profile: {name}": "  ·  profil: {name}",
     "  ·  translated into {language}": "  ·  çeviri: {language}",
@@ -1241,23 +1243,20 @@ TR = {
     "Edit…": "Düzenle…",
     "Added": "Ekleyen",
     "Auto": "Otomatik",
-    "Auto, heard as: {heard}": "Otomatik, duyulan: {heard}",
     "Manual": "Elle",
     "Auto-added": "Otomatik eklenenler",
     "Manually added": "Elle eklenenler",
     "Clear auto-learned": "Otomatik öğrenilenleri temizle",
     "Learn names and terms from my dictations": "Diktelerimden isim ve terim öğren",
-    "Only ordinary dictations are read, and only once they have been cleaned up and finished without a warning: never meetings, files, the agent, translations, the clipboard or other programs. A name written with a capital in the middle of a sentence is added after it has come through three dictations unchanged, marked Auto. So is a misheard word the cleanup puts right the same way three times (Klod Kod to Claude Code), with what it was heard as. Until then what is being counted is kept in the dictionary file. A learned entry you delete is not learned again. The learning runs on this computer; what it adds is sent to the models with the rest of the dictionary.": "Yalnızca sıradan dikteler okunur, o da temizlendikten ve uyarısız bittikten sonra: toplantılar, dosyalar, ajan, çeviriler, pano ya da başka programlar asla okunmaz. Cümle ortasında büyük harfle yazılan bir isim, üç diktede değişmeden geçtikten sonra Otomatik işaretiyle eklenir. Temizlemenin üç kez aynı şekilde düzelttiği, yanlış duyulmuş bir kelime de (Klod Kod yerine Claude Code) nasıl duyulduğuyla birlikte öyle eklenir. O zamana kadar sayılanlar sözlük dosyasında tutulur. Öğrenilmiş bir kaydı silersen bir daha öğrenilmez. Öğrenme bu bilgisayarda yapılır; eklediği kayıtlar sözlüğün geri kalanıyla birlikte modellere gider.",
+    "Only ordinary dictations are read, and only once they have been cleaned up and finished without a warning: never meetings, files, the assistant, translations, the clipboard or other programs. A name written with a capital in the middle of a sentence is added after it has come through three dictations unchanged, marked Auto. So is a misheard word the cleanup puts right the same way three times (Klod Kod to Claude Code), with what it was heard as. Until then what is being counted is kept in the dictionary file. A learned entry you delete is not learned again. The learning runs on this computer; what it adds is sent to the models with the rest of the dictionary.": "Yalnızca sıradan dikteler okunur, o da temizlendikten ve uyarısız bittikten sonra: toplantılar, dosyalar, asistan, çeviriler, pano ya da başka programlar asla okunmaz. Cümle ortasında büyük harfle yazılan bir isim, üç diktede değişmeden geçtikten sonra Otomatik işaretiyle eklenir. Temizlemenin üç kez aynı şekilde düzelttiği, yanlış duyulmuş bir kelime de (Klod Kod yerine Claude Code) nasıl duyulduğuyla birlikte öyle eklenir. O zamana kadar sayılanlar sözlük dosyasında tutulur. Öğrenilmiş bir kaydı silersen bir daha öğrenilmez. Öğrenme bu bilgisayarda yapılır; eklediği kayıtlar sözlüğün geri kalanıyla birlikte modellere gider.",
     "Names and terms you say often. They go to the transcription model as a hint, and to the cleanup model as a glossary, so it can repair the ones that still come out wrong. Every profile uses the same dictionary, and so do audio files and meetings.": "Sık söylediğin isimler ve terimler. Transkripsiyon modeline ipucu, temizleme modeline sözlük olarak gider; böylece yine yanlış çıkanları düzeltebilir. Bütün profiller aynı sözlüğü kullanır, ses dosyaları ve toplantılar da.",
     "Leave the spelling empty when the word is already written the way you want it. With one, the cleanup model is told to write the word that way.": "Kelime zaten istediğin gibi yazılıyorsa yazımı boş bırak. Doldurursan temizleme modeline kelimeyi böyle yazması söylenir.",
     "That word is already in the dictionary.": "Bu kelime sözlükte zaten var.",
     "What profiles may do": "Profillerin yapabilecekleri",
     "Apply the writing style of the profile": "Profilin yazım üslubunu uygula",
     "Adds the profile's preferences to the dictation cleanup instruction. A cleanup instruction of your own replaces the built-in one, and the style is still added after it; switch this off to use your own instruction alone.": "Profilin tercihlerini dikte temizleme talimatına ekler. Kendi temizleme talimatın yerleşik talimatın yerine geçer ve üslup yine de arkasına eklenir; kendi talimatını tek başına kullanmak için bunu kapat.",
-    "Choose the profile by the program in front": "Profili öndeki programa göre seç",
     "Translate when the profile has a target language": "Profilde hedef dil varsa çevir",
     "The translation is made after the recording, by the cleanup model, before the text is pasted. It is not live. If it fails, the original transcript is copied and nothing is pasted.": "Çeviri kayıt bittikten sonra, metin yapıştırılmadan önce temizleme modeli tarafından yapılır. Canlı değildir. Başarısız olursa orijinal transkript kopyalanır ve hiçbir şey yapıştırılmaz.",
-    "Use the style learned from examples I paste in": "Yapıştırdığım örneklerden öğrenilen üslubu kullan",
     "Profile for every dictation": "Bütün diktelerde kullanılacak profil",
     "Automatic, by the program in front": "Otomatik, öndeki programa göre",
     "Find the program name": "Program adını bul",
@@ -1268,7 +1267,7 @@ TR = {
     "On GNOME, per-application profiles need the “Window Calls” GNOME Shell extension installed.": "GNOME'da uygulamaya göre profiller için “Window Calls” GNOME Shell eklentisi kurulu olmalı.",
     "On KDE Plasma under Wayland, per-application profiles need kdotool installed.": "Wayland altındaki KDE Plasma'da uygulamaya göre profiller için kdotool kurulu olmalı.",
     "On X11, per-application profiles need xprop installed.": "X11'de uygulamaya göre profiller için xprop kurulu olmalı.",
-    "A profile says how a dictation should read, and can translate it. The Default profile is used unless a named profile lists the program in front when the recording starts. Files, meetings and the agent are never changed by a profile.": "Profil, bir diktenin nasıl okunacağını belirler ve onu çevirebilir. Kayıt başladığında öndeki programı listeleyen adlı bir profil yoksa Varsayılan profil kullanılır. Dosyalar, toplantılar ve ajan hiçbir profilden etkilenmez.",
+    "A profile says how a dictation should read, and can translate it. The Default profile is used unless a named profile lists the program in front when the recording starts. Files, meetings and the assistant are never changed by a profile.": "Profil, bir diktenin nasıl okunacağını belirler ve onu çevirebilir. Kayıt başladığında öndeki programı listeleyen adlı bir profil yoksa Varsayılan profil kullanılır. Dosyalar, toplantılar ve asistan hiçbir profilden etkilenmez.",
     "Add profile…": "Profil ekle…",
     "Add profile": "Profil ekle",
     "Rename…": "Yeniden adlandır…",
@@ -1343,4 +1342,310 @@ TR = {
     "Japanese": "Japonca",
     "Korean": "Korece",
     "Chinese": "Çince",
+
+    # --- interface overhaul (sidebar, chips, list pages) --------------------
+    "Replace selection": "Seçimi değiştir",
+    "Close": "Kapat",
+    "OK": "Tamam",
+    "Models": "Modeller",
+    "Editing": "Düzenleme",
+    "Bottom left": "Sol alt",
+    "Bottom right": "Sağ alt",
+    "Top left": "Sol üst",
+    "Top right": "Sağ üst",
+    "Pause": "Duraklat",
+    "Resume": "Devam et",
+    "Discard": "At",
+    "Open": "Aç",
+    "More": "Diğer",
+    "Reply": "Yanıt",
+    "Key": "Anahtar",
+    "{service} key": "{service} anahtarı",
+    "{seconds} s": "{seconds} sn",
+    "Stop and send": "Bitir ve gönder",
+    "Stop and write up": "Bitir ve tutanağı yaz",
+    "The transcript will appear here.": "Döküm burada görünecek.",
+    "Records your microphone and the other side.":
+        "Mikrofonunu ve karşı tarafı kaydeder.",
+    "Connect OpenRouter in Settings to write minutes.":
+        "Tutanak yazmak için Ayarlar'da OpenRouter'ı bağla.",
+    "Needs BlackHole or Loopback on macOS.": "macOS'ta BlackHole ya da Loopback gerekir.",
+    "Pick a transcription service and add its key, or use a model on this computer.":
+        "Bir yazıya dökme hizmeti seçip anahtarını ekle ya da bu bilgisayardaki bir modeli kullan.",
+    "A spoken command goes to the assistant. Its reply is copied without automatic pasting.":
+        "Sesli komut asistana gider. Yanıtı otomatik yapıştırılmadan panoya kopyalanır.",
+    "Dictation: {sound}": "Dikte: {sound}",
+    "Cleanup: {text}": "Temizleme: {text}",
+    "Shortcut: {shortcut}": "Kısayol: {shortcut}",
+    "Permissions: {permission}": "İzinler: {permission}",
+    "Working directory: {directory}": "Çalışma klasörü: {directory}",
+    "Find…": "Bul…",
+    "From tab…": "Sekmeden…",
+    "Answers questions; runs no commands.": "Soruları yanıtlar; komut çalıştırmaz.",
+    "A plain question and a plain answer, over the {service} key you already "
+    "have. It runs no commands, opens no files and reaches none of your "
+    "services, so it can tell you what the capital of Peru is but not what is "
+    "in your calendar.":
+        "Elindeki {service} anahtarıyla düz bir soru ve düz bir cevap. Komut "
+        "çalıştırmaz, dosya açmaz, hizmetlerinin hiçbirine ulaşmaz; Peru'nun "
+        "başkentini söyleyebilir ama takviminde ne olduğunu söyleyemez.",
+    "Uses its own allow-rules for permissions.": "İzinler için kendi kurallarını kullanır.",
+    "Antigravity has neither a permission mode nor a sandbox to hand it, so "
+    "what it may do without asking is whatever its own allow-rules say. The "
+    "working directory still applies.":
+        "Antigravity'ye verilebilecek bir izin modu ya da korumalı alan yok; "
+        "sormadan ne yapabileceğini kendi izin kuralları belirler. Çalışma "
+        "klasörü yine de geçerlidir.",
+    "Added to every command.": "Her komuta eklenir.",
+    "Instructions": "Talimatlar",
+    "Edit instructions": "Talimatları düzenle",
+    "Using your own instructions.": "Kendi talimatların kullanılıyor.",
+    "Using the built-in instructions.": "Yerleşik talimatlar kullanılıyor.",
+    "How much the cleanup model may change your words.":
+        "Temizleme modelinin sözlerini ne kadar değiştirebileceği.",
+    "Keep the audio files": "Ses dosyalarını sakla",
+    "Saved in {path}": "Kayıt yeri: {path}",
+    "Pasting": "Yapıştırma",
+    "Application": "Uygulama",
+    "Appearance": "Görünüm",
+    "Recording indicator": "Kayıt göstergesi",
+    "Other connections": "Diğer bağlantılar",
+    "Other connections ({count} set)": "Diğer bağlantılar ({count} ayarlı)",
+    "{binary} was not found on your PATH.": "{binary} PATH üzerinde bulunamadı.",
+    "Wear headphones if you can.": "Mümkünse kulaklık tak.",
+    "Through speakers your microphone hears the other side as well, and "
+    "although a line that lands on both channels at once is dropped again, "
+    "the repair is never as clean as not needing it.":
+        "Hoparlörden dinlerken mikrofonun karşı tarafı da duyar; iki kanala "
+        "birden düşen satır yeniden atılsa da bu onarım, hiç gerekmemesi kadar "
+        "temiz olmaz.",
+    "Names help the spelling and the minutes.": "İsimler yazımı ve tutanağı iyileştirir.",
+    "Meetings cannot be recorded on this system.": "Bu sistemde toplantı kaydedilemez.",
+    "How shortcuts work here": "Kısayollar burada nasıl çalışır",
+    "Use the built-in listener (/dev/input)": "Yerleşik dinleyiciyi kullan (/dev/input)",
+    "For when the {desktop} shortcut is not active yet. Works immediately, no "
+    "session restart. The only difference: the key combination also reaches "
+    "the focused application.":
+        "{desktop} kısayolu henüz etkin değilken işe yarar. Oturumu yeniden "
+        "başlatmadan hemen çalışır. Tek fark, tuş kombinasyonu odaktaki "
+        "uygulamaya da ulaşır.",
+    "Installed shortcuts start working after you log in again.":
+        "Kurulan kısayollar yeniden oturum açınca çalışmaya başlar.",
+    "Dikte holds these combinations while it runs.": "Dikte bu kombinasyonları çalıştığı sürece tutar.",
+    "Dikte listens for these combinations while it runs.": "Dikte bu kombinasyonları çalıştığı sürece dinler.",
+    "Desktop command": "Masaüstü komutu",
+    "Search the history": "Geçmişte ara",
+    "Welcome to Dikte": "Dikte'ye hoş geldin",
+    "Safe only": "Yalnızca güvenli",
+    "All allowed": "Hepsine izin",
+    "Workspace": "Çalışma alanı",
+    "No sandbox": "Korumasız",
+    "CLI rules": "CLI kuralları",
+    "No commands": "Komut yok",
+
+    # --- interface overhaul, second pass ------------------------------------
+    "Not assigned.": "Atanmamış.",
+    "Not registered with the desktop.": "Masaüstüne kayıtlı değil.",
+    "Off until Ask about the selected text is on, under Assistant.":
+        "Asistan sayfasında Seçili metin hakkında sor açılana kadar kapalı.",
+    "Change in Shortcuts": "Kısayollar'da değiştir",
+    "Spoken command": "Sesli komut",
+    "Failed": "Başarısız",
+    "into {language}": "{language} diline",
+    "translation failed": "çeviri başarısız",
+    "Antigravity": "Antigravity",
+    "{name} ({width} × {height})": "{name} ({width} × {height})",
+    "Try again": "Tekrar dene",
+    "Record again": "Yeniden kaydet",
+    "Check connection": "Bağlantıyı kontrol et",
+    "Opens the Models page of the settings.": "Ayarların Modeller sayfasını açar.",
+    "Transcription failed": "Yazıya dökme başarısız",
+    "The recording was kept, so it can be tried again.":
+        "Kayıt saklandı, yeniden denenebilir.",
+    "Recording unavailable. Record it again, or check the connection if this "
+    "keeps happening.":
+        "Kayıt yok. Yeniden kaydet; tekrar ediyorsa bağlantıyı kontrol et.",
+    "The recording was kept; select it and press Try again.":
+        "Kayıt saklandı; seçip Tekrar dene'ye bas.",
+    "Nothing from this publisher runs here. Choose another one.":
+        "Bu yayıncının hiçbir modeli burada çalışmıyor. Başka birini seç.",
+    "The program above is missing. Download it first.":
+        "Yukarıdaki program yok. Önce onu indir.",
+    "Not available from this publisher. Pick another model.":
+        "Bu yayıncıda yok. Başka bir model seç.",
+    "No timestamps from this provider.": "Bu sağlayıcı zaman damgası vermiyor.",
+    "{page} (unsaved changes)": "{page} (kaydedilmemiş değişiklikler)",
+    "Show in history": "Geçmişte göster",
+    "Cancel request": "İsteği iptal et",
+    "The local editing model is missing.": "Yerel düzenleme modeli eksik.",
+    "The assistant is not set up yet.": "Asistan henüz ayarlanmadı.",
+    "Assign shortcut": "Kısayol ata",
+    "No shortcut yet. Opens the Shortcuts settings.":
+        "Henüz kısayol yok. Kısayol ayarlarını açar.",
+    "Previous reply": "Önceki yanıt",
+    "Chat only": "Yalnızca sohbet",
+    "Cleanup": "Temizleme",
+    "Ask by voice": "Sesle sor",
+    "Edit word": "Kelimeyi düzenle",
+    "Add a word": "Kelime ekle",
+    "Adds the profile's preferences to the dictation cleanup instruction. A "
+    "cleanup instruction of your own replaces the built-in one, and the style "
+    "is still added after it; switch this off to use your own instruction "
+    "alone. Applies to every profile.":
+        "Profilin tercihlerini dikte temizleme talimatına ekler. Kendi temizleme "
+        "talimatın yerleşik talimatın yerine geçer ve üslup yine de arkasına "
+        "eklenir; kendi talimatını tek başına kullanmak için bunu kapat. Bütün "
+        "profillere uygulanır.",
+    "Matching": "Eşleşme",
+    "Used when no other profile matches.": "Başka hiçbir profil eşleşmezse kullanılır.",
+    "Writing": "Yazım",
+    "Extra instructions": "Ek talimatlar",
+    "Sentence length": "Cümle uzunluğu",
+    "Yesterday": "Dün",
+    "{day} {month}": "{day} {month}",
+    "Jan": "Oca", "Feb": "Şub", "Mar": "Mar", "Apr": "Nis", "May": "May",
+    "Jun": "Haz", "Jul": "Tem", "Aug": "Ağu", "Sep": "Eyl", "Oct": "Eki",
+    "Nov": "Kas", "Dec": "Ara",
+    "{count} characters selected": "{count} karakter seçili",
+    "Original": "Orijinal",
+    "Cleanup instructions": "Temizleme talimatları",
+    "All profiles": "Bütün profiller",
+    "Use profile styles": "Profil üsluplarını kullan",
+    "Match by program": "Programa göre eşleştir",
+    "Enable translation": "Çeviriyi aç",
+    "Use learned styles": "Öğrenilen üslubu kullan",
+    "Default (automatic unavailable)": "Varsayılan (otomatik kullanılamıyor)",
+    "Not used on this desktop.": "Bu masaüstünde kullanılmıyor.",
+    "Skip silent recordings": "Sessiz kayıtları atla",
+    "A recording with no speech in it is dropped without calling the API.":
+        "İçinde konuşma olmayan kayıt API'ye gönderilmeden atılır.",
+    "Remove phrases invented during silence": "Sessizlikte uydurulan cümleleri at",
+    "Just now": "Az önce",
+    "Recent": "Son kayıtlar",
+    "Show all": "Tümünü göster",
+    "Open in History": "Geçmişte aç",
+    "{shortcut} and this button copy the text.": "{shortcut} ve bu düğme metni kopyalar.",
+    "{shortcut} pastes into your app. This button copies.":
+        "{shortcut} metni uygulamana yapıştırır. Bu düğme kopyalar.",
+    "This button copies the text.": "Bu düğme metni kopyalar.",
+    "{shortcut} starts and stops dictation in any program.":
+        "{shortcut} her programda dikteyi başlatıp durdurur.",
+    "Stop and copy": "Durdur ve kopyala",
+    "Conversation": "Konuşma",
+    "You asked: {question}": "Sorun: {question}",
+    "Copy this reply": "Bu yanıtı kopyala",
+    "System audio": "Sistem sesi",
+    "New conversation": "Yeni konuşma",
+    "No sound from either side. Check the sources in Settings.":
+        "İki taraftan da ses gelmiyor. Kaynakları Ayarlar'dan kontrol et.",
+    "No sound from the microphone.": "Mikrofondan ses gelmiyor.",
+    "No system audio yet. Is the other side playing?":
+        "Henüz sistem sesi yok. Karşı taraf duyuluyor mu?",
+    "Cloud service": "Bulut hizmeti",
+    "Paste a key from OpenRouter, OpenAI, Groq or Google.":
+        "OpenRouter, OpenAI, Groq ya da Google anahtarını yapıştır.",
+    "On this computer": "Bu bilgisayarda",
+    "Download a speech model; nothing leaves this machine.":
+        "Bir konuşma modeli indir; hiçbir şey bu makineden çıkmaz.",
+    "All set. Press {shortcut} in any program and start talking.":
+        "Hazır. Herhangi bir programda {shortcut} tuşlarına bas ve konuşmaya başla.",
+    "Transcribe the kept recording again.": "Saklanan kaydı yeniden yazıya dök.",
+    "The recording is gone; dictate it again.": "Kayıt yok; yeniden dikte et.",
+    "Recording now": "Şu an kaydediliyor",
+    "Ask by voice; the conversation shows here.":
+        "Sesle sor; konuşma burada görünür.",
+    "Transcription failed. {reason}": "Yazıya dökme başarısız oldu. {reason}",
+    "{model} (default)": "{model} (varsayılan)",
+    "Assistant request failed": "Asistan isteği başarısız oldu",
+    "Dictation failed": "Dikte başarısız oldu",
+    "History size": "Geçmiş boyutu",
+    "New conversation after inactivity": "Hareketsizlikte yeni konuşma",
+    "Enable in Assistant": "Asistan'da aç",
+    "Turns on Ask about the selected text.": "Seçili metin hakkında sor özelliğini açar.",
+    "Left empty, the {variable} environment variable is used.":
+        "Boş bırakılırsa {variable} ortam değişkeni kullanılır.",
+    "Key set": "Anahtar girildi",
+    "Paste your key": "Anahtarını yapıştır",
+    "Paste your key (optional)": "Anahtarını yapıştır (isteğe bağlı)",
+    "Active profile": "Etkin profil",
+    "Saved rules (not used on this desktop)": "Kayıtlı kurallar (bu masaüstünde kullanılmıyor)",
+    "Edit {name}": "{name} profilini düzenle",
+    "When nothing else matches": "Başka hiçbiri eşleşmezse",
+    "Chosen by hand": "Elle seçilir",
+    "Pick automatically": "Otomatik seç",
+    "All model settings": "Bütün model ayarları",
+    "One key also writes meeting minutes and cleans transcripts up.":
+        "Tek anahtar toplantı tutanağı da yazar, metni de temizler.",
+    "Get a key": "Anahtar al",
+    "Opens the service's key page in your browser.":
+        "Hizmetin anahtar sayfasını tarayıcıda açar.",
+    "Service": "Hizmet",
+    "Connect a transcription service": "Bir yazıya dökme hizmeti bağla",
+    "Transcribe on this computer": "Bu bilgisayarda yazıya dök",
+    "Save and start": "Kaydet ve başla",
+    "Download and use": "İndir ve kullan",
+    "Use this model": "Bu modeli kullan",
+    "Recording a command": "Komut kaydediliyor",
+    "Recording a meeting": "Toplantı kaydediliyor",
+    "Working": "Çalışıyor",
+    "Done": "Bitti",
+    "Warning": "Uyarı",
+    "Cleanup failed. Pasted the raw text.": "Temizleme başarısız oldu. Ham metin yapıştırıldı.",
+    "Cleanup failed. Copied the raw text.": "Temizleme başarısız oldu. Ham metin kopyalandı.",
+    "Input level": "Giriş seviyesi",
+    "Resize the list": "Listeyi yeniden boyutlandır",
+    "Working in the browser…": "Tarayıcıda çalışıyor…",
+    "{service} ended with an error.": "{service} bir hatayla bitti.",
+    "to start, again to stop and copy": "ile başlat, bir daha basınca durdur ve kopyala",
+    "to start, again to stop and paste": "ile başlat, bir daha basınca durdur ve yapıştır",
+    "Open the minutes in a window": "Tutanağı ayrı bir pencerede aç",
+    "Assign a shortcut to dictate into any program.":
+        "Herhangi bir programa dikte etmek için bir kısayol ata.",
+    "Transcribe audio on this computer.": "Sesi bu bilgisayarda yazıya dök.",
+    "Record": "Kayda başla",
+    "All set. Press": "Hazır. Herhangi bir programda",
+    "in any program and start talking.": "tuşlarına bas ve konuşmaya başla.",
+    "Speech: {model}": "Ses: {model}",
+    "Server default": "Sunucu varsayılanı",
+    "Provider: {service}": "Sağlayıcı: {service}",
+    "No words yet.": "Henüz kelime yok.",
+    "Pick by program in front": "Öndeki programa göre seç",
+    "Profile options": "Profil seçenekleri",
+    "Use this profile": "Bu profili kullan",
+    "In use": "Kullanımda",
+    "Dictation picks a profile by the program in front, and this one when none of them lists it.":
+        "Dikte, profili öndeki programa göre seçer; hiçbiri o programı listelemiyorsa bunu kullanır.",
+    "Dictation uses this profile.": "Dikte bu profili kullanıyor.",
+    "Use this profile for every dictation.": "Her diktede bu profili kullan.",
+    "Reset after inactivity": "Hareketsizlikten sonra sıfırla",
+    "Paste the answer into the focused window": "Yanıtı odaktaki pencereye yapıştır",
+    "Drop an audio or video file here": "Bir ses ya da video dosyasını buraya bırak",
+    "Speech engine": "Konuşma motoru",
+    "{model} (English)": "{model} (İngilizce)",
+    "Recommended": "Önerilen",
+    "The model this computer runs best.": "Bu bilgisayarın en iyi çalıştırdığı model.",
+    "Cleanup can be set up on this computer later, under Models in Settings.":
+        "Temizleme daha sonra Ayarlar'daki Modeller sayfasından bu bilgisayarda kurulabilir.",
+    "Downloaded": "İndirildi",
+    "Download {size}": "İndirme: {size}",
+    "needs about {size} of memory": "yaklaşık {size} bellek ister",
+    "The memory figure is an estimate.": "Bellek miktarı bir tahmindir.",
+    "Downloading the speech engine…": "Konuşma motoru indiriliyor…",
+    "Downloading the model…": "Model indiriliyor…",
+    "Cleanup still sends the text to {service}.": "Temizleme metni yine de {service} hizmetine gönderir.",
+    "Nothing leaves this computer.": "Hiçbir şey bu bilgisayardan çıkmaz.",
+    "Speech model": "Konuşma modeli",
+    "Today {time}": "Bugün {time}",
+    "Yesterday {time}": "Dün {time}",
+    "More about {topic}": "{topic} hakkında daha fazla bilgi",
+    "More information": "Daha fazla bilgi",
+    "Clean up with {service}": "{service} ile temizle",
+    "Please wait": "Lütfen bekleyin",
+    "to stop and paste": "durdurup yapıştırmak için",
+    "to stop and copy": "durdurup kopyalamak için",
+    "Picks a profile by the program in front.": "Profili öndeki programa göre seçer.",
+    "Next dictation uses: {profile}": "Sonraki dikte bunu kullanır: {profile}",
+    "Profile for the next dictation: {profile}": "Sonraki diktenin profili: {profile}",
+    "Edit profiles…": "Profilleri düzenle…",
+    "New": "Yeni",
 }

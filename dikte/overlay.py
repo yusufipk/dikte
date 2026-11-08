@@ -10,6 +10,7 @@ from PyQt6.QtWidgets import QWidget, QApplication
 
 from . import mac_window
 from . import theme
+from .i18n import t
 
 BARS = 22
 HEIGHT = 48
@@ -262,11 +263,33 @@ class Overlay(QWidget):
         it is the ribbon that has to say otherwise.
         """
         self.paused = bool(paused)
+        self._say_state()
         self.update()
 
     # ---- internals -----------------------------------------------------
 
+    def _say_state(self):
+        """The indicator's state in words, for a screen reader: its name is
+        the state, its description the message. Set on a transition only,
+        never per frame or per tick of the clock. PyQt6 wraps none of Qt's
+        accessibility event classes, so the announcement is the name-change
+        event Qt raises itself whenever the name changes."""
+        names = {"recording": t("Recording"), "asking": t("Recording a command"),
+                 "meeting": t("Recording a meeting"), "busy": t("Working"),
+                 "done": t("Done"), "warning": t("Warning"), "error": t("Failed")}
+        name = names.get(self.state, "")
+        if self.paused and self.state in LIVE:
+            name = t("Paused")
+        description = self.message or self.note
+        if name and description and self.state not in LIVE:
+            name = f"{name}. {description}"
+        if self.accessibleDescription() != description:
+            self.setAccessibleDescription(description)
+        if name and self.accessibleName() != name:
+            self.setAccessibleName(name)
+
     def _appear(self):
+        self._say_state()
         self._resize_to_content()
         self._reposition()
         if not self.isVisible():
@@ -451,7 +474,17 @@ class Overlay(QWidget):
             painter.setBrush(glow)
             painter.drawEllipse(QPointF(cx, cy), 13 * pulse, 13 * pulse)
             painter.setBrush(accent)
-            painter.drawEllipse(QPointF(cx, cy), 5.5, 5.5)
+            if self.state == "asking":
+                # A sparkle rather than the dot, so the assistant reads apart
+                # from a dictation by its shape as well as its colour.
+                star = QPainterPath(QPointF(cx, cy - 8))
+                star.quadTo(cx + 1.1, cy - 1.1, cx + 8, cy)
+                star.quadTo(cx + 1.1, cy + 1.1, cx, cy + 8)
+                star.quadTo(cx - 1.1, cy + 1.1, cx - 8, cy)
+                star.quadTo(cx - 1.1, cy - 1.1, cx, cy - 8)
+                painter.drawPath(star)
+            else:
+                painter.drawEllipse(QPointF(cx, cy), 5.5, 5.5)
         elif self.state == "busy":
             painter.setBrush(Qt.BrushStyle.NoBrush)
             pen = QPen(QColor(accent), 2.4)
@@ -468,20 +501,22 @@ class Overlay(QWidget):
             painter.drawPolyline(
                 QPointF(cx - 7, cy), QPointF(cx - 2, cy + 5.5), QPointF(cx + 7.5, cy - 6)
             )
-        elif self.state == "warning":
-            pen = QPen(accent, 2.6)
-            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-            painter.setPen(pen)
-            painter.drawLine(QPointF(cx, cy - 7), QPointF(cx, cy + 1.5))
-            painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(accent)
-            painter.drawEllipse(QPointF(cx, cy + 6), 1.5, 1.5)
-        else:  # error
-            pen = QPen(accent, 2.4)
-            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-            painter.setPen(pen)
-            painter.drawLine(QPointF(cx - 6, cy - 6), QPointF(cx + 6, cy + 6))
-            painter.drawLine(QPointF(cx + 6, cy - 6), QPointF(cx - 6, cy + 6))
+        else:
+            # A warning or an error: the app's own glyph in a tinted circle,
+            # the badge the same notice wears inside the windows.
+            self._draw_badge(painter, cx, cy, "warning" if self.state == "warning" else "failed",
+                             QColor(accent))
+
+    def _draw_badge(self, painter, cx, cy, name, tone, size=28):
+        from . import widgets
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(widgets.mix(QColor(self.colors["base"]).name(), tone.name(), 0.22)))
+        painter.drawEllipse(QPointF(cx, cy), size / 2, size / 2)
+        icon = round(size * 0.55)
+        ratio = self.devicePixelRatioF() or 1.0
+        pixmap = widgets.glyph_pixmap(name, tone.name(), icon, max(2.0, ratio))
+        painter.drawPixmap(QRectF(cx - icon / 2, cy - icon / 2, icon, icon), pixmap,
+                           QRectF(pixmap.rect()))
 
     def _bars(self):
         """(x of the first bar, bar width, distance between two bars)."""
@@ -565,7 +600,9 @@ class Overlay(QWidget):
 
     def _draw_message(self, painter):
         painter.setFont(self._label_font())
-        painter.setPen({"error": self.colors["err"], "warning": self.colors["warn"]}.get(self.state, self.colors["text"]))
+        # The words in the text colour, readable on any backdrop; the icon on
+        # the left carries the red or the amber.
+        painter.setPen(self.colors["text"])
         # Leave the cross its corner rather than running the text under it.
         box = QRectF(46, 0, self.width() - 60 - (18 if self._can_dismiss else 0),
                      HEIGHT)

@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (QDialog, QHBoxLayout, QLabel, QPlainTextEdit,
 from . import paste
 from . import selection
 from . import theme
+from . import widgets
 from .i18n import t
 
 # How much of the selection the tooltip shows. The whole of it went to the
@@ -109,33 +110,55 @@ class AnswerWindow(QDialog):
         # somewhere by then: shown without the focus, an Enter meant for
         # that window cannot press Apply or Copy here.
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
-        self.resize(520, 360)
+        self.resize(560, 440 if can_apply and selected else 360)
 
         layout = QVBoxLayout(self)
-        self.instruction = QLabel(t("You said: {text}", text=one_line(instruction)))
+        layout.setSpacing(8)
+        # One muted line of context: what was said, and what it was said
+        # about. The full instruction and selection are in the tooltips.
+        context = QHBoxLayout()
+        context.setSpacing(6)
+        self.instruction = QLabel("“" + one_line(instruction, 70) + "”")
         # Plain text, always: a transcript or a selection that happens to look
         # like markup must not be rendered as such.
         self.instruction.setTextFormat(Qt.TextFormat.PlainText)
-        self.instruction.setWordWrap(True)
+        self.instruction.setObjectName("muted")
         self.instruction.setToolTip(_tip(instruction))
-        layout.addWidget(self.instruction)
-
+        context.addWidget(self.instruction, 1)
         # Which text went along, at a glance: a selection left over from
         # earlier is easier to spot here than in a tooltip.
-        self.selection = QLabel(t("About the selection ({count} characters): {preview}",
-                                  count=len(selected), preview=one_line(selected, 60)))
+        self.selection = QLabel(t("{count} characters selected", count=len(selected)))
         self.selection.setTextFormat(Qt.TextFormat.PlainText)
-        self.selection.setWordWrap(True)
+        self.selection.setObjectName("muted")
         preview = selected[:PREVIEW_CHARS] + ("…" if len(selected) > PREVIEW_CHARS else "")
         self.selection.setToolTip(_tip(preview))
         if note:
             self.selection.setText(note)
             self.selection.setToolTip("")
         self.selection.setVisible(bool(selected or note))
-        layout.addWidget(self.selection)
+        context.addWidget(self.selection, 0)
+        layout.addLayout(context)
+
+        # The selection itself, to compare a rewrite against: open for an
+        # edit, folded for an answer about it.
+        self.original = QPlainTextEdit()
+        # Read only, and drawn that way: the editable box is the rewrite.
+        self.original.setObjectName("original")
+        self.original.setReadOnly(True)
+        self.original.setPlainText(selected)
+        widgets.wrap_text(self.original)
+        self.original.setAccessibleName(t("Original"))
+        lines = self.original.fontMetrics().lineSpacing()
+        self.original.setMinimumHeight(lines * 3 + 18)
+        self.original.setMaximumHeight(lines * 6 + 18)
+        self.original_pane = widgets.Disclosure(t("Original"), self.original,
+                                                expanded=bool(can_apply))
+        self.original_pane.setVisible(bool(selected) and not note)
+        layout.addWidget(self.original_pane)
 
         self.answer = QPlainTextEdit()
         self.answer.setPlainText(answer)
+        widgets.wrap_text(self.answer)
         # An edit can be touched up before it goes back; an answer is read.
         self.answer.setReadOnly(not can_apply)
         layout.addWidget(self.answer, 1)
@@ -150,7 +173,8 @@ class AnswerWindow(QDialog):
 
         row = QHBoxLayout()
         row.addStretch(1)
-        self.apply_button = QPushButton(t("Apply"))
+        self.apply_button = QPushButton(t("Replace selection"))
+        self.apply_button.setObjectName("primary")
         self.apply_button.setToolTip(t(
             "Replaces the selected text in the window it came from. "
             "Nothing is pasted until you press this."))
@@ -158,8 +182,12 @@ class AnswerWindow(QDialog):
         self.apply_button.setVisible(bool(can_apply and apply_fn))
         self.copy_button = QPushButton(t("Copy"))
         self.copy_button.clicked.connect(self.copy)
-        self.cancel_button = QPushButton(t("Cancel"))
-        self.cancel_button.setToolTip(t("Closes this and leaves the original text alone."))
+        # Cancel where there is an edit to throw away; a plain reply has
+        # nothing to cancel, only a window to close.
+        editable = bool(can_apply and apply_fn)
+        self.cancel_button = QPushButton(t("Cancel") if editable else t("Close"))
+        if editable:
+            self.cancel_button.setToolTip(t("Closes this and leaves the original text alone."))
         self.cancel_button.clicked.connect(self.reject)
         for button in (self.apply_button, self.copy_button, self.cancel_button):
             # No default button, and none that Enter presses for having the

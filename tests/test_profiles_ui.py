@@ -10,6 +10,7 @@ from dikte import dictionary
 from dikte import frontapp
 from dikte import profiles_ui
 from dikte import settings_ui
+from dikte import widgets
 from tests.support import DikteTest
 
 _app = QApplication.instance() or QApplication([])
@@ -28,7 +29,7 @@ class Dictionary(DikteTest):
     def test_the_old_text_arrives_as_records(self):
         editor = self.editor(self.config(transcribe_prompt="Paraşüt, OpenFrame"))
         self.assertEqual(self.terms(editor), ["Paraşüt", "OpenFrame"])
-        self.assertEqual(editor.table.rowCount(), 2)
+        self.assertEqual(editor.list.count(), 2)
 
     def test_add_edit_delete(self):
         editor = self.editor(self.config())
@@ -124,7 +125,7 @@ class Profiles(DikteTest):
         box = editor.style_boxes["formality"]
         box.setCurrentIndex(box.findData("formal"))
         editor.target.setCurrentIndex(editor.target.findData("de"))
-        editor.override.setCurrentIndex(editor.override.findData("Email"))
+        editor.use_current()
         editor.store(conf)
         stored = conf["profiles"][0]
         self.assertEqual(stored["name"], "Email")
@@ -184,7 +185,7 @@ class Profiles(DikteTest):
         must show the same profile a dictation would use."""
         conf = self.config(profiles=[{"name": "Chat"}], profile_override="chat")
         editor = self.editor(conf)
-        self.assertEqual(editor.override.currentData(), "Chat")
+        self.assertEqual(editor.active_profile()["name"], "Chat")
 
     def test_switches_round_trip(self):
         conf = self.config(profile_style=False, profile_by_app=False,
@@ -326,7 +327,8 @@ class CorrectionEntries(DikteTest):
         editor.load(self.config())
         editor._entries.append(dictionary.entry("klod kod", "Claude Code", dictionary.AUTO))
         editor._show()
-        self.assertEqual(editor.table.item(0, 2).text(), "Auto, heard as: klod kod")
+        self.assertEqual(editor.list.item(0).data(widgets.META_ROLE),
+                         widgets.meta_line("Auto", "klod kod \u2192 Claude Code"))
         editor.edit_entry(0, "klod kod", "Claude-Code")
         self.assertEqual(editor.entries()[0]["spelling"], "Claude-Code")
         editor.delete_entries([0])
@@ -370,3 +372,124 @@ class NoWallsOfText(DikteTest):
         with mock.patch.object(frontapp, "backend", return_value=frontapp._macos):
             self.assertIn("not available on macOS", profiles_ui.ProfilesEditor.sites_tooltip())
             self.assertIn("not available on macOS", profiles_ui.ProfilesEditor.sites_text())
+
+
+class ActiveProfile(DikteTest):
+    """Editing a profile and using it are two things, chosen in one place."""
+
+    def editor(self, conf):
+        editor = profiles_ui.ProfilesEditor()
+        self.addCleanup(editor.deleteLater)
+        editor.load(conf)
+        return editor
+
+    def test_the_profile_in_use_carries_the_check(self):
+        editor = self.editor(self.config(profiles=[{"name": "Mail"}, {"name": "Chat"}],
+                                         profile_override="chat"))
+        checks = [bool(editor.list.item(row).data(widgets.CHECK_ROLE))
+                  for row in range(editor.list.count())]
+        self.assertEqual(checks, [False, False, True])
+        editor.select(2)
+        self.assertEqual(editor.use_button.text(), "In use")
+        self.assertFalse(editor.use_button.isEnabled())
+
+    def test_use_this_profile_moves_the_check_and_is_stored(self):
+        conf = self.config(profiles=[{"name": "Mail"}])
+        editor = self.editor(conf)
+        editor.select(1)
+        self.assertTrue(editor.use_button.isEnabled())
+        changed = []
+        editor.changed.connect(lambda: changed.append(True))
+        editor.use_button.click()
+        self.assertTrue(changed)
+        self.assertTrue(editor.list.item(1).data(widgets.CHECK_ROLE))
+        self.assertFalse(editor.list.item(0).data(widgets.CHECK_ROLE))
+        editor.store(conf)
+        self.assertEqual(conf["profile_override"], "Mail")
+        # Back to Default: the override is cleared.
+        editor.select(0)
+        editor.use_current()
+        editor.store(conf)
+        self.assertEqual(conf["profile_override"], "")
+
+    def test_badges_show_each_profiles_initial(self):
+        editor = self.editor(self.config(profiles=[{"name": "Mail"}, {"name": "chat"}]))
+        letters = [editor.list.item(row).data(widgets.LETTER_ROLE)
+                   for row in range(editor.list.count())]
+        self.assertEqual(letters, ["Default", "Mail", "chat"])
+
+    def test_options_open_when_a_switch_greys_out_the_profile(self):
+        editor = self.editor(self.config(
+            profiles=[{"name": "Mail", "translate_to": "de"}, {"name": "Chat"}],
+            translation_enabled=False))
+        self.assertEqual(editor.everyone.button.text(), "Profile options")
+        editor.select(2)
+        self.assertFalse(editor.everyone.expanded())
+        editor.select(1)
+        self.assertTrue(editor.everyone.expanded())
+
+
+class ProfilesLayout(DikteTest):
+    def editor(self, conf):
+        editor = profiles_ui.ProfilesEditor()
+        self.addCleanup(editor.deleteLater)
+        editor.load(conf)
+        return editor
+
+    def test_unavailable_matching_is_said_once_and_folded(self):
+        with mock.patch.object(frontapp, "backend", return_value=frontapp._unknown):
+            editor = self.editor(self.config(profiles=[{"name": "Mail", "apps": ["thunderbird"]}],
+                                             profile_by_app=True))
+            editor.select(1)
+            # Nothing can pick by program here, so Default is simply in use.
+            self.assertFalse(editor._automatic())
+            self.assertTrue(editor.by_app.isHidden())
+            self.assertFalse(editor.rules_disclosure.expanded())
+            self.assertEqual(editor.apps.text(), "thunderbird")
+            notices = [n for n in editor.findChildren(widgets.Notice) if not n.isHidden()]
+            self.assertEqual(len(notices), 1)
+            conf = self.config()
+            editor.store(conf)
+            # Kept for a desktop that can match.
+            self.assertTrue(conf["profile_by_app"])
+
+    def test_writing_comes_first_and_default_has_no_matching(self):
+        with mock.patch.object(frontapp, "backend", return_value=frontapp._x11), \
+                mock.patch.object(frontapp.shutil, "which", return_value="/usr/bin/xprop"):
+            editor = self.editor(self.config(profiles=[{"name": "Mail"}], profile_by_app=True))
+            self.assertTrue(editor._automatic())
+            editor.select(0)
+            self.assertTrue(editor.matching.isHidden())
+            editor.select(1)
+            self.assertEqual(editor.editor_title.text(), "Edit Mail")
+            column = editor.editor.layout()
+            self.assertLess(column.indexOf(editor.writing), column.indexOf(editor.matching))
+            self.assertTrue(editor.rules_disclosure.button.isHidden())
+
+    def test_side_by_side_the_list_lines_up_with_the_editor(self):
+        editor = self.editor(self.config(profiles=[{"name": "Mail"}]))
+        editor.resize(1100, 700)
+        editor.show()
+        self.addCleanup(editor.hide)
+        for _ in range(5):
+            _app.processEvents()
+        self.assertTrue(editor.split.wide)
+        # The options sit under the list, not above the list and the editor.
+        self.assertEqual(editor.side_column.indexOf(editor.everyone),
+                         editor.side_column.indexOf(editor.list) + 1)
+
+        def top(widget):
+            return widget.mapTo(editor, widget.rect().topLeft()).y()
+
+        def bottom(widget):
+            return top(widget) + widget.height()
+        self.assertEqual(top(editor.list_header), top(editor.title_bar))
+        self.assertEqual(top(editor.list), top(editor.writing.frame))
+        self.assertEqual(bottom(editor.list), bottom(editor.writing.frame))
+
+        editor.resize(560, 700)
+        for _ in range(5):
+            _app.processEvents()
+        self.assertFalse(editor.split.wide)
+        self.assertEqual(editor.layout().indexOf(editor.everyone),
+                         editor.layout().indexOf(editor.detection) + 1)

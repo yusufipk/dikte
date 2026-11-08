@@ -66,6 +66,9 @@ class Pipeline(QObject):
     # A question about selected text: a dict with the instruction, the reply,
     # whether it is an edit, and what was selected. Never pasted from here.
     answered = pyqtSignal(object)
+    # A spoken command as it goes to the assistant, so a window can show
+    # what was asked while the answer is still on its way.
+    heard = pyqtSignal(str)
 
     def __init__(self, conf, parent=None):
         super().__init__(parent)
@@ -305,6 +308,8 @@ class Pipeline(QObject):
             kind = ""
             if ask:
                 question = text
+                if assist is None:
+                    self.heard.emit(question)
                 self.stage.emit(t("Asking {name}…", name=i18n.name(
                     assistant.display_name(conf), "dative")))
                 if assist is None:

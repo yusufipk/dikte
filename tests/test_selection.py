@@ -752,7 +752,7 @@ class OverlayWrap(DikteTest):
         for language in ("en", "tr"):
             i18n.set_language(language)
             for text in ("The clipboard was left alone, so no selection was read.",
-                         "This agent does not read the selection.",
+                         "This assistant does not read the selection.",
                          "Nothing selected"):
                 with self.subTest(language=language, text=text):
                     _, indicator = self.indicator(i18n.t(text))
@@ -1365,19 +1365,19 @@ class Window(DikteTest):
         window, _ = self.make(selected="", can_apply=False)
         self.assertFalse(window.selection.isVisibleTo(window))
 
-    def test_the_selection_line_shows_how_it_begins(self):
-        window, _ = self.make(selected="first line\n" + "word " * 40)
-        text = window.selection.text()
-        self.assertTrue(text.startswith(
-            "About the selection (211 characters): first line word"))
-        self.assertNotIn("\n", text)
-        self.assertTrue(text.endswith("…"))
+    def test_the_selection_line_says_how_much_went_along(self):
+        selected = "first line\n" + "word " * 40
+        window, _ = self.make(selected=selected)
+        self.assertEqual(window.selection.text(), "211 characters selected")
+        # The text itself is in the Original pane, whole, to compare against.
+        self.assertEqual(window.original.toPlainText(), selected)
+        self.assertTrue(window.original_pane.isVisibleTo(window))
 
     def test_the_selection_line_in_turkish(self):
         from dikte import i18n
         i18n.set_language("tr")
         window, _ = self.make(selected="kısa")
-        self.assertEqual(window.selection.text(), "Seçim hakkında (4 karakter): kısa")
+        self.assertEqual(window.selection.text(), "4 karakter seçili")
 
 
 class Chain(DikteTest):
@@ -1838,8 +1838,8 @@ class App(DikteTest):
 
     def test_an_agent_that_reads_no_selection_says_so_while_recording(self):
         from dikte import i18n
-        for language, expected in (("en", "This agent does not read the selection."),
-                                   ("tr", "Bu ajan seçili metni okumaz.")):
+        for language, expected in (("en", "This assistant does not read the selection."),
+                                   ("tr", "Bu asistan seçili metni okumaz.")):
             with self.subTest(language=language):
                 target = self.controller(True)
                 target.conf["assistant_provider"] = "codex"
@@ -1876,7 +1876,7 @@ class App(DikteTest):
         self.addCleanup(window.deleteLater)
         self.assertTrue(window.selection.isVisibleTo(window))
         self.assertEqual(window.selection.text(),
-                         "This agent does not read the selection.")
+                         "This assistant does not read the selection.")
 
     def answer(self, kind, ready=True, selected="Some text."):
         target = self.controller(True)
@@ -1934,7 +1934,9 @@ class App(DikteTest):
         release = threading.Event()
 
         def slow(text):
-            release.wait(5)
+            # Long enough that a slow runner cannot finish it before the
+            # window is deleted; the test sets it free itself.
+            release.wait(60)
             raise paste.PasteError("late")
 
         target = self.controller(True)

@@ -16,7 +16,8 @@ from unittest import mock
 
 from PyQt6.QtCore import QPoint, QPointF, QRect, Qt
 from PyQt6.QtGui import QHideEvent, QShowEvent, QWheelEvent
-from PyQt6.QtWidgets import QApplication, QComboBox, QMessageBox, QSpinBox, QWidget
+from PyQt6.QtWidgets import (QApplication, QComboBox, QLineEdit, QMessageBox, QScrollArea,
+                             QSpinBox, QWidget)
 
 from dikte import audio
 from dikte import cleanup
@@ -28,9 +29,11 @@ from dikte import hub
 from dikte import ipc
 from dikte import overlay as overlay_module
 from dikte import paste
+from dikte import profiles_ui
 from dikte import settings_ui
 from dikte import theme
 from dikte import update
+from dikte import widgets
 from dikte.i18n import t
 from tests.support import DikteTest, only_these_tools
 
@@ -242,7 +245,7 @@ class Settings(DikteTest):
     def test_settings_keeps_configuration_and_exposes_separate_task_pages(self):
         window = self.window(cfg.Config())
         tabs = window.findChildren(settings_ui.QTabWidget)[0]
-        self.assertEqual(tabs.count(), 8)
+        self.assertEqual(tabs.count(), 7)
         self.assertEqual(set(window.task_pages), {"file", "minutes", "history"})
         self.assertEqual(window.windowTitle(), "Dikte Settings")
 
@@ -437,8 +440,7 @@ class Settings(DikteTest):
         window.profiles_editor.select(1)
         self.assertEqual(window.dirty_label.text(), "")
         tabs.setCurrentIndex(tabs.indexOf(tabs.currentWidget()) - 1)
-        inner = window.dictionary_editor.parentWidget().parentWidget()
-        inner.setCurrentWidget(window.dictionary_editor)
+        window.show_page("editing")
         window.dictionary_editor.search.setText("kube")
         self.assertEqual(window.dirty_label.text(), "")
         # An edit still is one, and taking it back again is not.
@@ -579,7 +581,8 @@ class Settings(DikteTest):
                 with self.subTest(role=role, preset=name):
                     window._select_data(widgets["preset"], name)
                     combo = window._preset_model(role)
-                    self.assertEqual("server's default" in combo.lineEdit().placeholderText(), name == "other")
+                    self.assertEqual(combo.lineEdit().placeholderText() == "Server default", name == "other")
+                    self.assertEqual("server's default" in combo.toolTip(), name == "other")
                     combo.setCurrentText("   ")
                     window._save()
                     setting = cfg.model_setting(role, name)
@@ -710,12 +713,14 @@ class Settings(DikteTest):
         self.assertEqual(set(window._shortcut_rows), set(hotkey.SHORTCUTS))
 
     def shortcut_tab_text(self, window):
-        """Everything the shortcut tab says, as one string."""
+        """Everything the shortcut tab says, as one string. The explanations
+        are one short line on screen and the rest in a tooltip (an (i)
+        button's), so both."""
         return "\n".join(
-            widget.text() for widget in
+            widget.text() + "\n" + widget.toolTip() for widget in
             window.findChildren(settings_ui.QLabel)
             + window.findChildren(settings_ui.QLineEdit)
-            + window.findChildren(settings_ui.QPushButton)
+            + window.findChildren(settings_ui.QAbstractButton)
         )
 
     def test_the_shortcut_tab_talks_about_this_session_and_no_other(self):
@@ -835,6 +840,22 @@ class Settings(DikteTest):
         self.assertTrue(button.isEnabled())
         self.assertEqual(window._testers["openai"][1].text(), "")
 
+    def test_the_preset_test_button_asks_the_preset_shown(self):
+        window = self.window(self.config(cleanup_provider="custom",
+                                         cleanup_custom_preset="deepseek"))
+        rows = window._preset_widgets["cleanup"]
+        rows["key"].setText("ds-typed")
+        with mock.patch.object(settings_ui, "key_check", return_value="fine") as check, \
+                mock.patch.object(settings_ui.threading, "Thread") as thread:
+            window._test_preset("cleanup")
+            thread.call_args.kwargs["target"]()
+        self.assertEqual(check.call_args.args[:2], ("deepseek", "ds-typed"))
+        window._on_test_done("preset:cleanup", True, "fine")
+        self.assertEqual(window._testers["preset:cleanup"][1].text(), "✓ fine")
+        # Another preset clears an answer that was about the previous one.
+        window._select_data(rows["preset"], "opencode")
+        self.assertEqual(window._testers["preset:cleanup"][1].text(), "")
+
     def test_a_key_lands_in_the_field_of_its_own_preset(self):
         window = self.window(self.config(transcribe_provider="groq", groq_api_key="gsk-mine"))
         self.assertEqual(window._preset_widgets["transcribe"]["key"].text(), "gsk-mine")
@@ -863,7 +884,7 @@ class Settings(DikteTest):
         self.assertFalse(window.history_retry.isEnabled())
         window.history.item(0).setSelected(True)
         self.assertTrue(window.history_retry.isEnabled())
-        window.history_retry.click()
+        window.history_retry.trigger()
         self.assertEqual(asked, [failed])
         self.assertFalse(window.history_retry.isEnabled())
 
@@ -1013,8 +1034,10 @@ class MacSettings(Settings):
 
     def test_there_is_no_install_button_where_nothing_is_installed(self):
         window = self.window(cfg.Config())
+        # The feature pages' links to the Shortcuts page are not installers.
         labels = [button.text() for button in
-                  window.findChildren(settings_ui.QPushButton)]
+                  window.findChildren(settings_ui.QPushButton)
+                  if button.objectName() != "link"]
         self.assertFalse([text for text in labels if "shortcut" in text.lower()])
 
     def test_the_listener_is_not_offered_as_a_choice(self):
@@ -1035,7 +1058,9 @@ class MacSettings(Settings):
         window = self.window(cfg.Config())
         offered = [window.paste_shortcut.itemText(index)
                    for index in range(window.paste_shortcut.count())]
-        self.assertEqual(offered, paste.MACOS.shortcuts)
+        # Shown the way the keyboard says them; the same keys underneath.
+        self.assertEqual(offered, ["Cmd+V", "Cmd+Shift+V", "Cmd+Alt+Shift+V"])
+        self.assertEqual([key.lower() for key in offered], paste.MACOS.shortcuts)
 
 
 class KdeSettings(Settings):
@@ -1693,7 +1718,8 @@ class MeetingSources(DikteTest):
             window = settings_ui.SettingsWindow(cfg.Config())
         self.addCleanup(window.deleteLater)
         self.addCleanup(window.close)
-        return " ".join(label.text()
+        # One line on screen, the rest in the tooltip of its (i).
+        return " ".join(label.text() + " " + label.toolTip()
                         for label in window.findChildren(settings_ui.QLabel))
 
     def test_a_system_that_cannot_record_the_far_side_says_so(self):
@@ -3030,3 +3056,174 @@ class LocalModels(DikteTest):
                     # isHidden rather than isVisible: the window itself is never
                     # shown in a test, so nothing in it is ever visible.
                     self.assertEqual(other.isHidden(), name != chosen)
+
+
+class Round6(Settings):
+    """Layout that holds when a part of a page changes, and controls a
+    keyboard can reach."""
+
+    def test_a_status_line_that_shows_itself_stays_in_its_form(self):
+        """A spanning row that started out empty is not pinned hidden: once
+        it has something to say it is laid out in its row, not drawn loose
+        over the card's border."""
+        window = self.window(self.config(assistant_provider="claude"))
+        form = window.assistant_how_form
+        row, _role = form.getWidgetPosition(window.assistant_found)
+        self.assertTrue(window.assistant_found.text())
+        self.assertTrue(form.isRowVisible(row))
+        window._select_data(window.assistant_provider, "openrouter")
+        self.assertFalse(form.isRowVisible(row))
+        # A chat provider's "runs no commands here" is its tooltip, not a line.
+        self.assertIn("no local command execution", window.assistant_provider.toolTip())
+
+    def test_one_label_column_per_page(self):
+        window = self.window(self.config())
+        page = window.tabs.widget(window.page_index["general"]).widget()
+        widths = {label.width() if label.isVisible() else label.minimumWidth()
+                  for form in page.findChildren(settings_ui.QFormLayout)
+                  for row in range(form.rowCount())
+                  for item in [form.itemAt(row, settings_ui.QFormLayout.ItemRole.LabelRole)]
+                  if item is not None and isinstance(item.widget(), settings_ui.QLabel)
+                  for label in [item.widget()]}
+        self.assertEqual(len(widths), 1)
+
+    def test_numbers_and_short_choices_share_one_width(self):
+        window = self.window(self.config())
+        self.assertEqual(window.max_seconds.width(), widgets.SELECT_WIDTH)
+        self.assertEqual(window.max_seconds.width(), window.theme_choice.width())
+
+    def test_the_assistant_page_links_to_shortcuts_once(self):
+        window = self.window(self.config())
+        page = window.tabs.widget(window.page_index["assistant"])
+        links = [button for button in page.findChildren(settings_ui.QPushButton)
+                 if button.text() == "Change in Shortcuts"]
+        self.assertEqual(len(links), 1)
+
+    def test_the_info_button_is_reachable_and_opens_on_enter(self):
+        window = self.window(self.config())
+        info = window.prompt_info
+        self.assertIsInstance(info, settings_ui.QToolButton)
+        self.assertEqual(info.focusPolicy(), Qt.FocusPolicy.StrongFocus)
+        self.assertEqual(info.accessibleName(), "More about Cleanup instructions")
+        self.assertIn("cleanup model", info.accessibleDescription())
+        with mock.patch.object(info, "reveal") as reveal:
+            from PyQt6.QtGui import QKeyEvent
+            info.keyPressEvent(QKeyEvent(QKeyEvent.Type.KeyPress, Qt.Key.Key_Return,
+                                         Qt.KeyboardModifier.NoModifier))
+            reveal.assert_called_once()
+
+    def test_a_disclosure_has_its_parents_lay_out_again(self):
+        window = self.window(self.config())
+        disclosure = next(d for d in window.findChildren(widgets.Disclosure)
+                          if d.button.text() == "Advanced")
+        with mock.patch.object(widgets, "relayout") as relayout:
+            disclosure.set_expanded(not disclosure.expanded())
+        relayout.assert_called_once_with(disclosure)
+
+    def test_a_failed_entry_offers_its_fixes_and_no_copy(self):
+        cfg.append_history({"ts": "2026-11-08 10:00:00", "failed": True,
+                            "error": "Timed out", "text": "", "raw": ""})
+        window = self.window(self.config())
+        window._load_history()
+        window.history.setCurrentRow(0)
+        self.assertTrue(window.history_record.isVisible())
+        self.assertTrue(window.history_check.isVisible())
+        self.assertFalse(window.history_copy.isVisible())
+        self.assertFalse(window.history_open.isVisible())
+        self.assertEqual(window.history.item(0).data(widgets.KIND_ROLE), "failed")
+
+    def test_the_live_meeting_row_comes_in_picked(self):
+        window = self.window(self.config())
+        panel = QWidget()
+        window.set_live_panel(panel)
+        window.set_live_meeting("Recording now", "00:05")
+        self.assertIs(window.minutes_reader.currentWidget(), panel)
+        window.set_live_meeting("")
+        self.assertIs(window.minutes_reader.currentWidget(), window.minutes_view)
+
+    def test_dictionary_rows_are_words_with_their_spelling(self):
+        from dikte import dictionary
+        editor = profiles_ui.DictionaryEditor()
+        self.addCleanup(editor.deleteLater)
+        editor.load(self.config())
+        editor._entries.append(dictionary.entry("teo", "Teo", dictionary.MANUAL))
+        editor._show()
+        item = editor.list.item(0)
+        self.assertEqual(item.data(widgets.META_ROLE), "teo → Teo")
+        self.assertIsNone(item.data(widgets.LETTER_ROLE))
+        delegate = editor.list.itemDelegate()
+        self.assertFalse(delegate.badges)
+        self.assertLessEqual(editor.list.sizeHintForRow(0), 44)
+        for index in range(12):
+            editor._entries.append(dictionary.entry(f"w{index}", "", dictionary.MANUAL))
+        editor._show()
+        editor._fit()
+        five = editor.list.height()
+        editor.set_max_rows(12)
+        self.assertGreater(editor.list.height(), five)
+
+    def test_the_entry_dialog_puts_cancel_before_save(self):
+        dialog = profiles_ui.EntryDialog(None, "teo", "Teo")
+        self.addCleanup(dialog.deleteLater)
+        row = dialog.button_row
+        buttons = [row.itemAt(i).widget() for i in range(row.count())
+                   if row.itemAt(i).widget() is not None]
+        self.assertEqual(buttons[-2:], [dialog.cancel_button, dialog.save_button])
+        self.assertEqual(dialog.save_button.objectName(), "primary")
+
+    def test_a_long_file_name_keeps_its_extension(self):
+        name = widgets.FileName("a-very-long-interview-recording-name-03.m4a")
+        self.addCleanup(name.deleteLater)
+        name.resize(120, 20)
+        name._render()
+        shown = settings_ui.QLabel.text(name)
+        self.assertTrue(shown.endswith(".m4a"))
+        self.assertIn("…", shown)
+        self.assertEqual(name.text(), "a-very-long-interview-recording-name-03.m4a")
+        self.assertEqual(name.toolTip(), name.text())
+
+    def test_type_sizes_follow_the_body_font(self):
+        small, large = theme.stylesheet("nord", 10), theme.stylesheet("nord", 14)
+        self.assertIn("QLabel#section { font-weight: 600; font-size: 12pt; }", small)
+        self.assertIn("QLabel#section { font-weight: 600; font-size: 16pt; }", large)
+        self.assertIn("QLabel#meta { color", large)
+        self.assertNotIn("{+", small)
+
+
+class ColumnsGrid(DikteTest):
+    """Sections paired in rows: side by side they share a top and a height."""
+
+    def sections(self, *rows):
+        made = []
+        for title, rows_in in zip("ABCD", rows):
+            box, form = widgets.section(title)
+            for index in range(rows_in):
+                form.addRow(f"{title}{index}", QLineEdit())
+            made.append(box)
+        return made
+
+    def test_pairs_share_a_row_and_stack_in_the_given_order(self):
+        a, b, c, d = self.sections(6, 2, 1, 3)
+        area = QScrollArea()
+        area.setWidgetResizable(True)
+        self.addCleanup(area.deleteLater)
+        columns = widgets.Columns([(a, b), (c, d)], order=[a, c, b, d])
+        area.setWidget(columns)
+        area.resize(1200, 900)
+        area.show()
+        self.addCleanup(area.hide)
+        for _ in range(5):
+            QApplication.processEvents()
+        self.assertTrue(columns.wide)
+        for left, right in ((a, b), (c, d)):
+            self.assertEqual(left.y(), right.y())
+            self.assertEqual(left.frame.height(), right.frame.height())
+        # The shorter card keeps its rows at the top.
+        self.assertLess(b.form.geometry().bottom(), b.frame.height() - 30)
+        area.resize(500, 900)
+        for _ in range(5):
+            QApplication.processEvents()
+        self.assertFalse(columns.wide)
+        tops = [box.y() for box in (a, c, b, d)]
+        self.assertEqual(tops, sorted(tops))
+        self.assertEqual(len({box.x() for box in (a, b, c, d)}), 1)
