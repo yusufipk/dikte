@@ -26,8 +26,7 @@ ve o an yazdığın pencereye yapıştırılır. Linux'ta, macOS'ta ve
 
 - **Sesi yazıya çevirme kendi bilgisayarında**, varsayılan olarak; modeli
   ayarlar penceresi senin yerine indirir. Temizleme de orada çalışabilir.
-- **İstersen bulutta**, kendi anahtarınla OpenAI, Groq, OpenRouter, Google AI
-  Studio ve diğerleriyle. Temizleme, başkasını seçene kadar OpenRouter'ı kullanır.
+- **İstersen bulutta**, kendi anahtarınla OpenAI, OpenRouter veya Özel sunucu üzerinden hazır ağ geçidi ayarlarıyla OpenAI uyumlu herhangi bir sunucuda.
 - **Temiz sonuç.** Dolgu sözcükleri, yarıda kalan cümleler, eksik noktalama ve
   modelin yanlış duyduğu isimler düzeltilir:
 

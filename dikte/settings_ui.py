@@ -64,20 +64,11 @@ TRANSCRIBE_PROVIDERS = ([("This machine (whisper.cpp)", "local")]
 # whatever the provider offers today.
 TRANSCRIBE_MODELS = {
     "openai": ["gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1"],
-    "groq": ["whisper-large-v3-turbo", "whisper-large-v3"],
     "openrouter": [
         "openai/gpt-4o-transcribe", "openai/gpt-4o-mini-transcribe",
         "openai/whisper-1", "openai/whisper-large-v3",
         "openai/whisper-large-v3-turbo", "mistralai/voxtral-mini-transcribe",
         "deepgram/nova-3", "google/chirp-3",
-    ],
-    "requesty": [
-        "openai/gpt-4o-transcribe", "openai/gpt-4o-mini-transcribe",
-        "openai/whisper-1",
-    ],
-    "gemini": [
-        "gemini-3.5-flash-lite", "gemini-3.1-flash-lite", "gemini-3.5-flash",
-        "gemini-2.5-flash-lite",
     ],
     # Nothing to suggest for a server nobody else knows; Fetch asks it.
     "custom": [],
@@ -87,11 +78,6 @@ CLEANUP_MODELS = [
     "google/gemini-2.5-flash-lite", "anthropic/claude-haiku-4.5",
     "openai/gpt-5-mini", "meta-llama/llama-3.3-70b-instruct",
 ]
-GEMINI_MODELS = [
-    "gemini-3.5-flash-lite", "gemini-3.1-flash-lite",
-    "gemini-2.5-flash-lite", "gemini-3.5-flash", "gemini-2.5-flash",
-]
-DEEPSEEK_MODELS = ["deepseek-flash", "deepseek-v4-pro"]
 # agy's model ids carry the reasoning effort in their suffix, which is why one
 # model appears here at more than one level. The same list seeds two boxes:
 # cleanup, which wants the bottom rung, and the agent, which sometimes does not.
@@ -103,8 +89,7 @@ AGY_MODELS = [
 # model here takes a little longer and costs nothing, and the three CLIs the
 # agent can run on open a whole session to do the smaller job.
 CLEANUP_PROVIDERS = [
-    ("OpenRouter", "openrouter"), ("Google AI Studio", "gemini"),
-    ("DeepSeek", "deepseek"), ("OpenCode Go", "opencode"), ("Requesty", "requesty"),
+    ("OpenRouter", "openrouter"),
     ("Custom server", "custom"), ("This machine (llama.cpp)", "local"), ("Claude Code", "claude"),
     ("Codex", "codex"), ("Antigravity", "agy"),
 ]
@@ -119,8 +104,7 @@ MEETING_MODELS = [
 ]
 ASSISTANT_PROVIDERS = [
     ("Claude Code", "claude"), ("Codex", "codex"), ("Antigravity", "agy"),
-    ("OpenRouter", "openrouter"), ("OpenCode Go", "opencode"),
-    ("Requesty", "requesty"),
+    ("OpenRouter", "openrouter"), ("Custom server", "custom"),
 ]
 # Aliases resolve to the newest model of that name, so they age better than an
 # id does; a full id can be typed in when a particular one is wanted.
@@ -134,19 +118,6 @@ CODEX_MODELS = ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
 ASSISTANT_OR_MODELS = [
     "google/gemini-3.5-flash", "anthropic/claude-sonnet-5", "openai/gpt-5.4",
     "x-ai/grok-4.5", "google/gemini-3.1-pro-preview",
-]
-# A starting set of the models OpenCode Go serves over /chat/completions; the
-# Fetch button asks the endpoint itself for the full catalog of the day.
-OPENCODE_MODELS = [
-    "deepseek-v4-flash", "deepseek-v4-pro", "glm-5.3", "glm-5.2", "glm-5.1",
-    "kimi-k3", "kimi-k2.7-code", "kimi-k2.6", "longcat-2.0",
-    "mimo-v2.5", "mimo-v2.5-pro", "hy3",
-]
-# The same idea for Requesty, whose Fetch button puts its managed models (the
-# short names) ahead of the full vendor/model catalog.
-REQUESTY_MODELS = [
-    "google/gemini-3.5-flash-lite", "google/gemini-3.5-flash",
-    "openai/gpt-4o-mini", "gpt-5.4-mini", "deepseek-v4-flash",
 ]
 # What Claude Code may do without being able to ask. It cannot ask: there is no
 # window to answer in, so a mode that would have prompted denies instead.
@@ -1102,11 +1073,7 @@ class SettingsWindow(QDialog):
         return self._sources
 
     _models_loaded = pyqtSignal(list, str)
-    _gemini_models_loaded = pyqtSignal(list, str)
-    _deepseek_models_loaded = pyqtSignal(list, str)
-    _opencode_models_loaded = pyqtSignal(list, str)
-    _requesty_models_loaded = pyqtSignal(list, str)
-    _custom_models_loaded = pyqtSignal(list, str)
+    _preset_models_loaded = pyqtSignal(str, str, list, str)
     _transcribe_models_loaded = pyqtSignal(list, str)
     _codex_models_loaded = pyqtSignal(list)
     _agy_models_loaded = pyqtSignal(list)
@@ -1141,6 +1108,9 @@ class SettingsWindow(QDialog):
         # Each provider keeps its own transcription model, so switching the
         # provider back and forth never overwrites the other one's.
         self._models = dict.fromkeys(cfg.TRANSCRIBERS, "")
+        self._custom_values = dict(conf.data)
+        self._preset_shown = {}
+        self._preset_widgets = {}
         self._key_fields = {}
         self._testers = {}
         self._shown_provider = ""
@@ -1207,14 +1177,10 @@ class SettingsWindow(QDialog):
         layout.addWidget(buttons)
         self._size_to_screen(680, 640)
 
+        self._preset_models_loaded.connect(self._on_preset_models_loaded)
         self._models_loaded.connect(self._on_models_loaded)
-        self._gemini_models_loaded.connect(self._on_gemini_models_loaded)
-        self._deepseek_models_loaded.connect(self._on_deepseek_models_loaded)
         self._transcribe_models_loaded.connect(self._on_transcribe_models_loaded)
         self._codex_models_loaded.connect(self._on_codex_models_loaded)
-        self._opencode_models_loaded.connect(self._on_opencode_models_loaded)
-        self._requesty_models_loaded.connect(self._on_requesty_models_loaded)
-        self._custom_models_loaded.connect(self._on_custom_models_loaded)
         self._agy_models_loaded.connect(self._on_agy_models_loaded)
         self._hosted_models_loaded.connect(self._on_hosted_models_loaded)
         self._test_done.connect(self._on_test_done)
@@ -1309,6 +1275,11 @@ class SettingsWindow(QDialog):
         if provider in models:
             models[provider] = self.transcribe_model.currentText().strip()
         values.append(models)
+        custom = dict(self._custom_values)
+        for role, name in self._preset_shown.items():
+            if role != "transcribe" or provider == "custom":
+                custom[cfg.model_setting(role, name)] = self._preset_model(role).currentText().strip()
+        values.append(custom)
         values.extend((
             self.local_whisper.custom_binary,
             self.local_llm.custom_binary,
@@ -1589,6 +1560,130 @@ class SettingsWindow(QDialog):
     def _sync_follow_pointer(self):
         self.follow_pointer.setEnabled(not self.indicator_screen.currentData())
 
+    def _preset_panel(self, role):
+        box = QGroupBox(t("Custom server"))
+        form = QFormLayout(box)
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        preset = QComboBox()
+        for name, who in cfg.PRESETS.items():
+            if getattr(who, "transcription" if role == "transcribe" else "chat"):
+                preset.addItem(t(who.service), name)
+        key = QLineEdit()
+        key.setEchoMode(QLineEdit.EchoMode.Password)
+        url = QLineEdit()
+        url.setPlaceholderText("http://localhost:8000/v1")
+        form.addRow(t("Preset"), preset)
+        form.addRow(t("API key"), key)
+        form.addRow(t("Custom server address"), url)
+        widgets = {"preset": preset, "key": key, "url": url}
+        if role != "transcribe":
+            model = QComboBox()
+            model.setEditable(True)
+            fetch = QPushButton(t("Fetch model list"))
+            fetch.clicked.connect(lambda: self._load_preset_models(role))
+            form.addRow(t("Model"), self._row(model, fetch))
+            widgets.update(model=model, fetch=fetch)
+        self._preset_widgets[role] = widgets
+        preset.currentIndexChanged.connect(lambda: self._preset_changed(role))
+        key.editingFinished.connect(lambda: self._share_preset_key(role))
+        url.editingFinished.connect(lambda: self._share_preset_key(role))
+        return box
+
+    def _preset_model_settings(self):
+        return {cfg.model_setting(role, name) for role in self._preset_widgets
+                for name in cfg.PRESETS}
+
+    def _preset_model(self, role):
+        return (self.transcribe_model if role == "transcribe"
+                else self._preset_widgets[role]["model"])
+
+    def _stash_preset(self, role):
+        name = self._preset_shown.get(role)
+        if name is None:
+            return
+        widgets = self._preset_widgets[role]
+        self._custom_values[cfg.PRESETS[name].key] = widgets["key"].text().strip()
+        if role != "transcribe" or self._shown_provider == "custom":
+            self._custom_values[cfg.model_setting(role, name)] = self._preset_model(role).currentText().strip()
+        if name == "other":
+            self._custom_values["custom_base_url"] = widgets["url"].text().strip()
+
+    def _share_preset_key(self, role):
+        self._stash_preset(role)
+        name = self._preset_shown.get(role)
+        for other, shown in self._preset_shown.items():
+            if other != role and shown == name:
+                widgets = self._preset_widgets[other]
+                widgets["key"].setText(self._custom_values[cfg.PRESETS[name].key])
+                if name == "other":
+                    widgets["url"].setText(self._custom_values["custom_base_url"])
+
+    def _preset_changed(self, role):
+        self._share_preset_key(role)
+        widgets = self._preset_widgets[role]
+        name = widgets["preset"].currentData() or "other"
+        self._preset_shown[role] = name
+        who = cfg.PRESETS[name]
+        widgets["key"].setText(self._custom_values[who.key])
+        widgets["key"].setPlaceholderText(t("Optional") + " (" + who.key.upper() + ")"
+                                             if name == "other" else who.key.upper())
+        widgets["url"].setText(self._custom_values.get(
+            "custom_base_url" if name == "other" else f"{name}_base_url", who.base_url))
+        widgets["url"].setReadOnly(name != "other")
+        widgets["url"].setToolTip(t("Choose Other to edit the address."))
+        widgets["key"].setToolTip(t("Empty uses {variable}.", variable=who.key.upper()))
+        if role != "transcribe" or self._shown_provider == "custom":
+            self._show_preset_model(role)
+        if role == "transcribe" and self._shown_provider == "custom":
+            self._say_transcribe("")
+
+    def _show_preset_model(self, role):
+        name = self._preset_shown.get(role, "other")
+        combo = self._preset_model(role)
+        combo.clear()
+        combo.setCurrentText(self._custom_values[cfg.model_setting(role, name)])
+        combo.lineEdit().setPlaceholderText(t("Empty: the server's default model"))
+
+    def _load_preset_models(self, role):
+        self._share_preset_key(role)
+        widgets = self._preset_widgets[role]
+        name = widgets["preset"].currentData()
+        key = widgets["key"].text().strip() or self.conf.api_key(cfg.PRESETS[name].key)
+        base = widgets["url"].text().strip()
+        button = self.refresh_transcribe_models if role == "transcribe" else widgets["fetch"]
+        button.setEnabled(False)
+
+        def work():
+            try:
+                models = api.preset_models(name, key, base, transcription=role == "transcribe")
+                self._preset_models_loaded.emit(role, name, models, "")
+            except api.ApiError as exc:
+                self._preset_models_loaded.emit(role, name, [], str(exc))
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _on_preset_models_loaded(self, role, name, models, error):
+        widgets = self._preset_widgets[role]
+        button = self.refresh_transcribe_models if role == "transcribe" else widgets["fetch"]
+        button.setEnabled(True)
+        if widgets["preset"].currentData() != name:
+            return
+        if role == "transcribe" and self._shown_provider != "custom":
+            return
+        if error:
+            if role == "transcribe":
+                self._say_transcribe(t("Could not fetch the list: {error}", error=error))
+            else:
+                QMessageBox.warning(self, t("Custom server"), error)
+            return
+        combo = self._preset_model(role)
+        current = combo.currentText()
+        combo.clear()
+        combo.addItems(models)
+        combo.setCurrentText(current)
+        if role == "transcribe":
+            self._say_transcribe(t("{count} models loaded.", count=len(models)))
+
     def _api_tab(self):
         page = QWidget()
         outer = QVBoxLayout(page)
@@ -1600,33 +1695,9 @@ class SettingsWindow(QDialog):
         self.openai_key = self._key_row(
             keys_form, "openai", t("sk-… (falls back to OPENAI_API_KEY)"),
             self._test_openai)
-        self.groq_key = self._key_row(
-            keys_form, "groq", t("gsk_… (falls back to GROQ_API_KEY)"),
-            self._test_groq)
         self.openrouter_key = self._key_row(
             keys_form, "openrouter", t("sk-or-… (falls back to OPENROUTER_API_KEY)"),
             self._test_openrouter)
-        self.gemini_key = self._key_row(
-            keys_form, "gemini", t("(falls back to GEMINI_API_KEY)"),
-            self._test_gemini, service="Google AI Studio")
-        self.deepseek_key = self._key_row(
-            keys_form, "deepseek", t("(falls back to DEEPSEEK_API_KEY)"),
-            self._test_deepseek, service="DeepSeek")
-        self.opencode_key = self._key_row(
-            keys_form, "opencode", t("(falls back to OPENCODE_API_KEY)"),
-            self._test_opencode, service="OpenCode Go")
-        self.requesty_key = self._key_row(
-            keys_form, "requesty", t("(falls back to REQUESTY_API_KEY)"),
-            self._test_requesty)
-        # The one provider whose address is not known in advance, so it is the
-        # one with an address field; the others keep theirs in the config.
-        self.custom_url = QLineEdit()
-        self.custom_url.setPlaceholderText(
-            t("OpenAI-compatible, e.g. http://localhost:8000/v1"))
-        keys_form.addRow(t("Custom server address"), self.custom_url)
-        self.custom_key = self._key_row(
-            keys_form, "custom", t("Optional (falls back to CUSTOM_API_KEY)"),
-            self._test_custom, service=t("Custom server"))
         outer.addWidget(keys)
 
         stt = QGroupBox(t("Speech to text"))
@@ -1637,6 +1708,8 @@ class SettingsWindow(QDialog):
         for label, value in TRANSCRIBE_PROVIDERS:
             self.transcribe_provider.addItem(t(label), value)
         stt_form.addRow(t("Provider"), self.transcribe_provider)
+        self.transcribe_custom_box = self._preset_panel("transcribe")
+        stt_form.addRow(self.transcribe_custom_box)
 
         # A hosted provider takes any model id that is typed at it; the local
         # one offers what has been published. One row each, and only the rows of
@@ -1767,23 +1840,6 @@ class SettingsWindow(QDialog):
         self.cleanup_model_row = self._row(self.cleanup_model, self.refresh_models)
         orr_form.addRow(t("Model"), self.cleanup_model_row)
 
-        self.cleanup_gemini_model = QComboBox()
-        self.cleanup_gemini_model.setEditable(True)
-        self.cleanup_gemini_model.addItems(GEMINI_MODELS)
-        self.refresh_gemini_models = QPushButton(t("Fetch model list"))
-        self.refresh_gemini_models.clicked.connect(self._load_gemini_models)
-        self.cleanup_gemini_model_row = self._row(
-            self.cleanup_gemini_model, self.refresh_gemini_models)
-        orr_form.addRow(t("Model"), self.cleanup_gemini_model_row)
-        self.cleanup_deepseek_model = QComboBox()
-        self.cleanup_deepseek_model.setEditable(True)
-        self.cleanup_deepseek_model.addItems(DEEPSEEK_MODELS)
-        self.refresh_deepseek_models = QPushButton(t("Fetch model list"))
-        self.refresh_deepseek_models.clicked.connect(self._load_deepseek_models)
-        self.cleanup_deepseek_model_row = self._row(
-            self.cleanup_deepseek_model, self.refresh_deepseek_models)
-        orr_form.addRow(t("Model"), self.cleanup_deepseek_model_row)
-
         # One row per provider rather than one box that means a different thing
         # in each: an OpenRouter id and a Claude alias do not belong in the same
         # field, and only the row of whoever is chosen is on screen.
@@ -1799,35 +1855,8 @@ class SettingsWindow(QDialog):
         self.cleanup_codex_model.setToolTip(_typed_model_note("Codex"))
         orr_form.addRow(t("Model"), self.cleanup_codex_model)
 
-        self.cleanup_opencode_model = QComboBox()
-        self.cleanup_opencode_model.setEditable(True)
-        self.cleanup_opencode_model.addItems(OPENCODE_MODELS)
-        self.cleanup_opencode_model.setToolTip(_typed_model_note("OpenCode Go"))
-        self.refresh_opencode_models = QPushButton(t("Fetch model list"))
-        self.refresh_opencode_models.clicked.connect(self._load_opencode_models)
-        self.cleanup_opencode_model_row = self._row(self.cleanup_opencode_model,
-                                                    self.refresh_opencode_models)
-        orr_form.addRow(t("Model"), self.cleanup_opencode_model_row)
-
-        self.cleanup_requesty_model = QComboBox()
-        self.cleanup_requesty_model.setEditable(True)
-        self.cleanup_requesty_model.addItems(REQUESTY_MODELS)
-        self.cleanup_requesty_model.setToolTip(_typed_model_note("Requesty"))
-        self.refresh_requesty_models = QPushButton(t("Fetch model list"))
-        self.refresh_requesty_models.clicked.connect(self._load_requesty_models)
-        self.cleanup_requesty_model_row = self._row(self.cleanup_requesty_model,
-                                                    self.refresh_requesty_models)
-        orr_form.addRow(t("Model"), self.cleanup_requesty_model_row)
-
-        self.cleanup_custom_model = QComboBox()
-        self.cleanup_custom_model.setEditable(True)
-        self.cleanup_custom_model.lineEdit().setPlaceholderText(
-            t("Empty: the server's default model"))
-        self.refresh_custom_models = QPushButton(t("Fetch model list"))
-        self.refresh_custom_models.clicked.connect(self._load_custom_models)
-        self.cleanup_custom_model_row = self._row(self.cleanup_custom_model,
-                                                  self.refresh_custom_models)
-        orr_form.addRow(t("Model"), self.cleanup_custom_model_row)
+        self.cleanup_custom_box = self._preset_panel("cleanup")
+        orr_form.addRow(self.cleanup_custom_box)
 
         self.cleanup_agy_model = QComboBox()
         self.cleanup_agy_model.setEditable(True)
@@ -2087,43 +2116,8 @@ class SettingsWindow(QDialog):
         agy_form.addRow(agy_note)
         layout.addWidget(self.agy_box)
 
-        self.opencode_box = QGroupBox("OpenCode Go")
-        og_form = QFormLayout(self.opencode_box)
-        og_form.setFieldGrowthPolicy(
-            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        self.assistant_opencode_model = QComboBox()
-        self.assistant_opencode_model.setEditable(True)
-        self.assistant_opencode_model.addItems(OPENCODE_MODELS)
-        og_form.addRow(t("Model"), self.assistant_opencode_model)
-        og_note = QLabel(t(
-            "A plain question and a plain answer, over the OpenCode Go key you "
-            "already have. It runs no commands, opens no files and reaches none "
-            "of your services, so it can tell you what the capital of Peru is "
-            "but not what is in your calendar. Working directory and permissions "
-            "above mean nothing here."
-        ))
-        og_note.setWordWrap(True)
-        og_form.addRow(og_note)
-        layout.addWidget(self.opencode_box)
-
-        self.requesty_box = QGroupBox("Requesty")
-        rq_form = QFormLayout(self.requesty_box)
-        rq_form.setFieldGrowthPolicy(
-            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        self.assistant_requesty_model = QComboBox()
-        self.assistant_requesty_model.setEditable(True)
-        self.assistant_requesty_model.addItems(REQUESTY_MODELS)
-        rq_form.addRow(t("Model"), self.assistant_requesty_model)
-        rq_note = QLabel(t(
-            "A plain question and a plain answer, over the Requesty key you "
-            "already have. It runs no commands, opens no files and reaches none "
-            "of your services, so it can tell you what the capital of Peru is "
-            "but not what is in your calendar. Working directory and permissions "
-            "above mean nothing here."
-        ))
-        rq_note.setWordWrap(True)
-        rq_form.addRow(rq_note)
-        layout.addWidget(self.requesty_box)
+        self.assistant_custom_box = self._preset_panel("assistant")
+        layout.addWidget(self.assistant_custom_box)
 
         thread = QGroupBox(t("The conversation"))
         thread_form = QFormLayout(thread)
@@ -2751,11 +2745,16 @@ class SettingsWindow(QDialog):
         self._show_update(update.pending())
 
         for name, who in cfg.TRANSCRIBERS.items():
+            if name == "custom":
+                continue
             self._key_fields[name].setText(conf[who.key])
             self._models[name] = conf[who.model]
-        self.deepseek_key.setText(conf["deepseek_api_key"])
-        self.opencode_key.setText(conf["opencode_api_key"])
-        self.custom_url.setText(conf["custom_base_url"])
+        self._custom_values = dict(conf.data)
+        self._preset_shown.clear()
+        for role, widgets in self._preset_widgets.items():
+            with QSignalBlocker(widgets["preset"]):
+                self._select_data(widgets["preset"], conf.custom_preset(role))
+            self._preset_changed(role)
         self._shown_provider = ""
         self._select_data(self.transcribe_provider, conf["transcribe_provider"])
         self._provider_changed()  # selecting index 0 fires no signal
@@ -2787,12 +2786,6 @@ class SettingsWindow(QDialog):
 
         self.cleanup_enabled.setChecked(conf["cleanup_enabled"])
         self.cleanup_model.setCurrentText(conf["cleanup_model"])
-        self.cleanup_gemini_model.setCurrentText(
-            conf["cleanup_gemini_model"] or cfg.DEFAULTS["cleanup_gemini_model"]
-        )
-        self.cleanup_deepseek_model.setCurrentText(
-            conf["cleanup_deepseek_model"] or cfg.DEFAULTS["cleanup_deepseek_model"]
-        )
         self.cleanup_claude_model.setCurrentText(conf["cleanup_claude_model"])
         self.cleanup_codex_model.setCurrentText(
             conf["cleanup_codex_model"] or t("Codex's own default")
@@ -2800,9 +2793,6 @@ class SettingsWindow(QDialog):
         self.cleanup_agy_model.setCurrentText(
             conf["cleanup_agy_model"] or t("Antigravity's own default")
         )
-        self.cleanup_opencode_model.setCurrentText(conf["cleanup_opencode_model"])
-        self.cleanup_requesty_model.setCurrentText(conf["cleanup_requesty_model"])
-        self.cleanup_custom_model.setCurrentText(conf["cleanup_custom_model"])
         self._select_data(self.cleanup_provider, conf["cleanup_provider"])
         self._cleanup_provider_changed()  # selecting index 0 fires no signal
         self._select_data(self.cleanup_reasoning, conf["cleanup_reasoning"])
@@ -2839,8 +2829,6 @@ class SettingsWindow(QDialog):
         self._select_data(self.assistant_codex_sandbox, conf["assistant_codex_sandbox"])
         self.assistant_openrouter_model.setCurrentText(conf["assistant_openrouter_model"])
         self.assistant_agy_model.setCurrentText(conf["assistant_agy_model"])
-        self.assistant_opencode_model.setCurrentText(conf["assistant_opencode_model"])
-        self.assistant_requesty_model.setCurrentText(conf["assistant_requesty_model"])
         self._assistant_provider_changed()  # selecting index 0 fires no signal
         self._select_data(self.assistant_reasoning, conf["assistant_reasoning"])
         self.assistant_dir.setText(conf["assistant_dir"])
@@ -2881,7 +2869,8 @@ class SettingsWindow(QDialog):
         # Greyed out rather than hidden, since every other provider can do it,
         # and shown unticked without the setting being touched, so that going
         # back to one of those brings the choice back with it.
-        timed = api.gives_times(conf["transcribe_provider"])
+        target = conf.transcribe_target()
+        timed = api.gives_times(target.provider, target.preset)
         self.file_timestamps.setEnabled(timed)
         self.file_timestamps.setToolTip(self._timestamps_tip if timed else t(
             "{service} returns no timestamps.",
@@ -2930,16 +2919,24 @@ class SettingsWindow(QDialog):
         conf["start_in_tray"] = self.start_in_tray.isChecked()
 
         provider = self.transcribe_provider.currentData() or "local"
-        if provider in self._models:
+        if provider in self._models and provider != "custom":
             self._models[provider] = self.transcribe_model.currentText().strip()
         conf["transcribe_provider"] = provider
         for name, who in cfg.TRANSCRIBERS.items():
+            if name == "custom":
+                continue
             conf[who.key] = self._key_fields[name].text().strip()
             conf[who.model] = self._models[name].strip() or cfg.DEFAULTS[who.model]
         conf["openrouter_file_model"] = self.file_model.currentText().strip()
-        conf["deepseek_api_key"] = self.deepseek_key.text().strip()
-        conf["opencode_api_key"] = self.opencode_key.text().strip()
-        conf["custom_base_url"] = self.custom_url.text().strip()
+        for role in self._preset_widgets:
+            self._stash_preset(role)
+        model_settings = self._preset_model_settings()
+        for key, value in self._custom_values.items():
+            if key.endswith("_api_key") or key == "custom_base_url" or key in model_settings:
+                if key not in ("openai_api_key", "openrouter_api_key"):
+                    conf[key] = value
+        for role, widgets in self._preset_widgets.items():
+            conf[f"{role}_custom_preset"] = widgets["preset"].currentData()
         conf["local_binary"] = self.local_whisper.custom_binary
         conf["local_llm_binary"] = self.local_llm.custom_binary
         conf["local_models_dir"] = self.local_models_dir.text().strip()
@@ -2953,14 +2950,6 @@ class SettingsWindow(QDialog):
         conf["cleanup_enabled"] = self.cleanup_enabled.isChecked()
         conf["cleanup_provider"] = self.cleanup_provider.currentData() or "openrouter"
         conf["cleanup_model"] = self.cleanup_model.currentText().strip()
-        conf["cleanup_gemini_model"] = (
-            self.cleanup_gemini_model.currentText().strip()
-            or cfg.DEFAULTS["cleanup_gemini_model"]
-        )
-        conf["cleanup_deepseek_model"] = (
-            self.cleanup_deepseek_model.currentText().strip()
-            or cfg.DEFAULTS["cleanup_deepseek_model"]
-        )
         conf["cleanup_claude_model"] = (self.cleanup_claude_model.currentText().strip()
                                         or cfg.DEFAULTS["cleanup_claude_model"])
         codex_cleanup_model = self.cleanup_codex_model.currentText().strip()
@@ -2972,17 +2961,6 @@ class SettingsWindow(QDialog):
             "" if agy_cleanup_model == t("Antigravity's own default")
             else agy_cleanup_model
         )
-        conf["cleanup_opencode_model"] = (
-            self.cleanup_opencode_model.currentText().strip()
-            or cfg.DEFAULTS["cleanup_opencode_model"]
-        )
-        conf["cleanup_requesty_model"] = (
-            self.cleanup_requesty_model.currentText().strip()
-            or cfg.DEFAULTS["cleanup_requesty_model"]
-        )
-        # Empty is a choice here rather than a field left blank: the server's
-        # own model.
-        conf["cleanup_custom_model"] = self.cleanup_custom_model.currentText().strip()
         conf["cleanup_reasoning"] = self.cleanup_reasoning.currentData() or ""
         conf["local_llm_model"] = self.local_llm.selected()
         conf["local_llm_repo"] = self.local_llm.repository()
@@ -3027,14 +3005,6 @@ class SettingsWindow(QDialog):
         agy_model = self.assistant_agy_model.currentText().strip()
         conf["assistant_agy_model"] = (
             "" if agy_model == t("Antigravity's own default") else agy_model
-        )
-        conf["assistant_opencode_model"] = (
-            self.assistant_opencode_model.currentText().strip()
-            or cfg.DEFAULTS["assistant_opencode_model"]
-        )
-        conf["assistant_requesty_model"] = (
-            self.assistant_requesty_model.currentText().strip()
-            or cfg.DEFAULTS["assistant_requesty_model"]
         )
         conf["assistant_reasoning"] = self.assistant_reasoning.currentData() or ""
         conf["assistant_dir"] = self.assistant_dir.text().strip()
@@ -3256,22 +3226,26 @@ class SettingsWindow(QDialog):
 
     def _provider_changed(self):
         """Swap the model box over to the newly chosen provider's own model."""
-        if self._shown_provider in TRANSCRIBE_MODELS:
+        if self._shown_provider == "custom":
+            self._stash_preset("transcribe")
+        if self._shown_provider in TRANSCRIBE_MODELS and self._shown_provider != "custom":
             self._models[self._shown_provider] = self.transcribe_model.currentText().strip()
         provider = self.transcribe_provider.currentData() or "local"
         self._shown_provider = provider
         local = provider == "local"
+        self.transcribe_custom_box.setVisible(provider == "custom")
         self.stt_form.setRowVisible(self.transcribe_model_row, not local)
         self.stt_form.setRowVisible(self.file_model_row, provider == "openrouter")
-        # Requesty transcribes with models it does not list, so there is
-        # nothing for the button to fetch.
-        self.refresh_transcribe_models.setVisible(provider != "requesty")
         self.stt_form.setRowVisible(self.transcribe_status, not local)
         self.stt_form.setRowVisible(self.local_whisper, local)
         self.stt_form.setRowVisible(self.local_options, local)
         self.stt_form.setRowVisible(self.local_state, local)
         self._refresh_local_box()
         if local:
+            return
+        if provider == "custom":
+            self._show_preset_model("transcribe")
+            self._say_transcribe("")
             return
         self.transcribe_model.clear()
         self.transcribe_model.addItems(TRANSCRIBE_MODELS[provider])
@@ -3289,7 +3263,9 @@ class SettingsWindow(QDialog):
         recorded for an hour with nothing able to write it up, and kept there
         through a fetch of the model list rather than replaced by its count.
         """
-        warning = ("" if api.gives_times(self._shown_provider)
+        warning = ("" if api.gives_times(self._shown_provider,
+                     self._preset_widgets["transcribe"]["preset"].currentData()
+                     if self._shown_provider == "custom" else "")
                    else t("Gives no timestamps, so subtitles and meetings need "
                           "another provider."))
         self.transcribe_status.setText("\n".join(x for x in (line, warning) if x))
@@ -3303,6 +3279,9 @@ class SettingsWindow(QDialog):
     def _load_transcribe_models(self):
         """The model list of whichever provider is selected."""
         provider = self.transcribe_provider.currentData() or "openai"
+        if provider == "custom":
+            self._load_preset_models("transcribe")
+            return
         self.refresh_transcribe_models.setEnabled(False)
         self._fetching_provider = provider
         self._say_transcribe(t("Fetching model list…"))
@@ -3313,11 +3292,6 @@ class SettingsWindow(QDialog):
             try:
                 if provider == "openrouter":
                     models = api.openrouter_models(key, transcription=True)
-                elif provider == "custom":
-                    models = api.custom_models(key, base, service, transcription=True)
-                elif provider == "gemini":
-                    # Unfiltered for audio: the listing names no input types.
-                    models = api.gemini_models(key, base)
                 else:
                     models = api.openai_models(key, base, service)
                 self._transcribe_models_loaded.emit(models, "")
@@ -3368,55 +3342,6 @@ class SettingsWindow(QDialog):
             combo.setCurrentText(current)
         self.models_label.setText(t("{count} models loaded.", count=len(models)))
 
-    def _load_gemini_models(self):
-        self.refresh_gemini_models.setEnabled(False)
-        self.models_label.setText(t("Fetching model list…"))
-        key, base = self._typed_key("gemini")
-
-        def work():
-            try:
-                self._gemini_models_loaded.emit(api.gemini_models(key, base), "")
-            except api.ApiError as exc:
-                self._gemini_models_loaded.emit([], str(exc))
-
-        threading.Thread(target=work, daemon=True).start()
-
-    def _on_gemini_models_loaded(self, models, error):
-        self.refresh_gemini_models.setEnabled(True)
-        if error:
-            self.models_label.setText(t("Could not fetch the list: {error}", error=error))
-            return
-        current = self.cleanup_gemini_model.currentText()
-        self.cleanup_gemini_model.clear()
-        self.cleanup_gemini_model.addItems(models)
-        self.cleanup_gemini_model.setCurrentText(current)
-        self.models_label.setText(t("{count} models loaded.", count=len(models)))
-
-    def _load_deepseek_models(self):
-        self.refresh_deepseek_models.setEnabled(False)
-        self.models_label.setText(t("Fetching model list…"))
-        key, base = self._typed_key("deepseek")
-
-        def work():
-            try:
-                self._deepseek_models_loaded.emit(
-                    api.openai_models(key, base, "DeepSeek"), "")
-            except api.ApiError as exc:
-                self._deepseek_models_loaded.emit([], str(exc))
-
-        threading.Thread(target=work, daemon=True).start()
-
-    def _on_deepseek_models_loaded(self, models, error):
-        self.refresh_deepseek_models.setEnabled(True)
-        if error:
-            self.models_label.setText(t("Could not fetch the list: {error}", error=error))
-            return
-        current = self.cleanup_deepseek_model.currentText()
-        self.cleanup_deepseek_model.clear()
-        self.cleanup_deepseek_model.addItems(models)
-        self.cleanup_deepseek_model.setCurrentText(current)
-        self.models_label.setText(t("{count} models loaded.", count=len(models)))
-
     def _load_codex_models(self):
         """Ask Codex which models it offers, off the interface thread.
 
@@ -3443,91 +3368,6 @@ class SettingsWindow(QDialog):
             for name in models:
                 combo.addItem(name, name)
             combo.setCurrentText(current)
-
-    def _load_opencode_models(self):
-        self.refresh_opencode_models.setEnabled(False)
-        self.models_label.setText(t("Fetching model list…"))
-        key, base = self._typed_key("opencode")
-
-        def work():
-            try:
-                self._opencode_models_loaded.emit(
-                    api.openai_models(key, base, "OpenCode Go"), "")
-            except api.ApiError as exc:
-                self._opencode_models_loaded.emit([], str(exc))
-
-        threading.Thread(target=work, daemon=True).start()
-
-    def _on_opencode_models_loaded(self, models, error):
-        self.refresh_opencode_models.setEnabled(True)
-        if error:
-            self.models_label.setText(t("Could not fetch the list: {error}", error=error))
-            return
-        self._fill_opencode_boxes(models)
-        self.models_label.setText(t("{count} models loaded.", count=len(models)))
-
-    def _fill_opencode_boxes(self, models):
-        # The agent runs on the same key and catalog, so its box is refilled
-        # from the same list.
-        for combo in (self.cleanup_opencode_model, self.assistant_opencode_model):
-            current = combo.currentText()
-            combo.clear()
-            combo.addItems(models)
-            combo.setCurrentText(current)
-
-    def _load_requesty_models(self):
-        self.refresh_requesty_models.setEnabled(False)
-        self.models_label.setText(t("Fetching model list…"))
-        key, base = self._typed_key("requesty")
-
-        def work():
-            try:
-                self._requesty_models_loaded.emit(api.requesty_models(key, base), "")
-            except api.ApiError as exc:
-                self._requesty_models_loaded.emit([], str(exc))
-
-        threading.Thread(target=work, daemon=True).start()
-
-    def _on_requesty_models_loaded(self, models, error):
-        self.refresh_requesty_models.setEnabled(True)
-        if error:
-            self.models_label.setText(t("Could not fetch the list: {error}", error=error))
-            return
-        self._fill_requesty_boxes(models)
-        self.models_label.setText(t("{count} models loaded.", count=len(models)))
-
-    def _fill_requesty_boxes(self, models):
-        # The same arrangement as OpenCode Go: one key, one catalog, two boxes.
-        for combo in (self.cleanup_requesty_model, self.assistant_requesty_model):
-            current = combo.currentText()
-            combo.clear()
-            combo.addItems(models)
-            combo.setCurrentText(current)
-
-    def _load_custom_models(self):
-        self.refresh_custom_models.setEnabled(False)
-        self.models_label.setText(t("Fetching model list…"))
-        key, base = self._typed_key("custom")
-        service = t("Custom server")
-
-        def work():
-            try:
-                self._custom_models_loaded.emit(api.custom_models(key, base, service), "")
-            except api.ApiError as exc:
-                self._custom_models_loaded.emit([], str(exc))
-
-        threading.Thread(target=work, daemon=True).start()
-
-    def _on_custom_models_loaded(self, models, error):
-        self.refresh_custom_models.setEnabled(True)
-        if error:
-            self.models_label.setText(t("Could not fetch the list: {error}", error=error))
-            return
-        current = self.cleanup_custom_model.currentText()
-        self.cleanup_custom_model.clear()
-        self.cleanup_custom_model.addItems(models)
-        self.cleanup_custom_model.setCurrentText(current)
-        self.models_label.setText(t("{count} models loaded.", count=len(models)))
 
     def _load_agy_models(self):
         """Ask Antigravity which models it offers, off the interface thread.
@@ -3570,28 +3410,12 @@ class SettingsWindow(QDialog):
         if openrouter_key:
             jobs.append(("openrouter",
                          lambda: api.openrouter_models(openrouter_key)))
-        gemini_key = self.conf.gemini_key()
-        gemini_base = self.conf["gemini_base_url"]
-        if gemini_key:
-            jobs.append(("gemini",
-                         lambda: api.gemini_models(gemini_key, gemini_base)))
-        deepseek_key = self.conf.deepseek_key()
-        deepseek_base = self.conf["deepseek_base_url"]
-        if deepseek_key:
-            jobs.append(("deepseek",
-                         lambda: api.openai_models(deepseek_key, deepseek_base,
-                                                   "DeepSeek")))
-        opencode_key = self.conf.opencode_key()
-        opencode_base = self.conf["opencode_base_url"]
-        if opencode_key:
-            jobs.append(("opencode",
-                         lambda: api.openai_models(opencode_key, opencode_base,
-                                                   "OpenCode Go")))
-        requesty_key = self.conf.requesty_key()
-        requesty_base = self.conf["requesty_base_url"]
-        if requesty_key:
-            jobs.append(("requesty",
-                         lambda: api.requesty_models(requesty_key, requesty_base)))
+        for name, who in cfg.PRESETS.items():
+            key = self.conf.api_key(who.key)
+            if name != "other" and key:
+                base = self.conf.get(f"{name}_base_url", who.base_url)
+                jobs.append((name, lambda name=name, key=key, base=base:
+                             api.preset_models(name, key, base)))
         for provider, fetch in jobs:
             def work(provider=provider, fetch=fetch):
                 try:
@@ -3604,20 +3428,12 @@ class SettingsWindow(QDialog):
             threading.Thread(target=work, daemon=True).start()
 
     def _on_hosted_models_loaded(self, provider, models):
-        if provider == "opencode":
-            self._fill_opencode_boxes(models)
+        if provider != "openrouter":
+            for role, widgets in self._preset_widgets.items():
+                if role != "transcribe" and widgets["preset"].currentData() == provider:
+                    self._on_preset_models_loaded(role, provider, models, "")
             return
-        if provider == "deepseek":
-            current = self.cleanup_deepseek_model.currentText()
-            self.cleanup_deepseek_model.clear()
-            self.cleanup_deepseek_model.addItems(models)
-            self.cleanup_deepseek_model.setCurrentText(current)
-            return
-        if provider == "requesty":
-            self._fill_requesty_boxes(models)
-            return
-        combos = ((self.cleanup_model, self.meeting_model)
-                  if provider == "openrouter" else (self.cleanup_gemini_model,))
+        combos = (self.cleanup_model, self.meeting_model, self.assistant_openrouter_model)
         for combo in combos:
             current = combo.currentText()
             combo.clear()
@@ -3631,67 +3447,16 @@ class SettingsWindow(QDialog):
             count=len(api.openai_models(key, base)),
         ))
 
-    def _test_groq(self):
-        key, base = self._typed_key("groq")
-        self._test_key("groq", lambda: t(
-            "Connection works. {count} audio models visible.",
-            count=len(api.openai_models(key, base, cfg.TRANSCRIBERS["groq"].service)),
-        ))
-
     def _test_openrouter(self):
         key, _ = self._typed_key("openrouter")
         self._test_key("openrouter", lambda: api.openrouter_key_status(key))
 
-    def _test_gemini(self):
-        key, base = self._typed_key("gemini")
-        self._test_key("gemini", lambda: t(
-            "Connection works. {count} models visible.",
-            count=len(api.gemini_models(key, base)),
-        ))
-
-    def _test_deepseek(self):
-        key, base = self._typed_key("deepseek")
-        self._test_key("deepseek", lambda: t(
-            "Connection works. {count} models visible.",
-            count=len(api.openai_models(key, base, "DeepSeek")),
-        ))
-
-    def _test_opencode(self):
-        key, base = self._typed_key("opencode")
-        self._test_key("opencode", lambda: t(
-            "Connection works. {count} models visible.",
-            count=len(api.openai_models(key, base, "OpenCode Go")),
-        ))
-
-    def _test_requesty(self):
-        key, base = self._typed_key("requesty")
-        self._test_key("requesty", lambda: t(
-            "Connection works. {count} models visible.",
-            count=len(api.openai_models(key, base, "Requesty")),
-        ))
-
-    def _test_custom(self):
-        key, base = self._typed_key("custom")
-        service = t("Custom server")
-        self._test_key("custom", lambda: t(
-            "Connection works. {count} models visible.",
-            count=len(api.custom_models(key, base, service)),
-        ))
-
     def _typed_key(self, provider):
         """(key, base URL) for a provider, preferring what is in the field now."""
-        if provider in cfg.TRANSCRIBERS:
-            who = cfg.TRANSCRIBERS[provider]
-            key_setting, url_setting = who.key, who.url
-        else:
-            key_setting = f"{provider}_api_key"
-            url_setting = f"{provider}_base_url"
+        who = cfg.TRANSCRIBERS[provider]
+        key_setting, url_setting = who.key, who.url
         typed = self._key_fields[provider].text().strip()
         base = self.conf[url_setting]
-        if provider == "custom":
-            # Its address has a field of its own, and what is typed there now
-            # is the server being asked about.
-            base = self.custom_url.text().strip()
         return typed or self.conf.api_key(key_setting), base
 
     def _test_key(self, provider, ask):
@@ -3920,22 +3685,13 @@ class SettingsWindow(QDialog):
 
     def _cleanup_provider_changed(self):
         provider = self.cleanup_provider.currentData() or "openrouter"
+        self.cleanup_custom_box.setVisible(provider == "custom")
         self.cleanup_form.setRowVisible(self.cleanup_model_row,
                                         provider == "openrouter")
-        self.cleanup_form.setRowVisible(self.cleanup_gemini_model_row,
-                                        provider == "gemini")
-        self.cleanup_form.setRowVisible(self.cleanup_deepseek_model_row,
-                                        provider == "deepseek")
         self.cleanup_form.setRowVisible(self.cleanup_claude_model,
                                         provider == "claude")
         self.cleanup_form.setRowVisible(self.cleanup_codex_model,
                                         provider == "codex")
-        self.cleanup_form.setRowVisible(self.cleanup_opencode_model_row,
-                                        provider == "opencode")
-        self.cleanup_form.setRowVisible(self.cleanup_requesty_model_row,
-                                        provider == "requesty")
-        self.cleanup_form.setRowVisible(self.cleanup_custom_model_row,
-                                        provider == "custom")
         self.cleanup_form.setRowVisible(self.cleanup_agy_model,
                                         provider == "agy")
         self.cleanup_form.setRowVisible(self.cleanup_reasoning,
@@ -3948,14 +3704,6 @@ class SettingsWindow(QDialog):
         found = shutil.which(binary) if binary else ""
         if provider == "local":
             self.models_label.setText(t("Runs on this machine, on llama.cpp."))
-        elif provider == "gemini":
-            self.models_label.setText(t("Runs on Google AI Studio."))
-        elif provider == "opencode":
-            self.models_label.setText(t("Runs on OpenCode Go."))
-        elif provider == "deepseek":
-            self.models_label.setText(t("Runs on DeepSeek."))
-        elif provider == "requesty":
-            self.models_label.setText(t("Runs on Requesty."))
         elif provider == "custom":
             self.models_label.setText(t("Runs on your custom server."))
         elif not binary:
@@ -3975,8 +3723,7 @@ class SettingsWindow(QDialog):
         self.codex_box.setVisible(provider == "codex")
         self.openrouter_box.setVisible(provider == "openrouter")
         self.agy_box.setVisible(provider == "agy")
-        self.opencode_box.setVisible(provider == "opencode")
-        self.requesty_box.setVisible(provider == "requesty")
+        self.assistant_custom_box.setVisible(provider == "custom")
         self._refresh_assistant_status()
 
     def _refresh_assistant_status(self):
@@ -3984,18 +3731,7 @@ class SettingsWindow(QDialog):
         binary = assistant.executable(provider)
         found = shutil.which(binary) if binary else ""
         if not binary:
-            if provider == "opencode":
-                self.assistant_found.setText(
-                    t("Needs no program installed, only an OpenCode Go key.")
-                )
-            elif provider == "requesty":
-                self.assistant_found.setText(
-                    t("Needs no program installed, only a Requesty key.")
-                )
-            else:
-                self.assistant_found.setText(
-                    t("Needs no program installed, only the OpenRouter key.")
-                )
+            self.assistant_found.setText(t("Chat provider; no local command execution"))
         elif found:
             self.assistant_found.setText(t("Found: {path}", path=found))
         else:

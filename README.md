@@ -26,8 +26,7 @@ up and pasted into the window you were typing in. It runs on Linux, macOS and
 
 - **Speech to text on your own computer** by default, with the settings
   window downloading the model for you. Cleanup can run there too.
-- **Or in the cloud**, with OpenAI, Groq, OpenRouter, Google AI Studio and
-  others, using your own key. Cleanup uses OpenRouter until you pick another.
+- **Or in the cloud**, with OpenAI, OpenRouter or any OpenAI-compatible server through Custom server, with gateway presets and your own key.
 - **A clean result.** Filler words, restarts and missing punctuation are fixed,
   and so are names the model misheard:
 

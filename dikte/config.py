@@ -9,6 +9,7 @@ import threading
 import time
 
 from . import api
+from .presets import ALIASES, PRESETS, model_setting
 from . import ggml
 from . import hardware
 from . import i18n
@@ -425,20 +426,20 @@ DEFAULTS = {
     "openai_api_key": "",
     "openai_base_url": "https://api.openai.com/v1",
     "groq_api_key": "",
-    "groq_base_url": "https://api.groq.com/openai/v1",
+    "groq_base_url": PRESETS["groq"].base_url,
     "openrouter_api_key": "",
     "openrouter_base_url": "https://openrouter.ai/api/v1",
     "requesty_api_key": "",
     # https://router.eu.requesty.ai/v1 keeps the requests in the EU.
-    "requesty_base_url": "https://router.requesty.ai/v1",
+    "requesty_base_url": PRESETS["requesty"].base_url,
     "gemini_api_key": "",
     # Google's OpenAI-compatible endpoint. It has no /audio/transcriptions, so
     # api.py sends dictation there as audio inside a chat request.
-    "gemini_base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "gemini_base_url": PRESETS["gemini"].base_url,
     "deepseek_api_key": "",
-    "deepseek_base_url": "https://api.deepseek.com",
+    "deepseek_base_url": PRESETS["deepseek"].base_url,
     "opencode_api_key": "",
-    "opencode_base_url": "https://opencode.ai/zen/go/v1",
+    "opencode_base_url": PRESETS["opencode"].base_url,
     # A server of the user's own that speaks OpenAI's API: whisper or a chat
     # model behind /audio/transcriptions and /chat/completions. No address
     # ships with it, and the key is optional because a server on the same
@@ -620,6 +621,16 @@ DEFAULTS = {
     "selection_assist_shortcut": "",   # empty -> no key
 }
 
+# Keys and models keep their old storage names, including environment fallbacks.
+# Legacy base URL overrides remain readable, but preset URLs are fixed in the UI.
+for _role in ("transcribe", "cleanup", "assistant"):
+    DEFAULTS[f"{_role}_custom_preset"] = "other"
+    for _name, _preset in PRESETS.items():
+        DEFAULTS.setdefault(_preset.key, "")
+        DEFAULTS.setdefault(("custom" if _name == "other" else _name) + "_base_url", _preset.base_url)
+        DEFAULTS.setdefault(model_setting(_role, _name), "")
+
+
 # Saving the settings window used to write the whole default prompt into the
 # config, which then shadowed every later improvement to that default. These are
 # the sha1 sums of the defaults previous versions shipped; a stored prompt that
@@ -637,24 +648,13 @@ LEGACY_PROMPTS = {
     "a6484bb43a73f7f7569cea2d3bdf0bd89cab0d16",  # 1.4 English
 }
 
-# Every provider speech to text can run on, and the four settings that describe
-# one. A fifth is a row here rather than another branch in transcribe_target(),
-# another key row in the settings window and another line in save and load. The
-# order is the order the provider box offers them in. `service` is the name the
-# user sees; the environment variable that stands in for an empty key is the
-# name of its setting, shouted.
+# Named speech services; compatible gateways are rows in PRESETS.
 Transcriber = collections.namedtuple("Transcriber", "service key url model")
 TRANSCRIBERS = {
     "openai": Transcriber("OpenAI", "openai_api_key", "openai_base_url",
                           "transcribe_model"),
-    "groq": Transcriber("Groq", "groq_api_key", "groq_base_url",
-                        "groq_transcribe_model"),
     "openrouter": Transcriber("OpenRouter", "openrouter_api_key",
                               "openrouter_base_url", "openrouter_transcribe_model"),
-    "requesty": Transcriber("Requesty", "requesty_api_key",
-                            "requesty_base_url", "requesty_transcribe_model"),
-    "gemini": Transcriber("Google AI Studio", "gemini_api_key", "gemini_base_url",
-                          "gemini_transcribe_model"),
     "custom": Transcriber("Custom server", "custom_api_key", "custom_base_url",
                           "custom_transcribe_model"),
 }
@@ -763,6 +763,7 @@ class Config:
         stored_prompt = self.data["cleanup_prompt"].strip()
         if stored_prompt and _fingerprint(stored_prompt) in LEGACY_PROMPTS:
             self.data["cleanup_prompt"] = ""
+        self.migrate_providers()
         i18n.set_language(self.data["ui_language"])
 
     def save(self):
@@ -784,6 +785,32 @@ class Config:
 
     def __setitem__(self, key, value):
         self.data[key] = value
+        if key in ("transcribe_provider", "cleanup_provider", "assistant_provider"):
+            self.migrate_providers()
+
+    def migrate_providers(self):
+        for role in ("transcribe", "cleanup", "assistant"):
+            name = self.data[f"{role}_provider"]
+            if name in ALIASES:
+                self.data[f"{role}_provider"] = "custom"
+                self.data[f"{role}_custom_preset"] = name
+
+    def custom_preset(self, role):
+        name = self[f"{role}_custom_preset"]
+        if not isinstance(name, str):
+            return "other"
+        preset = PRESETS.get(name, PRESETS["other"])
+        if not getattr(preset, "transcription" if role == "transcribe" else "chat"):
+            return "other"
+        return name if name in PRESETS else "other"
+
+    def custom_target(self, role):
+        name = self.custom_preset(role)
+        preset = PRESETS[name]
+        setting = "custom_base_url" if name == "other" else f"{name}_base_url"
+        return api.Target("custom", t("Custom server") if name == "other" else preset.service,
+                          self.api_key(preset.key), self.get(setting, preset.base_url).strip(),
+                          self[model_setting(role, name)].strip(), "", name)
 
     def get(self, key, default=None):
         return self.data.get(key, DEFAULTS.get(key, default))
@@ -795,26 +822,8 @@ class Config:
     def openai_key(self):
         return self.api_key("openai_api_key")
 
-    def groq_key(self):
-        return self.api_key("groq_api_key")
-
     def openrouter_key(self):
         return self.api_key("openrouter_api_key")
-
-    def gemini_key(self):
-        return self.api_key("gemini_api_key")
-
-    def deepseek_key(self):
-        return self.api_key("deepseek_api_key")
-
-    def opencode_key(self):
-        return self.api_key("opencode_api_key")
-
-    def requesty_key(self):
-        return self.api_key("requesty_api_key")
-
-    def custom_key(self):
-        return self.api_key("custom_api_key")
 
     def transcribe_target(self):
         """Key, endpoint and model for whichever provider does speech to text.
@@ -829,6 +838,8 @@ class Config:
         if name == "local":
             return api.Target("local", t("Local whisper"), "", "",
                               self["local_model"])
+        if name == "custom":
+            return self.custom_target("transcribe")
         if name not in TRANSCRIBERS:
             # A config written by a fork, or by a version that dropped one. The
             # shipped default is not in the table, so this names the hosted one
@@ -849,7 +860,7 @@ class Config:
         target = self.transcribe_target()
         if target.provider == "custom":
             # The address is what it cannot run without; a key is optional.
-            return bool(target.base_url)
+            return bool(target.base_url) and (target.preset == "other" or bool(target.api_key))
         return bool(target.api_key)
 
     def local_whisper_ready(self):

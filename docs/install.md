@@ -94,13 +94,10 @@ paste the raw transcript.
 
 | Task | Hosted providers | Other options |
 | --- | --- | --- |
-| Speech to text | OpenAI, Groq, OpenRouter, Requesty, Google AI Studio, any OpenAI-compatible server | Local model |
-| Cleanup | OpenRouter, Requesty, Google AI Studio, DeepSeek, OpenCode Go, any OpenAI-compatible server | Local model; Claude Code, Codex or Antigravity CLI |
+| Speech to text | OpenAI, OpenRouter, Custom server presets | Local model |
+| Cleanup and agent | OpenRouter, Custom server presets | Local cleanup; Claude Code, Codex or Antigravity CLI |
 
-Choose models and cleanup reasoning effort in Settings. API keys can be entered
-there too; empty keys fall back to `OPENAI_API_KEY`, `GROQ_API_KEY`,
-`OPENROUTER_API_KEY`, `REQUESTY_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`
-and `OPENCODE_API_KEY`.
+Gateway presets keep existing keys, model settings and environment variables. Old provider names remain CLI aliases and migrate to Custom server on load. Other uses `CUSTOM_API_KEY` and an editable address.
 
 Settings and any keys entered in the app are saved in `config.json`: under
 `~/.config/dikte` on Linux (or `$XDG_CONFIG_HOME/dikte` when set),

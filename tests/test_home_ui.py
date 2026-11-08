@@ -413,7 +413,8 @@ class Home(DikteTest):
         self.assertEqual(self.settings.dirty_label.text(), "")
 
     def test_cached_provider_model_edits_remain_dirty_after_switching_back(self):
-        self.settings._select_data(self.settings.transcribe_provider, "groq")
+        self.settings._select_data(self.settings.transcribe_provider, "custom")
+        self.settings._select_data(self.settings._preset_widgets["transcribe"]["preset"], "groq")
         self.settings.transcribe_model.setCurrentText("my-groq-model")
         self.settings._select_data(self.settings.transcribe_provider, "openai")
         self.assertEqual(self.settings.dirty_label.text(), "Unsaved changes")
