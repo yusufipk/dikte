@@ -29,6 +29,11 @@ HALLUCINATIONS = {
     "mbc masr", "sous titres realises par la communaute damara org",
     "amara org community", "sous titrage st 501",
 }
+# Every word a Turkish subtitle credit is built from. Whisper strings these
+# together in new orders ("Çeviri ve Altyazı M.K.", "Altyazı ve Çeviri M.K."),
+# so a short clip made only of them, with the M.K. signature in it, is a credit
+# line nobody dictated, whatever the order.
+_CREDIT_WORDS = {"ceviri", "ve", "altyazi", "altyazilar", "mk", "m", "k"}
 _PUNCTUATION = re.compile(r"[^\w\s]", re.UNICODE)
 _SPACES = re.compile(r"\s+")
 
@@ -86,6 +91,13 @@ def is_silent(stats, silence_db=-55.0, margin_db=10.0, min_voiced_seconds=0.3):
     return False
 
 
+def _is_subtitle_credit(words):
+    if not set(words) <= _CREDIT_WORDS or not {"altyazi", "altyazilar"} & set(words):
+        return False
+    joined = " ".join(words)
+    return "mk" in words or "m k" in joined
+
+
 def _normalise(text):
     folded = unicodedata.normalize("NFKD", text.lower())
     folded = "".join(c for c in folded if not unicodedata.combining(c))
@@ -102,8 +114,10 @@ def looks_like_hallucination(text, duration_seconds, max_duration=6.0):
         return True
     if normalised in HALLUCINATIONS:
         return True
-    # "Altyazı M.K. Altyazı M.K. Altyazı M.K.": the same stock line repeated.
     words = normalised.split()
+    if _is_subtitle_credit(words):
+        return True
+    # "Altyazı M.K. Altyazı M.K. Altyazı M.K.": the same stock line repeated.
     for phrase in HALLUCINATIONS:
         parts = phrase.split()
         if len(parts) >= 2 and words and len(words) % len(parts) == 0:
