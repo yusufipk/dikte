@@ -320,6 +320,12 @@ TR = {
     "Keys": "Anahtarlar",
     "Speech to text": "Sesi yazıya çevirme",
     "Transcript cleanup": "Transkripti temizleme",
+    "Preset": "Hazır ayar",
+    "Other": "Diğer",
+    "Optional": "İsteğe bağlı",
+    "Choose Other to edit the address.": "Adresi düzenlemek için Diğer seçeneğini seç.",
+    "Empty uses {variable}.": "Boşsa {variable} kullanılır.",
+    "{service} does not support transcription.": "{service} sesi yazıya çevirmeyi desteklemiyor.",
     "API key": "API anahtarı",
     "Model": "Model",
     "Audio file model": "Ses dosyası modeli",
@@ -329,31 +335,18 @@ TR = {
         "model segment zamanı döndürmez; boşsa openai/whisper-1 kullanılır.",
     "Provider": "Sağlayıcı",
     "sk-… (falls back to OPENAI_API_KEY)": "sk-… (boşsa OPENAI_API_KEY kullanılır)",
-    "gsk_… (falls back to GROQ_API_KEY)": "gsk_… (boşsa GROQ_API_KEY kullanılır)",
     "sk-or-… (falls back to OPENROUTER_API_KEY)": "sk-or-… (boşsa OPENROUTER_API_KEY kullanılır)",
-    "(falls back to GEMINI_API_KEY)": "(boşsa GEMINI_API_KEY kullanılır)",
-    "(falls back to DEEPSEEK_API_KEY)": "(boşsa DEEPSEEK_API_KEY kullanılır)",
-    "(falls back to OPENCODE_API_KEY)": "(boşsa OPENCODE_API_KEY kullanılır)",
-    "(falls back to REQUESTY_API_KEY)": "(boşsa REQUESTY_API_KEY kullanılır)",
     "Custom server": "Özel sunucu",
     "Custom server address": "Özel sunucu adresi",
-    "OpenAI-compatible, e.g. http://localhost:8000/v1":
-        "OpenAI uyumlu, örneğin http://localhost:8000/v1",
-    "Optional (falls back to CUSTOM_API_KEY)":
-        "İsteğe bağlı (boşsa CUSTOM_API_KEY kullanılır)",
     "Empty: the server's default model": "Boş: sunucunun varsayılan modeli",
+    "Pick a model from the list": "Listeden bir model seçin",
+    "Choose a {service} model in Settings.": "Ayarlar'da bir {service} modeli seçin.",
     "Test": "Test et",
     "Trying…": "Deneniyor…",
     "Runs on OpenRouter.": "OpenRouter üzerinde çalışır.",
-    "Runs on Google AI Studio.": "Google AI Studio üzerinde çalışır.",
-    "Runs on DeepSeek.": "DeepSeek üzerinde çalışır.",
-    "Runs on OpenCode Go.": "OpenCode Go üzerinde çalışır.",
-    "Runs on Requesty.": "Requesty üzerinde çalışır.",
     "Runs on your custom server.": "Özel sunucunda çalışır.",
     "Connection works. {count} audio models visible.":
         "Bağlantı tamam. {count} ses modeli görünüyor.",
-    "Connection works. {count} models visible.":
-        "Bağlantı tamam. {count} model görünüyor.",
     "Clean the transcript with a model": "Transkripti bir modelle temizle",
     "{binary} is not on your PATH, so cleanup would fail and the raw transcript "
     "would be pasted. Install it, or pick another one above.":
@@ -680,30 +673,6 @@ TR = {
         "Komut çalıştırmaz, dosya açmaz, servislerinin hiçbirine erişmez; yani "
         "Peru'nun başkentini söyler ama takviminde ne olduğunu söyleyemez. "
         "Yukarıdaki çalışma dizini ve izinler burada bir şey ifade etmez.",
-    "Needs no program installed, only the OpenRouter key.":
-        "Kurulu bir programa değil, yalnızca OpenRouter anahtarına ihtiyaç duyar.",
-    "A plain question and a plain answer, over the OpenCode Go key you already "
-    "have. It runs no commands, opens no files and reaches none of your "
-    "services, so it can tell you what the capital of Peru is but not what is "
-    "in your calendar. Working directory and permissions above mean nothing "
-    "here.":
-        "Elindeki OpenCode Go anahtarı üzerinden düz bir soru ve düz bir cevap. "
-        "Komut çalıştırmaz, dosya açmaz, servislerinin hiçbirine erişmez; yani "
-        "Peru'nun başkentini söyler ama takviminde ne olduğunu söyleyemez. "
-        "Yukarıdaki çalışma dizini ve izinler burada bir şey ifade etmez.",
-    "Needs no program installed, only an OpenCode Go key.":
-        "Kurulu bir programa değil, yalnızca bir OpenCode Go anahtarına ihtiyaç duyar.",
-    "A plain question and a plain answer, over the Requesty key you already "
-    "have. It runs no commands, opens no files and reaches none of your "
-    "services, so it can tell you what the capital of Peru is but not what is "
-    "in your calendar. Working directory and permissions above mean nothing "
-    "here.":
-        "Elindeki Requesty anahtarı üzerinden düz bir soru ve düz bir cevap. "
-        "Komut çalıştırmaz, dosya açmaz, servislerinin hiçbirine erişmez; yani "
-        "Peru'nun başkentini söyler ama takviminde ne olduğunu söyleyemez. "
-        "Yukarıdaki çalışma dizini ve izinler burada bir şey ifade etmez.",
-    "Needs no program installed, only a Requesty key.":
-        "Kurulu bir programa değil, yalnızca bir Requesty anahtarına ihtiyaç duyar.",
     "Antigravity has neither a permission mode nor a sandbox to hand it, so "
     "what it may do without asking is whatever its own allow-rules say. The "
     "Permissions and Sandbox boxes above belong to the other two; the working "

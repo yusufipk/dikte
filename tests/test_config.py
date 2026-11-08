@@ -199,13 +199,13 @@ class Keys(DikteTest):
 
     def test_every_provider_falls_back_to_the_variable_of_its_own_name(self):
         with mock.patch.dict(os.environ, {"GROQ_API_KEY": "gsk-env"}):
-            self.assertEqual(cfg.Config().groq_key(), "gsk-env")
+            self.assertEqual(cfg.Config().api_key("groq_api_key"), "gsk-env")
         with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "AIza-env"}):
-            self.assertEqual(cfg.Config().gemini_key(), "AIza-env")
+            self.assertEqual(cfg.Config().api_key("gemini_api_key"), "AIza-env")
         with mock.patch.dict(os.environ, {"OPENCODE_API_KEY": "opencode-env"}):
-            self.assertEqual(cfg.Config().opencode_key(), "opencode-env")
+            self.assertEqual(cfg.Config().api_key("opencode_api_key"), "opencode-env")
         with mock.patch.dict(os.environ, {"REQUESTY_API_KEY": "rqsty-env"}):
-            self.assertEqual(cfg.Config().requesty_key(), "rqsty-env")
+            self.assertEqual(cfg.Config().api_key("requesty_api_key"), "rqsty-env")
 
 
 class TranscribeTarget(DikteTest):
@@ -241,7 +241,8 @@ class TranscribeTarget(DikteTest):
         conf = self.config(transcribe_provider="requesty",
                            requesty_api_key="rqsty-test")
         target = conf.transcribe_target()
-        self.assertEqual(target.provider, "requesty")
+        self.assertEqual(target.provider, "custom")
+        self.assertEqual(target.preset, "requesty")
         self.assertEqual(target.service, "Requesty")
         self.assertEqual(target.api_key, "rqsty-test")
         self.assertEqual(target.base_url, "https://router.requesty.ai/v1")
@@ -250,7 +251,8 @@ class TranscribeTarget(DikteTest):
     def test_google_ai_studio_when_it_is_picked(self):
         conf = self.config(transcribe_provider="gemini", gemini_api_key="AIza-test")
         target = conf.transcribe_target()
-        self.assertEqual(target.provider, "gemini")
+        self.assertEqual(target.provider, "custom")
+        self.assertEqual(target.preset, "gemini")
         self.assertEqual(target.service, "Google AI Studio")
         self.assertEqual(target.api_key, "AIza-test")
         self.assertEqual(target.base_url, api.GEMINI_URL)
@@ -294,10 +296,11 @@ class TranscribeTarget(DikteTest):
         conf = self.config(transcribe_provider="groq", groq_api_key="gsk-test",
                            groq_transcribe_model="whisper-large-v3")
         target = conf.transcribe_target()
-        self.assertEqual(target.provider, "groq")
+        self.assertEqual(target.provider, "custom")
+        self.assertEqual(target.preset, "groq")
         self.assertEqual(target.service, "Groq")
         self.assertEqual(target.api_key, "gsk-test")
-        self.assertEqual(target.base_url, api.GROQ_URL)
+        self.assertEqual(target.base_url, cfg.PRESETS["groq"].base_url)
         self.assertEqual(target.model, "whisper-large-v3")
 
     def test_a_provider_this_version_has_never_heard_of(self):
@@ -665,17 +668,16 @@ class Defaults(unittest.TestCase):
         self.assertEqual(cfg.DEFAULTS["requesty_api_key"], "")
 
     def test_google_ai_studio_both_cleans_up_and_transcribes(self):
-        """With one key, the one the cleanup row has always used."""
-        self.assertIn("gemini", cleanup.PROVIDERS)
-        who = cfg.TRANSCRIBERS["gemini"]
+        who = cfg.PRESETS["gemini"]
+        self.assertTrue(who.transcription and who.chat)
         self.assertEqual(who.key, "gemini_api_key")
-        self.assertEqual(who.url, "gemini_base_url")
-        self.assertEqual(cfg.DEFAULTS[who.model], "gemini-3.5-flash-lite")
-        self.assertNotEqual(cfg.DEFAULTS["transcribe_provider"], "gemini")
+        self.assertEqual(cfg.DEFAULTS[cfg.model_setting("transcribe", "gemini")],
+                         "gemini-3.5-flash-lite")
 
     def test_deepseek_is_a_cleanup_provider_and_not_a_transcriber(self):
         self.assertNotIn("deepseek", cfg.TRANSCRIBERS)
-        self.assertIn("deepseek", cleanup.PROVIDERS)
+        self.assertTrue(cfg.PRESETS["deepseek"].chat)
+        self.assertFalse(cfg.PRESETS["deepseek"].transcription)
         self.assertEqual(cfg.DEFAULTS["deepseek_base_url"],
                          "https://api.deepseek.com")
         self.assertEqual(cfg.DEFAULTS["cleanup_deepseek_model"], "deepseek-flash")
@@ -689,7 +691,7 @@ class Defaults(unittest.TestCase):
     def test_requesty_ships_on_its_own_endpoint_and_is_never_the_default(self):
         self.assertEqual(cfg.DEFAULTS["requesty_base_url"],
                          "https://router.requesty.ai/v1")
-        self.assertIn("requesty", cfg.TRANSCRIBERS)
+        self.assertTrue(cfg.PRESETS["requesty"].transcription)
         self.assertNotEqual(cfg.DEFAULTS["transcribe_provider"], "requesty")
         self.assertNotEqual(cfg.DEFAULTS["cleanup_provider"], "requesty")
         self.assertNotEqual(cfg.DEFAULTS["assistant_provider"], "requesty")

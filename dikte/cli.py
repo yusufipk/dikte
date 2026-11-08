@@ -217,11 +217,11 @@ def cmd_ask(opts):
     if opts.provider:
         conf["assistant_provider"] = opts.provider
     if opts.model:
-        key = {"claude": "assistant_model", "codex": "assistant_codex_model",
-               "openrouter": "assistant_openrouter_model",
-               "agy": "assistant_agy_model",
-               "opencode": "assistant_opencode_model",
-               "requesty": "assistant_requesty_model"}[assistant.provider(conf)]
+        key = (cfg.model_setting("assistant", conf.custom_preset("assistant"))
+               if assistant.provider(conf) == "custom" else
+               {"claude": "assistant_model", "codex": "assistant_codex_model",
+                "openrouter": "assistant_openrouter_model", "agy": "assistant_agy_model"}
+               [assistant.provider(conf)])
         conf[key] = opts.model
     if opts.dir:
         conf["assistant_dir"] = opts.dir
@@ -282,7 +282,7 @@ def cmd_session(opts):
     minutes = None if age is None else int(age // 60)
     # The conversation on disk belongs to whoever was asked last, which is not
     # always whoever would be asked next; none of them can pick up another's.
-    owner = assistant.stored_provider()
+    owner = assistant.stored_provider(conf)
     told = f"{assistant.display_name(conf)}: "
     if minutes is None:
         told += "no conversation going."
@@ -312,7 +312,7 @@ def cmd_transcribe(opts):
     # be handed their settings here too; the GUI does this at startup.
     conf.apply_local()
     target = conf.transcribe_target()
-    if not api.gives_times(target.provider):
+    if not api.gives_times(target.provider, target.preset):
         if opts.srt or opts.timestamps:
             return fail(opts, api.no_times(target.service))
         # The settings window greys the switch out for this provider and
@@ -541,9 +541,7 @@ def cmd_history_clear(opts):
 
 # --- settings ---------------------------------------------------------------
 
-SECRET_KEYS = ("openai_api_key", "groq_api_key", "openrouter_api_key",
-               "gemini_api_key", "deepseek_api_key", "opencode_api_key", "requesty_api_key",
-               "custom_api_key")
+SECRET_KEYS = tuple(key for key in cfg.DEFAULTS if key.endswith("_api_key"))
 
 
 def _mask(key, value):
@@ -554,6 +552,9 @@ def _mask(key, value):
 
 def _coerce(key, raw):
     """A value off the command line, in the type the setting is stored as."""
+    if (key in ("transcribe_provider", "transcribe_custom_preset") and raw in cfg.ALIASES
+            and not cfg.PRESETS[raw].transcription):
+        raise ValueError(f"{cfg.PRESETS[raw].service} does not support transcription.")
     default = cfg.DEFAULTS[key]
     if isinstance(default, bool):
         lowered = raw.strip().lower()
@@ -723,31 +724,27 @@ def cmd_devices(opts):
                "\n".join(lines))
 
 
+def _catalog(conf, name, transcription=False, test_key=False):
+    if name == "openrouter":
+        return api.openrouter_models(conf.openrouter_key(), transcription=transcription)
+    if name == "custom" or name in cfg.ALIASES:
+        role = "transcribe" if transcription else "cleanup"
+        conf[f"{role}_custom_preset"] = "other" if name == "custom" else name
+        target = conf.custom_target(role)
+        # Reject a chat-only alias before role validation falls back to Other.
+        if transcription and name in cfg.ALIASES and not cfg.PRESETS[name].transcription:
+            raise api.ApiError(f"{cfg.PRESETS[name].service} does not support transcription.")
+        # Legacy audio-provider listings stay audio-only; chat presets can fetch all.
+        audio = transcription or (name in cfg.ALIASES and cfg.PRESETS[name].catalog == "audio")
+        return api.preset_models(target.preset, target.api_key, target.base_url, audio, test_key)
+    who = cfg.TRANSCRIBERS[name]
+    return api.openai_models(conf.api_key(who.key), conf[who.url], who.service)
+
+
 def cmd_models(opts):
     conf = cfg.Config()
     try:
-        if opts.provider == "deepseek":
-            if opts.transcription:
-                return fail(opts, "DeepSeek is a cleanup provider, not a transcriber.")
-            models = api.openai_models(conf.deepseek_key(), conf["deepseek_base_url"],
-                                       "DeepSeek")
-        elif opts.provider == "openrouter":
-            models = api.openrouter_models(conf.openrouter_key(),
-                                           transcription=opts.transcription)
-        elif opts.provider == "requesty":
-            models = api.requesty_models(conf.requesty_key(), conf["requesty_base_url"],
-                                         transcription=opts.transcription)
-        elif opts.provider == "custom":
-            models = api.custom_models(conf.custom_key(), conf["custom_base_url"],
-                                       "Custom server", transcription=opts.transcription)
-        elif opts.provider == "gemini":
-            # The chat models are the ones that transcribe there. The listing
-            # names no input types, so one that takes no audio cannot be left out.
-            models = api.gemini_models(conf.gemini_key(), conf["gemini_base_url"])
-        else:
-            who = cfg.TRANSCRIBERS[opts.provider]
-            models = api.openai_models(conf.api_key(who.key), conf[who.url],
-                                       who.service)
+        models = _catalog(conf, opts.provider, opts.transcription)
     except api.ApiError as exc:
         return fail(opts, exc)
     return out(opts, {"ok": True, "provider": opts.provider, "models": models},
@@ -757,52 +754,20 @@ def cmd_models(opts):
 def cmd_test_key(opts):
     conf = cfg.Config()
     results = {}
-    for name, who in cfg.TRANSCRIBERS.items():
+    for name in (*cfg.TRANSCRIBERS, *cfg.ALIASES):
         if opts.which not in (name, "all"):
             continue
-        if name == "custom" and opts.which == "all" and not conf[who.url].strip():
-            # Nobody has one until they type its address in; that is not a
-            # key that failed.
+        if name == "custom" and opts.which == "all" and not conf["custom_base_url"].strip():
             continue
         try:
             if name == "openrouter":
-                # The one key that also pays for cleanup, so it reports credit
-                # rather than a model count.
                 message = api.openrouter_key_status(conf.openrouter_key())
-            elif name == "custom":
-                # The key is optional there, so the address is what is tested.
-                count = len(api.custom_models(conf.custom_key(), conf[who.url],
-                                              who.service))
-                message = f"connection works, {count} models visible"
-            elif name == "gemini":
-                count = len(api.gemini_models(conf.gemini_key(),
-                                              conf["gemini_base_url"]))
-                message = f"connection works, {count} models visible"
             else:
-                count = len(api.openai_models(conf.api_key(who.key), conf[who.url],
-                                              who.service))
+                count = len(_catalog(conf, name, test_key=True))
                 message = f"connection works, {count} models visible"
             results[name] = {"ok": True, "message": message}
         except api.ApiError as exc:
             results[name] = {"ok": False, "message": str(exc)}
-    if opts.which in ("deepseek", "all"):
-        try:
-            count = len(api.openai_models(conf.deepseek_key(),
-                                          conf["deepseek_base_url"], "DeepSeek"))
-            results["deepseek"] = {
-                "ok": True,
-                "message": f"connection works, {count} models visible",
-            }
-        except api.ApiError as exc:
-            results["deepseek"] = {"ok": False, "message": str(exc)}
-    if opts.which in ("opencode", "all"):
-        try:
-            count = len(api.openai_models(conf.opencode_key(),
-                                          conf["opencode_base_url"], "OpenCode Go"))
-            results["opencode"] = {"ok": True,
-                                   "message": f"connection works, {count} models visible"}
-        except api.ApiError as exc:
-            results["opencode"] = {"ok": False, "message": str(exc)}
     everything_ok = all(item["ok"] for item in results.values())
     lines = [f"{'✓' if item['ok'] else '✗'} {name}: {item['message']}"
              for name, item in results.items()]
@@ -1044,18 +1009,15 @@ def cmd_doctor(opts):
     # has a program to find instead, and the model on this machine has neither,
     # so "no key" there has to read as beside the point rather than as one that
     # has gone missing.
-    cleanup_service, cleanup_key = {
-        "openrouter": ("OpenRouter", conf.openrouter_key()),
-        "gemini": ("Google AI Studio", conf.gemini_key()),
-        "deepseek": ("DeepSeek", conf.deepseek_key()),
-        "opencode": ("OpenCode Go", conf.opencode_key()),
-        "requesty": ("Requesty", conf.requesty_key()),
-    }.get(cleaner, ("", ""))
-    if cleanup_service:
+    cleanup_service, cleanup_key = "", ""
+    if cleaner == "custom":
+        cleanup_target = conf.custom_target("cleanup")
+        cleanup_key = cleanup_target.api_key
+        cleanup_service = cleanup_target.service if cleanup_target.preset != "other" else ""
+        cleanup_ready = bool(cleanup_target.base_url) and (not cleanup_service or bool(cleanup_key))
+    elif cleaner == "openrouter":
+        cleanup_service, cleanup_key = "OpenRouter", conf.openrouter_key()
         cleanup_ready = bool(cleanup_key)
-    elif cleaner == "custom":
-        # A key is optional there; the address is what it cannot run without.
-        cleanup_ready = bool(conf["custom_base_url"].strip())
     elif cleaner == "local":
         cleanup_ready = conf.local_llm_ready()
     else:
@@ -1082,7 +1044,7 @@ def cmd_doctor(opts):
     if target.provider == "local":
         transcribe_line = (f"{'✓' if transcribe_ready else '✗'} {target.service}, "
                            f"transcribing on {target.model or 'no model yet'}")
-    elif target.provider == "custom":
+    elif target.provider == "custom" and target.preset == "other":
         transcribe_line = (f"{'✓' if transcribe_ready else '✗'} Custom server "
                            f"{target.base_url or '(no address)'}, transcribing on "
                            f"{target.model or 'its default model'}")
@@ -1097,8 +1059,8 @@ def cmd_doctor(opts):
                         f"cleaning up on {conf['local_llm_model'] or 'no model yet'}")
     elif cleaner == "custom":
         cleanup_line = (f"{'✓' if cleanup_ready else '✗'} Custom server "
-                        f"{conf['custom_base_url'].strip() or '(no address)'}, cleaning up "
-                        f"on {conf['cleanup_custom_model'].strip() or 'its default model'}")
+                        f"{cleanup_target.base_url or '(no address)'}, cleaning up "
+                        f"on {cleanup_target.model or 'its default model'}")
     else:
         # Cleanup on a CLI needs no key, so what is checked is the program.
         cleanup_line = (f"{'✓' if cleanup_ready else '✗'} "
@@ -1215,7 +1177,7 @@ def build_parser():
     ask = leaf(subs, "ask", "put a command to the agent")
     ask.add_argument("text", nargs="*", help="the command; read from stdin, or "
                                              "recorded when there is none")
-    ask.add_argument("--provider", choices=assistant.PROVIDERS,
+    ask.add_argument("--provider", choices=(*assistant.PROVIDERS, *cfg.ALIASES),
                      help="just for this run")
     ask.add_argument("--model", help="just for this run")
     ask.add_argument("--dir", help="working directory, just for this run")
@@ -1343,15 +1305,14 @@ def build_parser():
     # --- the machine ------------------------------------------------------
     leaf(subs, "devices", "microphones and monitors").set_defaults(func=cmd_devices)
     models = leaf(subs, "models", "model ids a provider offers")
-    models.add_argument("--provider", choices=(*cfg.TRANSCRIBERS, "deepseek"),
+    models.add_argument("--provider", choices=(*cfg.TRANSCRIBERS, *cfg.ALIASES),
                         default="openrouter")
     models.add_argument("--transcription", action="store_true",
                         help="only the speech-to-text ones")
     models.set_defaults(func=cmd_models)
     test = leaf(subs, "test-key", "check the API keys")
     test.add_argument("which", nargs="?", default="all",
-                      choices=("all", *cfg.TRANSCRIBERS, "deepseek",
-                               "opencode"))
+                      choices=("all", *cfg.TRANSCRIBERS, *cfg.ALIASES))
     test.set_defaults(func=cmd_test_key)
     leaf(subs, "doctor", "keys, programs, and what is missing").set_defaults(func=cmd_doctor)
 

@@ -44,9 +44,7 @@ python -m dikte
 ## First run
 
 1. The tray icon appears and the Settings window opens.
-2. Under **API and models**, download a local whisper model (the whisper.cpp
-   Windows build is fetched automatically) or enter an OpenAI, Groq or
-   OpenRouter key.
+2. Under **API and models**, download a whisper model (Windows build fetched automatically) or enter an OpenAI or OpenRouter key, or select a Custom server preset.
 3. The shortcut defaults to `Ctrl+Space` and is changed under Shortcuts.
    While Dikte runs, Windows' own hotkey service (RegisterHotKey) listens for
    it: nothing to install and no permission to grant.

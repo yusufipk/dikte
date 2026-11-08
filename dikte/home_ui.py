@@ -87,8 +87,8 @@ def processing_locations(conf, mode="dictation", file_cleanup=None, file_timesta
     sound_model = target.model
     timestamps = conf["file_timestamps"] if file_timestamps is None else file_timestamps
     if mode == "meeting" or (mode == "file" and timestamps):
-        sound_model = api.timestamp_model(target.provider, target.model, target.file_model)
-    if target.provider == "custom" and not sound_model:
+        sound_model = api.timestamp_model(target.provider, target.model, target.file_model, target.preset)
+    if target.provider == "custom" and target.preset == "other" and not sound_model:
         sound_model = t("{name} default model", name=target.service)
     sound = _model_location(sound_model, target.provider, local.get("whisper"))
     enabled = conf["cleanup_enabled"]
@@ -102,7 +102,7 @@ def processing_locations(conf, mode="dictation", file_cleanup=None, file_timesta
     model = cleanup.model(conf)
     if provider in ("codex", "agy") and not conf[f"cleanup_{provider}_model"].strip():
         model = t("{name} default model", name="Codex" if provider == "codex" else "Antigravity")
-    elif provider == "custom" and not conf["cleanup_custom_model"].strip():
+    elif provider == "custom" and conf.custom_preset("cleanup") == "other" and not conf.custom_target("cleanup").model:
         model = t("{name} default model", name=t("Custom server"))
     text = _model_location(model, provider, local.get("llama")) if enabled else t("Editing off")
     location = t("Dictation: {sound} / Cleanup: {text}", sound=sound, text=text)
@@ -503,9 +503,10 @@ class HomeWindow(QWidget):
         binary = assistant.executable(provider)
         if binary:
             return bool(shutil.which(binary))
-        if provider == "requesty":
-            return bool(self.conf.requesty_key())
-        return bool(self.conf.opencode_key() if provider == "opencode" else self.conf.openrouter_key())
+        if provider == "custom":
+            target = self.conf.custom_target("assistant")
+            return bool(target.base_url) and (target.preset == "other" or bool(target.api_key))
+        return bool(self.conf.openrouter_key())
 
     def _capture(self):
         app = self.controller

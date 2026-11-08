@@ -466,10 +466,8 @@ class Settings(DikteTest):
         """An OpenRouter id and a Claude alias are not the same field."""
         window = self.window(cfg.Config())
         boxes = {"openrouter": window.cleanup_model_row,
-                 "opencode": window.cleanup_opencode_model_row,
-                 "requesty": window.cleanup_requesty_model_row,
+                 "custom": window.cleanup_custom_box,
                  "claude": window.cleanup_claude_model,
-                 "deepseek": window.cleanup_deepseek_model_row,
                  "codex": window.cleanup_codex_model}
         for provider, box in boxes.items():
             with self.subTest(provider=provider):
@@ -500,20 +498,16 @@ class Settings(DikteTest):
             window.transcribe_model,
             window.file_model,
             window.cleanup_model,
-            window.cleanup_gemini_model,
-            window.cleanup_deepseek_model,
-            window.cleanup_opencode_model,
-            window.cleanup_requesty_model,
             window.cleanup_agy_model,
             window.cleanup_claude_model,
             window.cleanup_codex_model,
             window.assistant_model,
             window.assistant_agy_model,
-            window.assistant_opencode_model,
-            window.assistant_requesty_model,
             window.assistant_codex_model,
             window.assistant_openrouter_model,
             window.meeting_model,
+            window._preset_model("cleanup"),
+            window._preset_model("assistant"),
             *(box for box, _status, _missing in
               window._shortcut_rows.values()),
         ]
@@ -545,70 +539,93 @@ class Settings(DikteTest):
         self.assertEqual(window.cleanup_codex_model.currentText(),
                          "my-own-model")
 
-    def test_opencode_answering_refills_both_of_its_boxes(self):
-        """The fetched catalog replaces the built-in list in the cleanup and
-        agent boxes alike, and neither loses what was picked."""
-        conf = self.config(cleanup_opencode_model="my-own-model")
-        window = self.window(conf)
-        window._on_opencode_models_loaded(["glm-9", "kimi-k9"], "")
-        for combo in (window.cleanup_opencode_model,
-                      window.assistant_opencode_model):
-            with self.subTest(combo=combo.objectName() or "combo"):
-                offered = [combo.itemText(i) for i in range(combo.count())]
-                self.assertEqual(offered, ["glm-9", "kimi-k9"])
-        self.assertEqual(window.cleanup_opencode_model.currentText(),
-                         "my-own-model")
 
-    def test_opencode_s_list_arriving_at_open_leaves_the_other_boxes_alone(self):
-        conf = self.config(cleanup_opencode_model="my-own-model",
-                           meeting_model="some/meeting-model")
-        window = self.window(conf)
-        before = [window.meeting_model.itemText(i)
-                  for i in range(window.meeting_model.count())]
-        window._on_hosted_models_loaded("opencode", ["glm-5.3", "kimi-k3"])
-        combo = window.cleanup_opencode_model
-        offered = [combo.itemText(i) for i in range(combo.count())]
-        self.assertEqual(offered, ["glm-5.3", "kimi-k3"])
-        self.assertEqual(combo.currentText(), "my-own-model")
-        self.assertEqual([window.meeting_model.itemText(i)
-                          for i in range(window.meeting_model.count())], before)
 
-    def test_opencode_cleanup_offers_a_fetch_button_of_its_own(self):
-        """The OpenRouter button leaves the screen with its box, so OpenCode Go
-        carries its own."""
-        window = self.window(cfg.Config())
-        window._select_data(window.cleanup_provider, "opencode")
-        self.assertFalse(window.cleanup_opencode_model_row.isHidden())
-        self.assertTrue(window.cleanup_model_row.isHidden())
 
-    def test_requesty_answering_refills_both_of_its_boxes(self):
-        conf = self.config(cleanup_requesty_model="my-own-model")
-        window = self.window(conf)
-        window._on_requesty_models_loaded(["gpt-5.4-mini", "openai/gpt-4o-mini"], "")
-        for combo in (window.cleanup_requesty_model,
-                      window.assistant_requesty_model):
-            with self.subTest(combo=combo.objectName() or "combo"):
-                offered = [combo.itemText(i) for i in range(combo.count())]
-                self.assertEqual(offered, ["gpt-5.4-mini", "openai/gpt-4o-mini"])
-        self.assertEqual(window.cleanup_requesty_model.currentText(),
-                         "my-own-model")
 
-    def test_requesty_s_list_arriving_at_open_leaves_the_other_boxes_alone(self):
-        window = self.window(self.config(cleanup_requesty_model="my-own-model"))
-        before = window.cleanup_model.count()
-        window._on_hosted_models_loaded("requesty", ["gpt-5.4-mini"])
-        combo = window.cleanup_requesty_model
-        self.assertEqual([combo.itemText(i) for i in range(combo.count())],
-                         ["gpt-5.4-mini"])
-        self.assertEqual(combo.currentText(), "my-own-model")
-        self.assertEqual(window.cleanup_model.count(), before)
 
-    def test_requesty_agent_shows_its_own_box(self):
-        window = self.window(cfg.Config())
-        window._select_data(window.assistant_provider, "requesty")
-        self.assertFalse(window.requesty_box.isHidden())
-        self.assertTrue(window.openrouter_box.isHidden())
-        self.assertTrue(window.opencode_box.isHidden())
+
+    def test_custom_presets_keep_their_models_and_share_keys(self):
+        window = self.window(self.config())
+        for role in ("cleanup", "assistant"):
+            window._select_data(getattr(window, f"{role}_provider"), "custom")
+            widgets = window._preset_widgets[role]
+            self.assertFalse(getattr(window, f"{role}_custom_box").isHidden())
+            for name in cfg.PRESETS:
+                window._select_data(widgets["preset"], name)
+                self.assertEqual(widgets["url"].isReadOnly(), name != "other")
+                window._preset_model(role).setCurrentText(f"{role}-{name}")
+            for name in cfg.PRESETS:
+                window._select_data(widgets["preset"], name)
+                self.assertEqual(window._preset_model(role).currentText(), f"{role}-{name}")
+        for role in ("cleanup", "assistant"):
+            window._select_data(window._preset_widgets[role]["preset"], "requesty")
+        widgets = window._preset_widgets["cleanup"]
+        widgets["key"].setText("test-only")
+        widgets["key"].editingFinished.emit()
+        self.assertEqual(window._preset_widgets["assistant"]["key"].text(), "test-only")
+        window._save()
+        stored = self.read_config_file()
+        self.assertEqual(stored["requesty_api_key"], "test-only")
+        self.assertEqual(stored["assistant_requesty_model"], "assistant-requesty")
+
+    def test_empty_preset_models_save_defaults_only_for_gateways(self):
+        window = self.window(self.config(transcribe_provider="custom"))
+        for role in ("transcribe", "cleanup", "assistant"):
+            widgets = window._preset_widgets[role]
+            for name, who in cfg.PRESETS.items():
+                if role == "transcribe" and not who.transcription:
+                    continue
+                with self.subTest(role=role, preset=name):
+                    window._select_data(widgets["preset"], name)
+                    combo = window._preset_model(role)
+                    self.assertEqual("server's default" in combo.lineEdit().placeholderText(), name == "other")
+                    combo.setCurrentText("   ")
+                    window._save()
+                    setting = cfg.model_setting(role, name)
+                    self.assertEqual(window.conf[setting], "" if name == "other" else cfg.DEFAULTS[setting])
+
+    def test_unknown_speech_preset_falls_back_to_other(self):
+        window = self.window(self.config(transcribe_provider="custom", transcribe_custom_preset="deepseek"))
+        combo = window._preset_widgets["transcribe"]["preset"]
+        self.assertEqual(combo.currentData(), "other")
+        window._select_data(combo, "unknown-preset")
+        self.assertEqual(combo.currentData(), "other")
+        window._save()
+        self.assertEqual(window.conf.custom_preset("transcribe"), "other")
+
+    def test_requesty_speech_hides_fetch_without_affecting_other_presets(self):
+        window = self.window(self.config(transcribe_provider="requesty"))
+        self.assertTrue(window.refresh_transcribe_models.isHidden())
+        window._select_data(window._preset_widgets["transcribe"]["preset"], "groq")
+        self.assertFalse(window.refresh_transcribe_models.isHidden())
+        window._select_data(window.transcribe_provider, "openai")
+        self.assertFalse(window.refresh_transcribe_models.isHidden())
+
+    def test_selected_gateway_catalog_is_fetched_once_at_open(self):
+        window = self.window(self.config(transcribe_provider="groq", cleanup_provider="groq",
+                                         groq_api_key="gateway-key", requesty_api_key="unused-key"))
+        with mock.patch.dict(os.environ, {}, clear=True), \
+                mock.patch.object(settings_ui.threading, "Thread") as thread, \
+                mock.patch.object(settings_ui.api, "preset_models", return_value=[]) as fetch:
+            REAL_LOAD_HOSTED_MODELS(window)
+            self.assertEqual(thread.call_count, 1)
+            thread.call_args.kwargs["target"]()
+        self.assertEqual(fetch.call_args.args[0], "groq")
+
+    def test_preset_catalogs_refill_only_the_matching_chat_boxes(self):
+        window = self.window(self.config(cleanup_model="keep-me"))
+        for name in cfg.PRESETS:
+            for role in ("cleanup", "assistant"):
+                window._select_data(window._preset_widgets[role]["preset"], name)
+                window._preset_model(role).setCurrentText("typed-model")
+            window._on_hosted_models_loaded(name, ["first", "second"])
+            for role in ("cleanup", "assistant"):
+                combo = window._preset_model(role)
+                self.assertEqual([combo.itemText(i) for i in range(combo.count())],
+                                 ["first", "second"])
+                self.assertEqual(combo.currentText(), "typed-model")
+        self.assertEqual(window.cleanup_model.currentText(), "keep-me")
 
     def test_agy_answering_refills_both_of_its_boxes(self):
         """The same arrangement as Codex: both boxes, nothing chosen is lost."""
@@ -631,16 +648,9 @@ class Settings(DikteTest):
                 offered = [combo.itemText(i) for i in range(combo.count())]
                 self.assertEqual(offered, ["a/one", "b/two"])
         self.assertEqual(window.cleanup_model.currentText(), "my/own-model")
-
-    def test_google_s_list_arriving_at_open_refills_its_own_box_only(self):
-        window = self.window(self.config(cleanup_gemini_model="gemini-x"))
-        before = window.cleanup_model.count()
-        window._on_hosted_models_loaded("gemini", ["gemini-4-flash"])
-        offered = [window.cleanup_gemini_model.itemText(i)
-                   for i in range(window.cleanup_gemini_model.count())]
-        self.assertEqual(offered, ["gemini-4-flash"])
-        self.assertEqual(window.cleanup_gemini_model.currentText(), "gemini-x")
-        self.assertEqual(window.cleanup_model.count(), before)
+        combo = window.assistant_openrouter_model
+        self.assertEqual([combo.itemText(i) for i in range(combo.count())],
+                         settings_ui.ASSISTANT_OR_MODELS)
 
     def test_no_key_no_call_home_at_open(self):
         """Opening Settings is not consent to be talked about to two vendors."""
@@ -650,7 +660,7 @@ class Settings(DikteTest):
             REAL_LOAD_HOSTED_MODELS(window)
         thread.assert_not_called()
 
-    def test_a_key_on_file_is_fetched_with_at_open(self):
+    def test_unused_gateway_keys_are_not_fetched_at_open(self):
         window = self.window(self.config(openrouter_api_key="sk-or-x",
                                          gemini_api_key="AIza-x",
                                          deepseek_api_key="sk-deepseek-x",
@@ -658,7 +668,7 @@ class Settings(DikteTest):
                                          requesty_api_key="rqsty-x"))
         with mock.patch.object(settings_ui.threading, "Thread") as thread:
             REAL_LOAD_HOSTED_MODELS(window)
-        self.assertEqual(thread.call_count, 5)
+        self.assertEqual(thread.call_count, 1)
 
     def test_the_update_line_names_the_version_that_is_running(self):
         window = self.window(cfg.Config())
@@ -773,7 +783,7 @@ class Settings(DikteTest):
                            "openrouter_transcribe_model": "openai/whisper-1"})
         conf = cfg.Config()
         window = self.window(conf)
-        for provider in ("groq", "openrouter"):
+        for provider in ("custom", "openrouter"):
             window.transcribe_provider.setCurrentIndex(
                 window.transcribe_provider.findData(provider))
         window._save()
@@ -795,15 +805,14 @@ class Settings(DikteTest):
             window.transcribe_provider.findData("openai"))
         self.assertFalse(window.stt_form.isRowVisible(window.file_model_row))
 
-    def test_requesty_has_no_speech_model_list_to_fetch(self):
+    def test_custom_speech_presets_offer_fetch_and_only_audio_endpoints(self):
         window = self.window(cfg.Config())
-        window.transcribe_provider.setCurrentIndex(
-            window.transcribe_provider.findData("requesty"))
-        self.assertTrue(window.refresh_transcribe_models.isHidden())
-        self.assertFalse(window.stt_form.isRowVisible(window.file_model_row))
-        window.transcribe_provider.setCurrentIndex(
-            window.transcribe_provider.findData("openrouter"))
+        window._select_data(window.transcribe_provider, "custom")
+        combo = window._preset_widgets["transcribe"]["preset"]
+        self.assertEqual([combo.itemData(i) for i in range(combo.count())],
+                         [name for name, who in cfg.PRESETS.items() if who.transcription])
         self.assertFalse(window.refresh_transcribe_models.isHidden())
+        self.assertFalse(window.stt_form.isRowVisible(window.file_model_row))
 
     def test_the_provider_box_offers_every_provider_config_knows(self):
         window = self.window(cfg.Config())
@@ -820,16 +829,15 @@ class Settings(DikteTest):
     def test_the_answer_to_a_test_lands_under_the_key_it_was_asked_about(self):
         """One signal serves all three buttons, so it carries which one asked."""
         window = self.window(cfg.Config())
-        window._on_test_done("groq", True, "it works")
-        button, answer = window._testers["groq"]
+        window._on_test_done("openrouter", True, "it works")
+        button, answer = window._testers["openrouter"]
         self.assertEqual(answer.text(), "✓ it works")
         self.assertTrue(button.isEnabled())
         self.assertEqual(window._testers["openai"][1].text(), "")
 
-    def test_a_key_lands_in_the_field_of_its_own_provider(self):
-        self.write_config({"groq_api_key": "gsk-mine"})
-        window = self.window(cfg.Config())
-        self.assertEqual(window.groq_key.text(), "gsk-mine")
+    def test_a_key_lands_in_the_field_of_its_own_preset(self):
+        window = self.window(self.config(transcribe_provider="groq", groq_api_key="gsk-mine"))
+        self.assertEqual(window._preset_widgets["transcribe"]["key"].text(), "gsk-mine")
         self.assertEqual(window.openai_key.text(), "")
 
     def test_saving_applies_the_lowered_history_limit_at_once(self):
@@ -915,8 +923,8 @@ class Settings(DikteTest):
 
     def test_picking_google_ai_studio_says_what_it_cannot_do(self):
         window = self.window(cfg.Config())
-        window.transcribe_provider.setCurrentIndex(
-            window.transcribe_provider.findData("gemini"))
+        window._select_data(window.transcribe_provider, "custom")
+        window._select_data(window._preset_widgets["transcribe"]["preset"], "gemini")
         self.assertIn("timestamps", window.transcribe_status.text())
         self.assertEqual(window.transcribe_model.currentText(),
                          "gemini-3.5-flash-lite")
@@ -927,12 +935,12 @@ class Settings(DikteTest):
 
     def test_the_timestamp_warning_outlives_a_fetch_of_the_model_list(self):
         window = self.window(cfg.Config())
-        window.transcribe_provider.setCurrentIndex(
-            window.transcribe_provider.findData("gemini"))
-        window._on_transcribe_models_loaded(["gemini-3.5-flash"], "")
+        window._select_data(window.transcribe_provider, "custom")
+        window._select_data(window._preset_widgets["transcribe"]["preset"], "gemini")
+        window._on_preset_models_loaded("transcribe", "gemini", ["gemini-3.5-flash"], "")
         self.assertIn("1 models loaded.", window.transcribe_status.text())
         self.assertIn("timestamps", window.transcribe_status.text())
-        window._on_transcribe_models_loaded([], "denied")
+        window._on_preset_models_loaded("transcribe", "gemini", [], "denied")
         self.assertIn("denied", window.transcribe_status.text())
         self.assertIn("timestamps", window.transcribe_status.text())
         window.transcribe_provider.setCurrentIndex(
@@ -942,23 +950,26 @@ class Settings(DikteTest):
 
     def test_a_list_that_lands_after_the_provider_changed_is_dropped(self):
         window = self.window(cfg.Config())
-        window.transcribe_provider.setCurrentIndex(
-            window.transcribe_provider.findData("gemini"))
+        window._select_data(window.transcribe_provider, "custom")
+        window._select_data(window._preset_widgets["transcribe"]["preset"], "gemini")
         with mock.patch.object(settings_ui.threading, "Thread"):
             REAL_LOAD_TRANSCRIBE_MODELS(window)
         window.transcribe_provider.setCurrentIndex(
             window.transcribe_provider.findData("openai"))
-        window._on_transcribe_models_loaded(["gemini-3.5-flash"], "")
+        window._on_preset_models_loaded("transcribe", "gemini", ["gemini-3.5-flash"], "")
         self.assertEqual(window.transcribe_status.text(), "")
         self.assertEqual(window.transcribe_model.findText("gemini-3.5-flash"), -1)
         self.assertTrue(window.refresh_transcribe_models.isEnabled())
 
-    def test_the_gemini_key_is_one_field_for_both_jobs(self):
-        self.write_config({"gemini_api_key": "AIza-mine"})
-        window = self.window(cfg.Config())
-        self.assertIs(window._key_fields["gemini"], window.gemini_key)
-        self.assertEqual(window.gemini_key.text(), "AIza-mine")
-        window.gemini_key.setText("AIza-new")
+    def test_the_gemini_key_is_shared_by_presets_in_both_jobs(self):
+        window = self.window(self.config(transcribe_provider="gemini", cleanup_provider="gemini",
+                                         gemini_api_key="AIza-mine"))
+        for role in ("transcribe", "cleanup"):
+            self.assertEqual(window._preset_widgets[role]["key"].text(), "AIza-mine")
+        widgets = window._preset_widgets["transcribe"]
+        widgets["key"].setText("AIza-new")
+        widgets["key"].editingFinished.emit()
+        self.assertEqual(window._preset_widgets["cleanup"]["key"].text(), "AIza-new")
         window._save()
         self.assertEqual(self.read_config_file()["gemini_api_key"], "AIza-new")
 
@@ -1323,9 +1334,9 @@ class EveryRecordingProtectsTheFront(DikteTest):
         """
         dikte = mock.Mock(**attributes)
         dikte._run_id = 0
-        dikte.conf = {"mic_target": "", "max_seconds": 60,
+        dikte.conf = self.config(**{"mic_target": "", "max_seconds": 60,
                       "meeting_mic_target": "", "meeting_system_target": "",
-                      "meeting_max_seconds": 60, "transcribe_provider": "local"}
+                      "meeting_max_seconds": 60, "transcribe_provider": "local"})
         dikte._the_front.side_effect = lambda: self.order.append("noted") or 4242
         dikte._give_the_front_back.side_effect = (
             lambda pid: self.order.append(f"watching {pid}"))
@@ -2996,8 +3007,7 @@ class LocalModels(DikteTest):
     def test_each_cleaner_brings_its_own_model_row_and_no_other(self):
         window = self.window(cfg.Config())
         rows = {"openrouter": window.cleanup_model_row,
-                "gemini": window.cleanup_gemini_model_row,
-                "deepseek": window.cleanup_deepseek_model_row,
+                "custom": window.cleanup_custom_box,
                 "claude": window.cleanup_claude_model,
                 "codex": window.cleanup_codex_model,
                 "agy": window.cleanup_agy_model}
@@ -3011,7 +3021,8 @@ class LocalModels(DikteTest):
     def test_each_agent_brings_its_own_box_and_no_other(self):
         window = self.window(cfg.Config())
         boxes = {"claude": window.claude_box, "codex": window.codex_box,
-                 "agy": window.agy_box, "openrouter": window.openrouter_box}
+                 "agy": window.agy_box, "openrouter": window.openrouter_box,
+                 "custom": window.assistant_custom_box}
         for chosen, box in boxes.items():
             with self.subTest(provider=chosen):
                 window._select_data(window.assistant_provider, chosen)

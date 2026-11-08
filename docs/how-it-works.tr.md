@@ -61,7 +61,7 @@ olmasını ister.
   olmanı sağlayan da budur. Codex (`codex exec`) ile Antigravity (`agy -p`) da
   aynı şekilde çalışır; ama Antigravity'ye Dikte bir izin kipi ya da sandbox
   veremiyor, sormadan ne yapabileceğini kendi allow-rule'ları belirliyor.
-  OpenRouter, OpenCode Go ya da Requesty ise hiçbiri kurulu olmayan bir
+  OpenRouter ya da Özel sunucu ise hiçbiri kurulu olmayan bir
   makinede düz soru
   cevap için duruyor. Sağlayıcı, model, izinler ve çalışma dizini, seçili metin
   hakkında soran isteğe bağlı kısayolla birlikte Ayarlar → Ajan sekmesinde; arka

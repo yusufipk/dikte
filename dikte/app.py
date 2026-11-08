@@ -1276,10 +1276,9 @@ class Dikte:
             return
         # A meeting transcript is built out of segment times. Said now rather
         # than after an hour of recording that nothing can write up.
-        provider = self.conf["transcribe_provider"]
-        if not api.gives_times(provider):
-            self._on_meeting_error(str(api.no_times(
-                t(cfg.TRANSCRIBERS[provider].service))))
+        target = self.conf.transcribe_target()
+        if not api.gives_times(target.provider, target.preset):
+            self._on_meeting_error(str(api.no_times(target.service)))
             return
         base = meeting.new_base()
         _, wav_path = cfg.meeting_paths(base)

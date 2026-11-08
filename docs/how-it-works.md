@@ -61,7 +61,7 @@ running.
   a thing you can say to a window that is not Claude. Codex (`codex exec`) and
   Antigravity (`agy -p`) run the same way, though Antigravity takes neither a
   permission mode nor a sandbox from Dikte: what it may do without asking is
-  whatever its own allow-rules say. OpenRouter, OpenCode Go or Requesty is
+  whatever its own allow-rules say. OpenRouter or Custom server is
   there as a
   plain question-and-answer fallback for a machine with no CLI on it. Provider,
   model, permissions and working directory are under Settings → Agent, along
