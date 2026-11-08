@@ -2073,6 +2073,7 @@ class SettingsWindow(QDialog):
         name = rows["preset"].currentData() or "other"
         key = rows["key"].text().strip() or self.conf.api_key(cfg.PRESETS[name].key)
         base = rows["url"].text().strip()
+        self.__dict__.setdefault("_preset_tested", {})[role] = name
         self._test_key(f"preset:{role}", lambda: key_check(name, key, base))
 
     def _preset_model_settings(self):
@@ -4361,6 +4362,11 @@ class SettingsWindow(QDialog):
     def _on_test_done(self, provider, ok, message):
         button, answer = self._testers[provider]
         button.setEnabled(True)
+        if provider.startswith("preset:"):
+            role = provider.split(":", 1)[1]
+            asked = getattr(self, "_preset_tested", {}).get(role)
+            if asked != self._preset_widgets[role]["preset"].currentData():
+                return  # another preset was picked while this one was tried
         answer.setText(("✓ " if ok else "✗ ") + message)
         answer.setObjectName("muted" if ok else "danger")
         answer.style().unpolish(answer)

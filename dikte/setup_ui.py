@@ -210,6 +210,7 @@ class SetupDialog(QDialog):
                 if provider in cfg.PRESETS else self.conf[cfg.TRANSCRIBERS[provider].url])
         self.test.setEnabled(False)
         self._testing = True
+        self._tested = provider
         self.answer.set(t("Trying…"))
         from .settings_ui import key_check
 
@@ -224,6 +225,8 @@ class SetupDialog(QDialog):
     def _on_checked(self, ok, message):
         self._testing = False
         self.test.setEnabled(True)
+        if getattr(self, "_tested", None) != self.provider():
+            return  # the answer is about a service no longer picked
         if ok:
             self.answer.set(message)
         else:
@@ -366,6 +369,8 @@ class SetupDialog(QDialog):
         one is given; the other jobs on that preset share it."""
         settings = self.settings
         rows = settings._preset_widgets[role]
+        if rows["preset"].findData(name) < 0:
+            return
         settings._select_data(rows["preset"], name)
         if key is not None:
             rows["key"].setText(key)

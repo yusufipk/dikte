@@ -191,6 +191,8 @@ def processing_parts(conf, mode="dictation", file_cleanup=None, file_timestamps=
         model = t("{name} default model", name="Codex" if provider == "codex" else "Antigravity")
     elif provider == "custom" and conf.custom_preset("cleanup") == "other" and not conf.custom_target("cleanup").model:
         model = t("{name} default model", name=t("Custom server"))
+    elif provider == "custom" and not conf.custom_target("cleanup").model:
+        model = t("Model not selected")
     text = _model_location(model, provider, local.get("llama")) if enabled else t("Editing off")
     parts = {"sound": sound, "text": text}
     if mode == "meeting":
