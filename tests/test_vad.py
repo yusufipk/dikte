@@ -120,6 +120,20 @@ class Hallucinations(DikteTest):
         self.assertTrue(vad.looks_like_hallucination(
             "Altyazı M.K. Altyazı M.K. Altyazı M.K.", 3.0))
 
+    def test_a_subtitle_credit_in_any_order(self):
+        for text in ("Çeviri ve Altyazı M.K.", "Altyazı ve Çeviri M.K.",
+                     "Çeviri Altyazı M K", "Altyazı M.K. Çeviri",
+                     "Çeviri ve Altyazılar M.K."):
+            with self.subTest(text=text):
+                self.assertTrue(vad.looks_like_hallucination(text, 1.7))
+
+    def test_a_sentence_about_subtitles_is_kept(self):
+        # Only a line made entirely of the credit's words is dropped.
+        for text in ("Altyazı M.K. diye bir yazı çıktı.", "Çeviri ve altyazı",
+                     "Çeviri ve altyazı hazır mı?"):
+            with self.subTest(text=text):
+                self.assertFalse(vad.looks_like_hallucination(text, 2.0))
+
     def test_a_long_clip_is_believed(self):
         # Somebody who talks for half a minute and lands on the phrase meant it.
         self.assertFalse(vad.looks_like_hallucination("Thanks for watching", 30.0))
