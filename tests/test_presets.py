@@ -230,6 +230,36 @@ class WireCompatibility(DikteTest):
                          preset=preset, base_url="https://example.invalid/v1")
             self.assertEqual(sent_json(calls[0])["reasoning"], {"effort": "none", "exclude": True})
 
+    def test_a_gateway_without_a_model_is_refused_before_sending(self):
+        # Groq has no chat default; an empty name would only come back as a 400.
+        conf = self.config(cleanup_provider="custom", cleanup_custom_preset="groq",
+                           assistant_provider="custom", assistant_custom_preset="groq",
+                           groq_api_key="key")
+        with fake_urlopen({"choices": [{"message": {"content": "x"}}]}) as calls:
+            with self.assertRaisesRegex(api.ApiError, "Groq"):
+                cleanup.run("merhaba", conf, "rules")
+            with self.assertRaisesRegex(assistant.AssistantError, "Groq"):
+                assistant.ask("hello", conf, keep_session=False)
+        self.assertEqual(calls, [])
+
+    def test_every_chat_preset_except_groq_has_a_default_model(self):
+        for role in ("cleanup", "assistant"):
+            for name in cfg.ALIASES:
+                if name == "groq" or not cfg.PRESETS[name].chat:
+                    continue
+                with self.subTest(role=role, preset=name):
+                    self.assertTrue(cfg.DEFAULTS[cfg.model_setting(role, name)])
+
+    def test_a_foreign_custom_session_is_reported_without_its_hash(self):
+        conf = self.config(assistant_provider="claude")
+        assistant.write_session("custom:groq:" + "a" * 64, messages=[{"role": "user", "content": "x"}])
+        self.assertEqual(assistant.stored_provider(conf), "custom:groq")
+
+    def test_config_set_refuses_a_chat_only_transcription_preset(self):
+        for key in ("transcribe_provider", "transcribe_custom_preset"):
+            with self.subTest(key=key), self.assertRaises(ValueError):
+                cli._coerce(key, "deepseek")
+
     def test_switching_custom_endpoints_does_not_forward_conversation(self):
         conf = self.config(assistant_provider="custom", custom_base_url="http://localhost:8000/v1")
         with fake_urlopen({"choices": [{"message": {"content": "answer"}}]}) as calls:

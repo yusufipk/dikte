@@ -1644,7 +1644,8 @@ class SettingsWindow(QDialog):
         combo.setCurrentText(self._custom_values[cfg.model_setting(role, name)])
         combo.lineEdit().setPlaceholderText(
             t("Empty: the server's default model") if name == "other"
-            else cfg.DEFAULTS[cfg.model_setting(role, name)])
+            else cfg.DEFAULTS[cfg.model_setting(role, name)]
+            or t("Pick a model from the list"))
         if role == "transcribe":
             self.refresh_transcribe_models.setVisible(name != "requesty")
 
@@ -3414,7 +3415,7 @@ class SettingsWindow(QDialog):
             jobs.append(("openrouter",
                          lambda: api.openrouter_models(openrouter_key)))
         selected = {self.conf.custom_preset(role)
-                    for role in self._preset_widgets
+                    for role in ("cleanup", "assistant")
                     if self.conf[f"{role}_provider"] == "custom"}
         for name, who in cfg.PRESETS.items():
             key = self.conf.api_key(who.key)

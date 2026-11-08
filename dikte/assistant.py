@@ -243,7 +243,9 @@ def stored_provider(conf=None):
         legacy = name in ("requesty", "opencode") and name == conf.custom_preset("assistant")
         if name == chat_session(conf) or legacy:
             return "custom"
-    return name
+    # Another endpoint's owner ends in a hash of its address, which is noise
+    # to a reader; the preset is enough, and it still differs from "custom".
+    return ":".join(name.split(":")[:2]) if name.startswith("custom:") else name
 
 
 def session_age():

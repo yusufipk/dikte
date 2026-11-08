@@ -1190,6 +1190,10 @@ def cleanup(text, api_key, model, system_prompt, reasoning="",
             service="OpenRouter", aborter=None, context=0, preset=""):
     if provider == "custom":
         base_url = custom_base(base_url, service)
+    if not model and provider == "custom" and preset not in ("", "other"):
+        # A gateway has no model of its own to fall back on; sending an empty
+        # name only earns a 400 that does not say what is missing.
+        raise ApiError(t("Choose a {service} model in Settings.", service=service))
     if not api_key and provider != "local-llm" and (provider != "custom" or preset not in ("", "other")):
         raise ApiError(t("{service} API key is empty. Add it in Settings.",
                          service=service))
@@ -1250,6 +1254,10 @@ def chat(messages, api_key, model, system_prompt, reasoning="",
     """
     if provider == "custom":
         base_url = custom_base(base_url, service)
+    if not model and provider == "custom" and preset not in ("", "other"):
+        # A gateway has no model of its own to fall back on; sending an empty
+        # name only earns a 400 that does not say what is missing.
+        raise ApiError(t("Choose a {service} model in Settings.", service=service))
     if not api_key and (provider != "custom" or preset not in ("", "other")):
         raise ApiError(t("{service} API key is empty. Add it in Settings.",
                          service=service))

@@ -339,6 +339,8 @@ TR = {
     "Custom server": "Özel sunucu",
     "Custom server address": "Özel sunucu adresi",
     "Empty: the server's default model": "Boş: sunucunun varsayılan modeli",
+    "Pick a model from the list": "Listeden bir model seçin",
+    "Choose a {service} model in Settings.": "Ayarlar'da bir {service} modeli seçin.",
     "Test": "Test et",
     "Trying…": "Deneniyor…",
     "Runs on OpenRouter.": "OpenRouter üzerinde çalışır.",

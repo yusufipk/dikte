@@ -552,7 +552,8 @@ def _mask(key, value):
 
 def _coerce(key, raw):
     """A value off the command line, in the type the setting is stored as."""
-    if key == "transcribe_provider" and raw in cfg.ALIASES and not cfg.PRESETS[raw].transcription:
+    if (key in ("transcribe_provider", "transcribe_custom_preset") and raw in cfg.ALIASES
+            and not cfg.PRESETS[raw].transcription):
         raise ValueError(f"{cfg.PRESETS[raw].service} does not support transcription.")
     default = cfg.DEFAULTS[key]
     if isinstance(default, bool):

@@ -607,6 +607,8 @@ DEFAULTS = {
     "assistant_agy_model": "",      # empty -> whatever Antigravity is set to
     "assistant_opencode_model": "deepseek-v4-flash",
     "assistant_requesty_model": "google/gemini-3.5-flash",
+    "assistant_gemini_model": "gemini-3.5-flash",
+    "assistant_deepseek_model": "deepseek-flash",
     "assistant_reasoning": "",      # empty -> the model's own default
     "assistant_dir": "",            # empty -> the home directory
     "assistant_prompt": "",         # empty -> language-specific default
