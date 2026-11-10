@@ -92,7 +92,14 @@ $stream = New-Object System.IO.Compression.GzipStream(
 $binary = [System.IO.File]::Create((Join-Path $bin "ffmpeg.exe"))
 try { $stream.CopyTo($binary) } finally { $binary.Dispose(); $stream.Dispose(); $compressed.Dispose() }
 
-# 4. The setup program ------------------------------------------------------
+# 4. Portable build ---------------------------------------------------------
+$portableFile = Join-Path $dist 'portable'
+New-Item -ItemType File $portableFile | Out-Null
+$zipPath = "dist/Dikte-$version-x64-portable.zip"
+Compress-Archive -Path (Join-Path $dist '*') -DestinationPath $zipPath
+Remove-Item $portableFile
+
+# 5. The setup program ------------------------------------------------------
 # Inno Setup comes with the GitHub runner. On a machine that has not got it:
 # winget install JRSoftware.InnoSetup
 $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
