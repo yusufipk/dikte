@@ -353,7 +353,10 @@ def _request(url, data, headers, timeout=120, aborter=None):
     req = _authenticated_request(url, data=data, headers=headers, method="POST")
     try:
         with _opened(req, timeout, aborter) as resp:
-            return json.loads(resp.read().decode("utf-8"))
+            payload = json.loads(resp.read().decode("utf-8"))
+        if not isinstance(payload, dict):
+            raise _malformed()
+        return payload
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", "replace")
         raise ApiError(f"HTTP {exc.code}: {_extract_error(body)}", exc.code) from exc
@@ -395,6 +398,53 @@ def _extract_error(body):
     if isinstance(err, str):
         return err
     return body[:300]
+
+
+def _malformed():
+    return ApiError(t("The response was not in the expected format."))
+
+
+def _expect_dict(value):
+    if not isinstance(value, dict):
+        raise _malformed()
+    return value
+
+
+def _expect_list(value):
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise _malformed()
+    return value
+
+
+def _expect_dicts(values):
+    if any(not isinstance(item, dict) for item in values):
+        raise _malformed()
+    return values
+
+
+def _expect_str(value):
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise _malformed()
+    return value
+
+
+def _seconds(value):
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise _malformed() from exc
+
+
+def _first_choice(data):
+    data = _expect_dict(data)
+    choices = _expect_dicts(_expect_list(data.get("choices")))
+    if not choices:
+        raise ApiError(_extract_error(json.dumps(data)))
+    return choices[0]
 
 
 def _multipart(fields, file_field, file_path):
@@ -545,7 +595,7 @@ def _merge_word_splits(segments):
     """
     merged = []
     for seg in segments:
-        text = seg.get("text") or ""
+        text = _expect_str(seg.get("text"))
         if merged and _continues_a_word(merged[-1]["text"], text):
             merged[-1]["text"] += text
             merged[-1]["end"] = seg.get("end") or merged[-1]["end"]
@@ -582,7 +632,7 @@ def _too_coarse(segments):
     """
     if not segments:
         return True
-    return any(float(seg.get("end") or 0.0) - float(seg.get("start") or 0.0)
+    return any(_seconds(seg.get("end") or 0.0) - _seconds(seg.get("start") or 0.0)
                > WHISPER_WINDOW for seg in segments)
 
 
@@ -596,6 +646,7 @@ def cues_from_words(words):
     cues = []
     start = end = 0.0
     current = []
+    words = _expect_dicts(_expect_list(words))
 
     def flush():
         nonlocal current
@@ -604,11 +655,11 @@ def cues_from_words(words):
             current = []
 
     for word in words:
-        text = (word.get("word") or "").strip()
+        text = _expect_str(word.get("word")).strip()
         if not text:
             continue
-        at = float(word.get("start") or 0.0)
-        until = float(word.get("end") or at)
+        at = _seconds(word.get("start") or 0.0)
+        until = _seconds(word.get("end") or at)
         if current:
             grown = len(" ".join(current)) + 1 + len(text)
             if grown > MAX_CUE_CHARS or until - start > MAX_CUE_SECONDS:
@@ -835,13 +886,10 @@ def _gemini_request(target, audio, audio_format, language, prompt, timeout, abor
             data = send()
     except ApiError as exc:
         raise explain(exc, target.service) from None
-    choices = data.get("choices") or []
-    if not choices:
-        raise ApiError(_extract_error(json.dumps(data)))
-    message = choices[0].get("message") or {}
-    content = message.get("content")
-    content = _gemini_text(content if isinstance(content, str) else "")
-    reason = choices[0].get("finish_reason")
+    choice = _first_choice(data)
+    message = _expect_dict(choice.get("message") or {})
+    content = _gemini_text(_expect_str(message.get("content")))
+    reason = choice.get("finish_reason")
     if not content and reason not in (None, "stop"):
         # Nothing written and no clean stop is not silence, and saying the
         # transcript came back empty would send the user looking at the mic.
@@ -900,7 +948,7 @@ def transcribe(target, audio_path, language="", prompt="", timeout=300, aborter=
             target, audio_path, language, prompt, "json", timeout=timeout,
             aborter=aborter,
         )
-        text = data.get("text") or ""
+        text = _expect_str(data.get("text"))
     if target.provider == "local":
         text = _local_text(text)
     text = text.strip()
@@ -935,7 +983,7 @@ def transcribe_detected(target, audio_path, language="", prompt="", timeout=300,
             target, audio_path, language, prompt, "verbose_json",
             detect_language=True, timeout=timeout, aborter=aborter,
         )
-        text = _local_text(data.get("text") or "").strip()
+        text = _local_text(_expect_str(data.get("text"))).strip()
         if not text:
             raise ApiError(t("Transcript came back empty."))
         detected = data.get("detected_language")
@@ -973,22 +1021,22 @@ def transcribe_segments(target, audio_path, language="", prompt="", timeout=300,
                 raise
             data = _transcribe_request(target, audio_path,
                                        granularity=("segment",), **ask)
-    segments = data.get("segments") or []
+    segments = _expect_dicts(_expect_list(data.get("segments")))
     if target.provider == "local":
         segments = _merge_word_splits(segments)
     if _too_coarse(segments):
-        cues = cues_from_words(data.get("words") or [])
+        cues = cues_from_words(_expect_list(data.get("words")))
         if cues:
             return cues
     out = []
     for seg in segments:
-        text = (seg.get("text") or "").strip()
+        text = _expect_str(seg.get("text")).strip()
         if text:
-            start = float(seg.get("start") or 0.0)
-            end = float(seg.get("end") or 0.0)
+            start = _seconds(seg.get("start") or 0.0)
+            end = _seconds(seg.get("end") or 0.0)
             out.append((start, max(end, start), text))
     if not out:
-        text = data.get("text") or ""
+        text = _expect_str(data.get("text"))
         if target.provider == "local":
             text = _local_text(text)
         text = text.strip()
@@ -1024,7 +1072,7 @@ def transcribe_speakers(target, audio_path, language="", prompt="", timeout=300,
                                    aborter=aborter, extra=(("provider", options),))
     out = speaker_cues(data)
     if not out:
-        text = (data.get("text") or "").strip()
+        text = _expect_str(data.get("text")).strip()
         if not text:
             raise ApiError(t("Transcript came back empty."))
         out = [(0.0, 0.0, text, None)]
@@ -1043,7 +1091,9 @@ def speaker_cues(data):
     subtitle. Each speaker's run of words is cut into cues on its own, so a cue
     never starts with one voice and ends with the other.
     """
-    words = [w for w in data.get("words") or [] if (w.get("word") or "").strip()]
+    data = _expect_dict(data)
+    words = [w for w in _expect_dicts(_expect_list(data.get("words")))
+             if _expect_str(w.get("word")).strip()]
     if words and any(w.get("speaker") is not None for w in words):
         cues, run = [], []
         for word in words + [None]:
@@ -1059,11 +1109,11 @@ def speaker_cues(data):
                  and start < cues[i + 1][0] else end, text, who)
                 for i, (start, end, text, who) in enumerate(cues)]
     out = []
-    for seg in data.get("segments") or []:
-        text = (seg.get("text") or "").strip()
+    for seg in _expect_dicts(_expect_list(data.get("segments"))):
+        text = _expect_str(seg.get("text")).strip()
         if text:
-            start = float(seg.get("start") or 0.0)
-            end = float(seg.get("end") or 0.0)
+            start = _seconds(seg.get("start") or 0.0)
+            end = _seconds(seg.get("end") or 0.0)
             out.append((start, max(end, start), text, _label(seg.get("speaker"))))
     return out
 
@@ -1221,11 +1271,9 @@ def cleanup(text, api_key, model, system_prompt, reasoning="",
         )
     except ApiError as exc:
         raise explain(exc, service) from None
-    choices = data.get("choices") or []
-    if not choices:
-        raise ApiError(_extract_error(json.dumps(data)))
-    message = choices[0].get("message") or {}
-    content = (message.get("content") or "").strip()
+    choice = _first_choice(data)
+    message = _expect_dict(choice.get("message") or {})
+    content = _expect_str(message.get("content")).strip()
     if not content:
         # A thinking model can spend the whole reply on the thinking and leave
         # nothing to paste. Worth naming, because the fix is a setting rather
@@ -1234,7 +1282,7 @@ def cleanup(text, api_key, model, system_prompt, reasoning="",
             raise ApiError(t("The cleanup model spent its whole reply on "
                              "thinking. Set Thinking to \u201cOff\u201d."))
         raise ApiError(t("The cleanup model returned an empty reply."))
-    if choices[0].get("finish_reason") == "length":
+    if choice.get("finish_reason") == "length":
         # Cut off at somebody's ceiling: ours locally, the provider's otherwise.
         # What came back is a sentence that stops mid-word, and cleanup is meant
         # to hand back the whole dictation, so the half is refused rather than
@@ -1281,13 +1329,12 @@ def chat(messages, api_key, model, system_prompt, reasoning="",
         )
     except ApiError as exc:
         raise explain(exc, service) from None
-    choices = data.get("choices") or []
-    if not choices:
-        raise ApiError(_extract_error(json.dumps(data)))
-    content = ((choices[0].get("message") or {}).get("content") or "").strip()
+    choice = _first_choice(data)
+    message = _expect_dict(choice.get("message") or {})
+    content = _expect_str(message.get("content")).strip()
     if not content:
         raise ApiError(t("The model returned an empty reply."))
-    if choices[0].get("finish_reason") == "length":
+    if choice.get("finish_reason") == "length":
         # An answer that stops mid-sentence reads like a whole one once it has
         # been pasted, so it is refused here for the same reason cleanup refuses
         # a half transcript.

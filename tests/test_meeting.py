@@ -318,6 +318,25 @@ class Pipeline(DikteTest):
         self.run_pipeline(minutes="We agreed to ship.")
         self.assertEqual(cfg.read_meetings()[0]["title"], "Meeting")
 
+    def test_an_unexpected_error_marks_the_meeting_failed(self):
+        self.conf["meeting_cleanup"] = False
+        worker = meeting.MeetingPipeline(self.conf)
+        done, failures = [], []
+        worker.finished.connect(lambda *args: done.append(args))
+        worker.failed.connect(lambda *args: failures.append(args))
+        with mock.patch.object(api, "transcribe_segments",
+                               return_value=[(0.0, 1.0, "hello")]), \
+                mock.patch.object(api, "cleanup",
+                                  side_effect=ValueError("bad payload")):
+            worker._work(cfg.read_meetings()[0])
+        self.assertEqual(done, [])
+        self.assertEqual(failures[0][0], self.base)
+        self.assertIn("Unexpected error", failures[0][1])
+        row = cfg.read_meetings()[0]
+        self.assertEqual(row["status"], "failed")
+        self.assertIn("Unexpected error", row["error"])
+        self.assertTrue(self.wav.exists())
+
     def test_a_second_run_while_one_is_going_is_refused(self):
         worker = meeting.MeetingPipeline(self.conf)
         worker._thread = mock.Mock(is_alive=lambda: True)

@@ -20,6 +20,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import traceback
 import wave
 
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -149,6 +150,11 @@ class MeetingPipeline(QObject):
             # only copy of the meeting, and the run can be tried again from it.
             cfg.update_meeting(base, status="failed", error=str(exc))
             self.failed.emit(base, str(exc))
+        except Exception as exc:
+            traceback.print_exc()
+            message = t("Unexpected error: {error}", error=exc)
+            cfg.update_meeting(base, status="failed", error=message)
+            self.failed.emit(base, message)
         finally:
             if workdir:
                 shutil.rmtree(workdir, ignore_errors=True)

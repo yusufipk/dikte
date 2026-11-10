@@ -728,6 +728,50 @@ class TranscribeSegments(DikteTest):
             api.transcribe_segments(OPENAI, self.wav)
 
 
+class MalformedResponses(DikteTest):
+    """A 200 with the wrong shape is a provider failure, not a crash."""
+
+    def setUp(self):
+        super().setUp()
+        self.wav = str(self.path("clip.wav"))
+        os.makedirs(self.root, exist_ok=True)
+        with open(self.wav, "wb") as fh:
+            fh.write(b"RIFFfake")
+
+    def test_transcribe_rejects_a_non_string_text(self):
+        with fake_urlopen({"text": ["invalid"]}), self.assertRaises(api.ApiError):
+            api.transcribe(OPENAI, self.wav)
+
+    def test_segments_reject_a_non_list_segments(self):
+        reply = {"segments": "invalid", "text": "hi"}
+        with fake_urlopen(reply), self.assertRaises(api.ApiError):
+            api.transcribe_segments(OPENAI, self.wav)
+
+    def test_segments_reject_a_bad_timestamp(self):
+        reply = {"segments": [{"start": "bad", "end": 1, "text": "hi"}],
+                 "text": "hi"}
+        with fake_urlopen(reply), self.assertRaises(api.ApiError):
+            api.transcribe_segments(OPENAI, self.wav)
+
+    def test_speaker_cues_reject_malformed_words(self):
+        with self.assertRaises(api.ApiError):
+            api.speaker_cues({"words": "invalid"})
+
+    def test_cleanup_rejects_malformed_choices(self):
+        with fake_urlopen({"choices": "invalid"}), self.assertRaises(api.ApiError):
+            api.cleanup("uh, hello", "sk-or-test", "some/model", "rules")
+
+    def test_chat_rejects_malformed_content(self):
+        reply = {"choices": [{"message": {"content": ["bad"]}}]}
+        with fake_urlopen(reply), self.assertRaises(api.ApiError):
+            api.chat([{"role": "user", "content": "hi"}], "sk-or-test",
+                     "some/model", "rules")
+
+    def test_gemini_rejects_malformed_choices(self):
+        with fake_urlopen({"choices": "invalid"}), self.assertRaises(api.ApiError):
+            api.transcribe(GEMINI, self.wav)
+
+
 def chat_reply(content):
     return {"choices": [{"message": {"content": content}}]}
 

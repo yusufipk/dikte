@@ -24,6 +24,7 @@ import subprocess
 import tempfile
 import threading
 import time
+import traceback
 import wave
 
 from PyQt6.QtCore import QObject, pyqtSignal
@@ -246,6 +247,19 @@ class FileTranscriber(QObject):
                                    error=exc))
             else:
                 self.failed.emit(str(exc))
+        except Exception as exc:
+            traceback.print_exc()
+            try:
+                partial, cues = _result(pieces, segments, timestamps, speakers)
+            except Exception:
+                partial, cues = "", []
+            message = t("Unexpected error: {error}", error=exc)
+            if partial:
+                self.finished.emit(partial, cues)
+                self.failed.emit(t("{error} The transcript up to there is below.",
+                                   error=message))
+            else:
+                self.failed.emit(message)
         finally:
             self._local = None
             if workdir:

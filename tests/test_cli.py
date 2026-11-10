@@ -1188,6 +1188,26 @@ class TranscribeRunsHere(DikteTest):
             cli.cmd_transcribe(opts)
         worker.return_value.wait.assert_called_once()
 
+    def test_a_worker_failure_is_the_exit_path(self):
+        # finished and failed are the only ways out of the event loop, so a
+        # failure has to arrive as the same kind of result.
+        wav = self.path("clip.wav")
+        wav.write_bytes(b"RIFF not really audio")
+        opts = cli.build_parser().parse_args(["transcribe", str(wav)])
+        seen = {}
+
+        def headless(begin, on_interrupt=None):
+            begin(lambda result: seen.setdefault("result", result))
+            worker.return_value.failed.connect.call_args[0][0]("boom")
+            return seen["result"]
+
+        with mock.patch.object(cli.filetranscribe, "FileTranscriber") as worker, \
+                mock.patch.object(cli, "_headless", side_effect=headless), \
+                captured() as (_out, err):
+            code = cli.cmd_transcribe(opts)
+        self.assertEqual(code, 1)
+        self.assertIn("boom", err.getvalue())
+
     def started_with(self, *args):
         """What the worker was started with, or None if it never was."""
         wav = self.path("clip.wav")
