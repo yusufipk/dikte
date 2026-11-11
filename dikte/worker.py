@@ -152,9 +152,15 @@ class Pipeline(QObject):
         """
         self._stop.set()
 
-    def _transcribe(self, call, stage):
+    def _transcribe(self, call, stage, backup=None, backup_stage=""):
         """`call`, asked again on the ladder when what failed was the moment,
         not the request.
+
+        `backup` is the same request to a second model. It is asked straight
+        after each failure the ladder would wait out, before the wait: a rate
+        limit is usually one model's, and the other one answers now. A backup
+        that fails in a way no wait fixes (a model id that does not exist) is
+        not asked again.
 
         A rate limit or a dropped connection says the request was fine and the
         minute was bad, so asking again after a wait beats failing a run whose
@@ -170,7 +176,18 @@ class Pipeline(QObject):
             try:
                 return call()
             except api.ApiError as exc:
-                if wait is None or not exc.retryable:
+                if not exc.retryable:
+                    raise
+                if backup is not None and not self._stop.is_set():
+                    self.stage.emit(backup_stage)
+                    try:
+                        return backup()
+                    except api.ApiError as second:
+                        print(f"dikte: the backup model failed: {second}",
+                              file=sys.stderr)
+                        if not second.retryable:
+                            backup = None
+                if wait is None:
                     raise
                 self.stage.emit(t(
                     "{error} Retrying in {seconds} s ({attempt}/{total})…",
@@ -228,23 +245,26 @@ class Pipeline(QObject):
             # Shared by every try, so a dictation sent in pieces does not send
             # the ones already written down again.
             heard = api.Heard()
-            if auto:
-                raw, detected = self._transcribe(
-                    lambda: api.transcribe_detected(
-                        target, wav_path, language=language, prompt=prompt,
-                        heard=heard,
-                    ),
-                    stage,
-                )
-            else:
-                raw = self._transcribe(
-                    lambda: api.transcribe(
-                        target, wav_path, language=language, prompt=prompt,
-                        heard=heard,
-                    ),
-                    stage,
-                )
-                detected = ""
+            ask_model = api.transcribe_detected if auto else api.transcribe
+            spare = conf.transcribe_backup()
+            # Whichever model answered, so the history names that one.
+            answered = [target]
+
+            def ask_backup():
+                result = ask_model(spare, wav_path, language=language,
+                                   prompt=prompt, heard=heard)
+                answered[0] = spare
+                return result
+
+            result = self._transcribe(
+                lambda: ask_model(target, wav_path, language=language,
+                                  prompt=prompt, heard=heard),
+                stage,
+                ask_backup if spare is not None else None,
+                t("Trying {model}…", model=spare.model) if spare is not None else "",
+            )
+            target = answered[0]
+            raw, detected = result if auto else (result, "")
 
             if conf["filter_hallucinations"] and vad.looks_like_hallucination(raw, duration):
                 message = t("Discarded a stock phrase: “{text}”", text=raw[:60])

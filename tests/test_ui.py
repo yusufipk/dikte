@@ -499,6 +499,7 @@ class Settings(DikteTest):
             window.paste_shortcut,
             window.transcribe_model,
             window.file_model,
+            window.backup_model,
             window.cleanup_model,
             window.cleanup_agy_model,
             window.cleanup_claude_model,
@@ -809,6 +810,23 @@ class Settings(DikteTest):
         window.transcribe_provider.setCurrentIndex(
             window.transcribe_provider.findData("openai"))
         self.assertFalse(window.stt_form.isRowVisible(window.file_model_row))
+
+    def test_the_backup_model_is_saved_and_only_shown_for_openrouter(self):
+        self.write_config({"transcribe_provider": "openrouter",
+                           "openrouter_backup_model": "deepgram/nova-3"})
+        conf = cfg.Config()
+        window = self.window(conf)
+        self.assertEqual(window.backup_model.currentText(), "deepgram/nova-3")
+        self.assertTrue(window.stt_form.isRowVisible(window.backup_model_row))
+        window.backup_model.setCurrentText(" openai/whisper-1 ")
+        window._save()
+        self.assertEqual(conf["openrouter_backup_model"], "openai/whisper-1")
+        window.backup_model.setCurrentText(window.backup_model_none)
+        window._save()
+        self.assertEqual(conf["openrouter_backup_model"], "")
+        window.transcribe_provider.setCurrentIndex(
+            window.transcribe_provider.findData("openai"))
+        self.assertFalse(window.stt_form.isRowVisible(window.backup_model_row))
 
     def test_custom_speech_presets_offer_fetch_and_only_audio_endpoints(self):
         window = self.window(cfg.Config())

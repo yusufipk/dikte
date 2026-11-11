@@ -160,6 +160,7 @@ TR = {
         "{service} hesapta kredi kalmadığını söylüyor (HTTP 402).",
     "{service} is rate limiting you (HTTP 429). Try again in a moment.":
         "{service} hız sınırı uyguluyor (HTTP 429). Birazdan tekrar dene.",
+    "Trying {model}…": "{model} deneniyor…",
     "{error} Retrying in {seconds} s ({attempt}/{total})…":
         "{error} {seconds} sn sonra yeniden deneniyor ({attempt}/{total})…",
     "The {desktop} shortcut is live now, so the built-in listener has "
@@ -326,6 +327,12 @@ TR = {
     "API key": "API anahtarı",
     "Model": "Model",
     "Audio file model": "Ses dosyası modeli",
+    "Backup model": "Yedek model",
+    "None": "Yok",
+    "Tried straight away when the model above is rate limited or unreachable, "
+    "before waiting to retry.":
+        "Üstteki model hız sınırına takılınca ya da ulaşılamayınca, yeniden denemeyi "
+        "beklemeden hemen bu denenir.",
     "The model a timestamped audio file (subtitles) is sent to. Not every model on "
     "OpenRouter returns segment times; empty means openai/whisper-1.":
         "Zaman damgalı bir ses dosyasının (altyazı) gönderildiği model. OpenRouter'daki her "

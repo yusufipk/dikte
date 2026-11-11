@@ -287,6 +287,25 @@ class TranscribeTarget(DikteTest):
         self.assertEqual(conf.transcribe_target().file_model,
                          "openai/whisper-large-v3")
 
+    def test_openrouter_falls_back_to_its_backup_model(self):
+        conf = self.config(transcribe_provider="openrouter",
+                           openrouter_api_key="sk-or-test",
+                           openrouter_backup_model=" deepgram/nova-3 ")
+        target, backup = conf.transcribe_target(), conf.transcribe_backup()
+        self.assertEqual(backup, target._replace(model="deepgram/nova-3"))
+
+    def test_no_backup_without_one_set_or_when_it_is_the_same_model(self):
+        conf = self.config(transcribe_provider="openrouter",
+                           openrouter_api_key="sk-or-test")
+        self.assertIsNone(conf.transcribe_backup())
+        conf["openrouter_backup_model"] = conf["openrouter_transcribe_model"]
+        self.assertIsNone(conf.transcribe_backup())
+
+    def test_only_openrouter_has_a_backup_model(self):
+        conf = self.config(transcribe_provider="openai", openai_api_key="sk-test",
+                           openrouter_backup_model="deepgram/nova-3")
+        self.assertIsNone(conf.transcribe_backup())
+
     def test_only_openrouter_has_a_file_model(self):
         conf = self.config(transcribe_provider="openai", openai_api_key="sk-test",
                            openrouter_file_model="openai/whisper-large-v3")

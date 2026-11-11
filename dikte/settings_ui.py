@@ -2248,6 +2248,17 @@ class SettingsWindow(QDialog):
               "on OpenRouter returns segment times; empty means openai/whisper-1."))
         self.file_model_row = self._row(self.file_model)
         stt_form.addRow(t("Audio file model"), self.file_model_row)
+        # OpenRouter only: the model a dictation goes to when the one above is
+        # rate limited. Empty in the settings means none, said as a choice.
+        self.backup_model = QComboBox()
+        self.backup_model.setEditable(True)
+        self.backup_model_none = t("None")
+        self.backup_model.addItem(self.backup_model_none)
+        self.backup_model.setToolTip(
+            t("Tried straight away when the model above is rate limited or "
+              "unreachable, before waiting to retry."))
+        self.backup_model_row = self._row(self.backup_model)
+        stt_form.addRow(t("Backup model"), self.backup_model_row)
         # A spanning row: in the narrow field column a wrapped label gets a
         # height that fits one line, and the rest of the text is cut off.
         self.transcribe_status = widgets.StatusLine()
@@ -3620,6 +3631,8 @@ class SettingsWindow(QDialog):
         self._provider_changed()  # selecting index 0 fires no signal
         self.file_model.setCurrentText(conf["openrouter_file_model"]
                                        or self.file_model_default)
+        self.backup_model.setCurrentText(conf["openrouter_backup_model"]
+                                         or self.backup_model_none)
         binary_changed = self.local_whisper.custom_binary != conf["local_binary"]
         self.local_whisper.custom_binary = conf["local_binary"]
         processing_device = conf["local_device"]
@@ -3797,6 +3810,9 @@ class SettingsWindow(QDialog):
         file_model = self.file_model.currentText().strip()
         conf["openrouter_file_model"] = ("" if file_model == self.file_model_default
                                          else file_model)
+        backup_model = self.backup_model.currentText().strip()
+        conf["openrouter_backup_model"] = ("" if backup_model == self.backup_model_none
+                                           else backup_model)
         for role in self._preset_widgets:
             self._stash_preset(role)
         model_settings = self._preset_model_settings()
@@ -4110,6 +4126,7 @@ class SettingsWindow(QDialog):
         self.stt_form.setRowVisible(self.transcribe_custom_box, provider == "custom")
         self.stt_form.setRowVisible(self.transcribe_model_row, not local)
         self.stt_form.setRowVisible(self.file_model_row, provider == "openrouter")
+        self.stt_form.setRowVisible(self.backup_model_row, provider == "openrouter")
         self.stt_form.setRowVisible(self.transcribe_status, False)
         self.stt_form.setRowVisible(self.local_whisper, local)
         self.stt_form.setRowVisible(self.local_options, local)
@@ -4155,6 +4172,11 @@ class SettingsWindow(QDialog):
         self.file_model.addItem(self.file_model_default)
         self.file_model.addItems(models)
         self.file_model.setCurrentText(current)
+        current = self.backup_model.currentText()
+        self.backup_model.clear()
+        self.backup_model.addItem(self.backup_model_none)
+        self.backup_model.addItems(models)
+        self.backup_model.setCurrentText(current)
 
     def _load_transcribe_models(self):
         """The model list of whichever provider is selected."""
