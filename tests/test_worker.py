@@ -357,6 +357,92 @@ class Chain(ChainBase):
             pipeline._transcribe(call, "Transcribing…")
         self.assertEqual(calls, [1])
 
+    # ---- the backup model ---------------------------------------------------
+
+    def backed_up(self):
+        self.conf["transcribe_provider"] = "openrouter"
+        self.conf["openrouter_backup_model"] = "deepgram/nova-3"
+
+    def test_a_rate_limited_dictation_goes_to_the_backup_model_at_once(self):
+        """No wait: the second model is asked the moment the first refuses,
+        and the history names the one that answered."""
+        self.backed_up()
+        run = self.run_chain(transcribe_error=[
+            api.ApiError("rate limited", 429),
+            ("uh, book it for Thursday", "en")])
+        self.assertEqual(run["failures"], [])
+        self.assertEqual(run["sleeps"], [])
+        first, second = run["transcribe_detected"].call_args_list
+        self.assertEqual(first.args[0].model, "openai/gpt-4o-transcribe")
+        self.assertEqual(second.args[0].model, "deepgram/nova-3")
+        self.assertIs(first.kwargs["heard"], second.kwargs["heard"])
+        self.assertIn("Trying deepgram/nova-3…", run["stages"])
+        self.assertEqual(cfg.read_history()[-1]["model"], "deepgram/nova-3")
+
+    def test_both_models_refusing_waits_and_asks_both_again(self):
+        self.backed_up()
+        run = self.run_chain(transcribe_error=[
+            api.ApiError("rate limited", 429), api.ApiError("busy", 503),
+            ("uh, book it for Thursday", "en")])
+        self.assertEqual(run["sleeps"], [10])
+        self.assertEqual(
+            [c.args[0].model for c in run["transcribe_detected"].call_args_list],
+            ["openai/gpt-4o-transcribe", "deepgram/nova-3",
+             "openai/gpt-4o-transcribe"])
+        self.assertEqual(cfg.read_history()[-1]["model"],
+                         "openai/gpt-4o-transcribe")
+
+    def test_a_backup_that_cannot_work_is_asked_once(self):
+        """A model id that does not exist is as wrong on the next rung."""
+        self.backed_up()
+        run = self.run_chain(transcribe_error=[
+            api.ApiError("rate limited", 429), api.ApiError("no such model", 404),
+            api.ApiError("rate limited", 429),
+            ("uh, book it for Thursday", "en")])
+        self.assertEqual(
+            [c.args[0].model for c in run["transcribe_detected"].call_args_list],
+            ["openai/gpt-4o-transcribe", "deepgram/nova-3",
+             "openai/gpt-4o-transcribe", "openai/gpt-4o-transcribe"])
+        self.assertEqual(run["sleeps"], [10, 30])
+
+    def test_the_last_rung_fails_with_the_first_models_reason(self):
+        self.backed_up()
+        run = self.run_chain(transcribe_error=[
+            api.ApiError("rate limited", 429), api.ApiError("busy", 503)] * 5)
+        self.assertEqual(run["transcribe_detected"].call_count, 10)
+        self.assertIn("rate limited", run["failures"][0])
+
+    def test_a_fixed_language_goes_to_the_backup_too(self):
+        self.backed_up()
+        self.conf["language"] = "tr"
+        run = self.run_chain(transcribe_error=[
+            api.ApiError("rate limited", 429), "uh, book it for Thursday"])
+        self.assertEqual(run["failures"], [])
+        self.assertEqual(run["sleeps"], [])
+        self.assertEqual(run["transcribe"].call_args_list[1].args[0].model,
+                         "deepgram/nova-3")
+        self.assertEqual(run["done"][0][0], "uh, book it for Thursday")
+
+    def test_a_stopped_run_does_not_ask_the_backup(self):
+        pipeline = worker.Pipeline(self.conf)
+        stop = mock.Mock(spec=threading.Event)
+        stop.is_set.return_value = True
+        stop.wait.return_value = True
+        pipeline._stop = stop
+        backup = mock.Mock()
+
+        def call():
+            raise api.ApiError("rate limited", 429)
+
+        with self.assertRaises(api.ApiError):
+            pipeline._transcribe(call, "Transcribing…", backup, "Trying…")
+        backup.assert_not_called()
+
+    def test_a_rejected_key_never_reaches_the_backup(self):
+        self.backed_up()
+        run = self.run_chain(transcribe_error=api.ApiError("no credit", 402))
+        self.assertEqual(run["transcribe_detected"].call_count, 1)
+
     def test_a_failure_the_ladder_cannot_fix_is_not_retried(self):
         """A rejected key is just as wrong the second time: no wait, no retry."""
         run = self.run_chain(transcribe_error=api.ApiError("no credit", 402))

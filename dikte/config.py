@@ -454,6 +454,9 @@ DEFAULTS = {
     # What a timestamped run (subtitles) asks OpenRouter for: not every model
     # there returns segment times. Empty -> openai/whisper-1.
     "openrouter_file_model": "",
+    # Asked when the model above is rate limited or its provider is down.
+    # Empty -> no second model, only the waits.
+    "openrouter_backup_model": "",
     "requesty_transcribe_model": "openai/gpt-4o-transcribe",
     # Google's fastest model that takes audio. No segment times come back.
     "gemini_transcribe_model": "gemini-3.5-flash-lite",
@@ -854,6 +857,23 @@ class Config:
         return api.Target(name, t(who.service), self.api_key(who.key),
                           self[who.url].strip(), self[who.model].strip(),
                           file_model.strip())
+
+    def transcribe_backup(self):
+        """The target a dictation falls back to when its model cannot answer
+        right now, or None.
+
+        OpenRouter only: every model there sits behind the same key and the
+        same endpoint, and a rate limit is usually one upstream's, so another
+        model is a request that can go through while the first one cannot.
+        """
+        if self["transcribe_provider"] != "openrouter":
+            return None
+        target = self.transcribe_target()
+        model = self["openrouter_backup_model"]
+        model = model.strip() if isinstance(model, str) else ""
+        if not model or model == target.model:
+            return None
+        return target._replace(model=model)
 
     def transcribe_ready(self):
         """Whether speech to text could run right now, without opening Settings."""
