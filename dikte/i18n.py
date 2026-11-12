@@ -867,6 +867,7 @@ TR = {
         "Tutanak yazılmadan önce transkripti temizleme modelinden geçirir; zaman "
         "damgaları ve konuşmacı etiketleri korunur.",
     "Recording": "Kayıt",
+    "Opening the microphone…": "Mikrofon açılıyor…",
     " min": " dk",
     "Longest meeting": "En uzun toplantı",
     "Keep the recording after the minutes are written":

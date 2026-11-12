@@ -21,6 +21,9 @@ MAX_WIDTH = 460
 MARGIN = 28
 GAP = 10        # between two indicators sharing a corner
 FOLLOW_EVERY = 8   # ticks between two looks for the pointer: about four a second
+# How long a recording may go without its first block of sound before the
+# indicator says the microphone is still opening. See Overlay.opening.
+OPENING_AFTER_MS = 250
 
 STATE_ROLES = {"recording": "rec", "asking": "ask", "meeting": "rec", "busy": "accent",
                "done": "ok", "warning": "warn", "error": "err"}
@@ -109,6 +112,17 @@ class Overlay(QWidget):
         # recording, held. Keeping it beside the state is what lets the ribbon
         # stay where the pause found it instead of being cleared and rebuilt.
         self.paused = False
+        # A recording is on screen from the key press, but the microphone only
+        # hears anything once the capture program has opened it. Where that is
+        # at once there is nothing to say: parec hands over its first block
+        # within a tenth of a second. Where it is not (about a second on
+        # Windows, where ffmpeg asks DirectShow for the device every time) the
+        # ribbon says it is opening rather than pulsing, or the words spoken
+        # into that second are lost while the indicator says they are being
+        # taken down. `heard` is the first block having arrived, `opening` the
+        # wait for it having gone on long enough to be said.
+        self.heard = True
+        self.opening = False
         self.state = "idle"
         self.message = ""
         self.note = ""   # a line under a recording; see set_note
@@ -159,6 +173,11 @@ class Overlay(QWidget):
         self._hide_timer.setSingleShot(True)
         self._hide_timer.timeout.connect(self._conceal)
 
+        self._opening_timer = QTimer(self)
+        self._opening_timer.setSingleShot(True)
+        self._opening_timer.setInterval(OPENING_AFTER_MS)
+        self._opening_timer.timeout.connect(self._still_opening)
+
     # ---- public API --------------------------------------------------
 
     def show_recording(self, asking=False):
@@ -170,9 +189,12 @@ class Overlay(QWidget):
         self.seconds = 0.0
         self.levels = [0.0] * BARS
         self.paused = False
+        self.heard = False
+        self.opening = False
         self.muted = False   # a new run starts visible, whatever the last one did
         self._hide_timer.stop()
         self._appear()
+        self._opening_timer.start()
 
     def set_note(self, note):
         """A short line under the recording's ribbon, gone with the recording.
@@ -194,6 +216,11 @@ class Overlay(QWidget):
         self.levels = [0.0] * BARS
         self.levels2 = [0.0] * BARS
         self.paused = False
+        # Its levels come through push_levels, and it runs for an hour: one
+        # second at the start of it is not what gets lost.
+        self.heard = True
+        self.opening = False
+        self._opening_timer.stop()
         self._hide_timer.stop()
         self._appear()
 
@@ -245,6 +272,11 @@ class Overlay(QWidget):
         return self.isVisible() and not self._concealed
 
     def push_level(self, level):
+        if not self.heard:
+            # The first block of sound: from here on the microphone is hearing.
+            self.heard = True
+            self._opening_timer.stop()
+            self._set_opening(False)
         self.levels = self.levels[1:] + [level]
 
     def push_levels(self, mine, theirs):
@@ -268,6 +300,25 @@ class Overlay(QWidget):
 
     # ---- internals -----------------------------------------------------
 
+    def _still_opening(self):
+        """No sound yet and the wait is long enough to notice: say so."""
+        if not self.heard and self.state in LIVE:
+            self._set_opening(True)
+
+    def _set_opening(self, opening):
+        if opening == self.opening:
+            return
+        self.opening = opening
+        # A recording stopped before any sound came has moved on to another
+        # state, which has its own words and its own width.
+        if self.state not in LIVE:
+            return
+        self._say_state()
+        if not self._concealed:
+            self._resize_to_content()
+            self._reposition()
+        self.update()
+
     def _say_state(self):
         """The indicator's state in words, for a screen reader: its name is
         the state, its description the message. Set on a transition only,
@@ -278,6 +329,8 @@ class Overlay(QWidget):
                  "meeting": t("Recording a meeting"), "busy": t("Working"),
                  "done": t("Done"), "warning": t("Warning"), "error": t("Failed")}
         name = names.get(self.state, "")
+        if self.opening and self.state in LIVE:
+            name = t("Opening the microphone…")
         if self.paused and self.state in LIVE:
             name = t("Paused")
         description = self.message or self.note
@@ -317,6 +370,10 @@ class Overlay(QWidget):
         if self.state in LIVE:
             # A meeting runs long enough to need an hours field.
             width = MIN_WIDTH + (24 if self.state == "meeting" else 0)
+            if self.opening:
+                metrics = QFontMetrics(self._label_font())
+                width = max(width, min(MAX_WIDTH, metrics.horizontalAdvance(
+                    t("Opening the microphone…")) + 76))
             if self.note:
                 metrics = QFontMetrics(self._note_font())
                 lines = self._note_lines()
@@ -442,8 +499,11 @@ class Overlay(QWidget):
         self._draw_indicator(painter, accent)
 
         if self.state in LIVE:
-            self._draw_waveform(painter, accent)
-            self._draw_time(painter)
+            if self.opening:
+                self._draw_message(painter, t("Opening the microphone…"))
+            else:
+                self._draw_waveform(painter, accent)
+                self._draw_time(painter)
             if self.note:
                 self._draw_note(painter)
         else:
@@ -467,6 +527,9 @@ class Overlay(QWidget):
                 painter.drawRoundedRect(
                     QRectF(cx + offset, cy - 6.5, 3.0, 13.0), 1.2, 1.2
                 )
+        elif self.state in LIVE and self.opening:
+            # Turning in the recording's colour: no pulse until there is sound.
+            self._draw_spinner(painter, cx, cy, accent)
         elif self.state in LIVE:
             pulse = 0.62 + 0.38 * (0.5 + 0.5 * math.sin(self._phase * 1.6))
             glow = QColor(accent)
@@ -486,13 +549,7 @@ class Overlay(QWidget):
             else:
                 painter.drawEllipse(QPointF(cx, cy), 5.5, 5.5)
         elif self.state == "busy":
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            pen = QPen(QColor(accent), 2.4)
-            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-            painter.setPen(pen)
-            span = 100 * 16
-            start = int(-self._phase * 320) % (360 * 16)
-            painter.drawArc(QRectF(cx - 8, cy - 8, 16, 16), start, span)
+            self._draw_spinner(painter, cx, cy, accent)
         elif self.state == "done":
             pen = QPen(accent, 2.4)
             pen.setCapStyle(Qt.PenCapStyle.RoundCap)
@@ -506,6 +563,15 @@ class Overlay(QWidget):
             # the badge the same notice wears inside the windows.
             self._draw_badge(painter, cx, cy, "warning" if self.state == "warning" else "failed",
                              QColor(accent))
+
+    def _draw_spinner(self, painter, cx, cy, accent):
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        pen = QPen(QColor(accent), 2.4)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        span = 100 * 16
+        start = int(-self._phase * 320) % (360 * 16)
+        painter.drawArc(QRectF(cx - 8, cy - 8, 16, 16), start, span)
 
     def _draw_badge(self, painter, cx, cy, name, tone, size=28):
         from . import widgets
@@ -598,7 +664,8 @@ class Overlay(QWidget):
         painter.drawLine(QPointF(cx - 4, cy - 4), QPointF(cx + 4, cy + 4))
         painter.drawLine(QPointF(cx + 4, cy - 4), QPointF(cx - 4, cy + 4))
 
-    def _draw_message(self, painter):
+    def _draw_message(self, painter, message=None):
+        message = self.message if message is None else message
         painter.setFont(self._label_font())
         # The words in the text colour, readable on any backdrop; the icon on
         # the left carries the red or the amber.
@@ -607,7 +674,7 @@ class Overlay(QWidget):
         box = QRectF(46, 0, self.width() - 60 - (18 if self._can_dismiss else 0),
                      HEIGHT)
         metrics = QFontMetrics(self._label_font())
-        text = metrics.elidedText(self.message, Qt.TextElideMode.ElideRight, int(box.width()))
+        text = metrics.elidedText(message, Qt.TextElideMode.ElideRight, int(box.width()))
         painter.drawText(
             box, int(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft), text
         )
