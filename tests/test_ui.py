@@ -1468,6 +1468,68 @@ class EveryRecordingProtectsTheFront(DikteTest):
         dikte.cues.play.assert_not_called()
         dikte._report.assert_called_once_with("refused", dikte.overlay)
 
+
+class TheStartCueWaitsForSound(DikteTest):
+    """The capture program takes about a second to open a Windows microphone.
+    A cue on the key press tells the user to speak into that second, and the
+    first words go nowhere; it has to wait for the first block of sound."""
+
+    def setUp(self):
+        super().setUp()
+        from dikte import app as dikte_module
+        self.dikte = dikte_module
+
+    def app(self, **attributes):
+        dikte = mock.Mock(**attributes)
+        dikte._run_id = 0
+        dikte.conf = self.config(mic_target="", max_seconds=60)
+        dikte._begin_recording = (
+            lambda owner: self.dikte.Dikte._begin_recording(dikte, owner))
+        return dikte
+
+    def test_pressing_the_key_plays_nothing_yet(self):
+        for start, state in (("start", "state"), ("start_ask", "ask_state")):
+            with self.subTest(start=start):
+                dikte = self.app(**{state: self.dikte.IDLE}, recording=False)
+                getattr(self.dikte.Dikte, start)(dikte)
+                dikte.cues.play.assert_not_called()
+
+    def test_the_first_sound_plays_it_once(self):
+        dikte = self.app(state=self.dikte.IDLE, recording=False)
+        self.dikte.Dikte.start(dikte)
+        dikte.recording = True
+        self.dikte.Dikte._on_level(dikte, 0.2)
+        self.dikte.Dikte._on_level(dikte, 0.4)
+        dikte.cues.play.assert_called_once_with("start")
+        self.assertEqual(dikte._paused_ms, 0)
+
+    def test_the_clock_starts_with_the_sound(self):
+        dikte = self.app(state=self.dikte.IDLE, recording=False)
+        self.dikte.Dikte.start(dikte)
+        dikte.elapsed.reset_mock()
+        dikte.recording = True
+        self.dikte.Dikte._on_level(dikte, 0.2)
+        dikte.elapsed.restart.assert_called_once_with()
+
+    def test_sound_arriving_after_the_stop_plays_nothing(self):
+        """A block read just before the stop can land after it."""
+        dikte = self.app(state=self.dikte.IDLE, recording=False)
+        self.dikte.Dikte.start(dikte)
+        dikte.recording = False
+        self.dikte.Dikte._on_level(dikte, 0.2)
+        dikte.cues.play.assert_not_called()
+
+    def test_every_recording_waits_again(self):
+        dikte = self.app(state=self.dikte.IDLE, recording=False)
+        for _ in range(2):
+            self.dikte.Dikte.start(dikte)
+            dikte.recording = True
+            self.dikte.Dikte._on_level(dikte, 0.2)
+            dikte.recording = False
+        self.assertEqual(dikte.cues.play.call_args_list,
+                         [mock.call("start"), mock.call("start")])
+
+
 class Overlay(DikteTest):
     def overlay(self, **kwargs):
         widget = overlay_module.Overlay(**kwargs)
@@ -1508,6 +1570,86 @@ class Overlay(DikteTest):
         widget._conceal()
         self.assertFalse(widget.showing)
         self.assertFalse(widget.isVisible())
+
+    def test_a_recording_gives_the_microphone_a_moment(self):
+        """Where the first block of sound arrives at once, nothing says
+        opening: the ribbon comes up as the recording it is about to be."""
+        widget = self.overlay()
+        widget.show_recording()
+        self.assertFalse(widget.opening)
+        self.assertTrue(widget._opening_timer.isActive())
+        self.assertEqual(widget.accessibleName(), "Recording")
+        widget.push_level(0.5)
+        self.assertFalse(widget._opening_timer.isActive())
+        widget._still_opening()   # a timeout already on its way changes nothing
+        self.assertFalse(widget.opening)
+        self.assertEqual(widget.width(), overlay_module.MIN_WIDTH)
+
+    def test_no_sound_after_that_moment_says_it_is_opening(self):
+        """Shown on the key press, but nothing is heard until the microphone
+        has opened: the ribbon must not pulse over words that are being lost."""
+        widget = self.overlay()
+        widget.show_recording()
+        widget._opening_timer.timeout.emit()
+        self.assertTrue(widget.opening)
+        self.assertEqual(widget.accessibleName(), "Opening the microphone…")
+        widget.grab()   # paints the opening ribbon
+        widget.push_level(0.5)
+        self.assertFalse(widget.opening)
+        self.assertEqual(widget.accessibleName(), "Recording")
+        widget.grab()
+
+    def test_the_opening_ribbon_is_wide_enough_for_its_words(self):
+        widget = self.overlay()
+        widget.show_recording()
+        widget._still_opening()
+        opening = widget.width()
+        widget.push_level(0.5)
+        self.assertGreaterEqual(opening, widget.width())
+        self.assertEqual(widget.width(), overlay_module.MIN_WIDTH)
+
+    def test_a_question_opens_the_same_way(self):
+        widget = self.overlay()
+        widget.show_recording(asking=True)
+        widget._still_opening()
+        self.assertEqual(widget.accessibleName(), "Opening the microphone…")
+        widget.push_level(0.5)
+        self.assertEqual(widget.accessibleName(), "Recording a command")
+
+    def test_every_recording_waits_for_its_own_sound(self):
+        widget = self.overlay()
+        widget.show_recording()
+        widget.push_level(0.5)
+        widget.show_busy("Transcribing…")
+        widget.show_recording()
+        self.assertFalse(widget.heard)
+        widget._still_opening()
+        self.assertTrue(widget.opening)
+
+    def test_a_recording_stopped_before_any_sound_moves_on(self):
+        """The next state has its own words; neither the timeout nor a block
+        that lands late may put the opening back over them."""
+        widget = self.overlay()
+        widget.show_recording()
+        widget.show_busy("Transcribing…")
+        widget._still_opening()
+        self.assertFalse(widget.opening)
+        self.assertEqual(widget.accessibleName(), "Working. Transcribing…")
+        widget.show_recording()
+        widget._still_opening()
+        widget.show_busy("Transcribing…")
+        widget.push_level(0.5)
+        self.assertEqual(widget.accessibleName(), "Working. Transcribing…")
+        widget.grab()
+
+    def test_a_meeting_does_not_wait_on_push_level(self):
+        """Its levels arrive through push_levels, which never ends an opening."""
+        widget = self.overlay()
+        widget.show_recording()
+        widget.show_meeting()
+        self.assertFalse(widget._opening_timer.isActive())
+        widget._still_opening()
+        self.assertFalse(widget.opening)
 
     def test_a_held_recording_says_so_and_stops_moving(self):
         """Everything about the ribbon says a recording is running; a pause the

@@ -239,6 +239,9 @@ class Dikte:
         # Which recording is the current one, so a timer set for the run that
         # started it cannot stop the one that came after.
         self._run_id = 0
+        # Whether the current recording has had its first block of sound. See
+        # _on_level.
+        self._heard = False
         # Dictations handed to the pipeline and not yet out of it. More than
         # one is normal: the microphone is free while a transcript is being
         # cleaned up, so the next dictation can already be spoken, and it then
@@ -910,7 +913,6 @@ class Dikte:
         if not self.recorder.active:
             return
         self._set_state(RECORDING)
-        self.cues.play("start")
 
     def start_ask(self):
         if self.ask_state != IDLE or self.recording:
@@ -925,7 +927,6 @@ class Dikte:
         if not self.recorder.active:
             return
         self._set_ask_state(RECORDING)
-        self.cues.play("start")
 
     def start_assist(self):
         """Read the selection, then record what to do with it."""
@@ -949,7 +950,6 @@ class Dikte:
             self._drop_grab()
             return
         self._set_ask_state(RECORDING)
-        self.cues.play("start")
         self._watch_grab(self.assist_grab)
 
     def _watch_grab(self, grab):
@@ -1056,6 +1056,7 @@ class Dikte:
         self.recorder_owner = owner
         self._stop_held_since = None
         self._run_id += 1
+        self._heard = False
         self._clear_pause()
         self.elapsed.restart()
         self.ticker.start()
@@ -1258,6 +1259,16 @@ class Dikte:
         return self.ask_overlay if self.recorder_owner == ASK else self.overlay
 
     def _on_level(self, level):
+        if not self._heard and self.recording:
+            # The first block of sound, which is when the microphone starts
+            # hearing: ffmpeg takes about a second to open a Windows device. The
+            # cue says to speak, so it waits for this rather than the key press,
+            # and the clock starts here so it counts what is being recorded.
+            # Nothing was taken in before this, so no pause before it counts.
+            self._heard = True
+            self.elapsed.restart()
+            self._paused_ms = 0
+            self.cues.play("start")
         self._recording_overlay().push_level(level)
 
     def _tick(self):
