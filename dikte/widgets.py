@@ -1107,6 +1107,12 @@ class Split(_Responsive):
         else:
             self.box.addWidget(first)
             self.box.addWidget(second, 1)
+            if fit_first:
+                # The first pane's height is pinned to what it asks for, so
+                # it has to be pinned again when it asks for more: a row
+                # shown later (a status line, an option for another model)
+                # would otherwise be squeezed out of something else in it.
+                first.installEventFilter(self)
         self._arrange(False)
 
     def _fits(self, width):
@@ -1145,20 +1151,36 @@ class Split(_Responsive):
             self.box.setDirection(QBoxLayout.Direction.TopToBottom)
             self.first.setMinimumWidth(0)
             self.first.setMaximumWidth(big)
-            fitted = self.first.sizeHint().height() if self.fit_first else big
-            self.first.setMaximumHeight(self.first_stacked_max or fitted)
+            self._fit_first()
             self.second.setMaximumHeight(self.stacked_max or big)
             self.box.setStretch(0, 1 if self.first_stacked_max is None and self.stacked_max else 0)
         if self.arranged is not None:
             self.arranged(wide)
 
+    def _fit_first(self):
+        """Stacked, cap the first pane at its own height (or at
+        `first_stacked_max`), so the second pane takes the rest."""
+        fitted = self.first.sizeHint().height() if self.fit_first else 16777215
+        height = self.first_stacked_max or fitted
+        if self.first.maximumHeight() != height:
+            self.first.setMaximumHeight(height)
+
     def eventFilter(self, watched, event):
+        if (event.type() == QEvent.Type.LayoutRequest and watched is self.first
+                and self.fit_first and self.splitter is None and not self.wide):
+            # After the pane's own layout has taken the request, so its
+            # size hint is the new one.
+            QTimer.singleShot(0, self._refit)
         if event.type() == QEvent.Type.Resize and (
                 watched is self.splitter
                 or (watched is self.first
                     and event.oldSize().width() != event.size().width())):
             self._place()
         return super().eventFilter(watched, event)
+
+    def _refit(self):
+        if not self.wide:
+            self._fit_first()
 
     def _snap(self, wanted, total):
         """The list's height for `wanted`: whole rows, at least `min_rows`
