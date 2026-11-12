@@ -512,6 +512,19 @@ class Transcriber(DikteTest):
         self.assertEqual(done, [])
         self.assertEqual(failures[0], "rejected the API key")
 
+    def test_an_unexpected_error_is_reported_rather_than_raised(self):
+        _, failures, _, _ = self.run_chain(fail=ValueError("bad payload"))
+        self.assertIn("Unexpected error", failures[0])
+
+    def test_an_unexpected_error_still_hands_over_what_was_heard(self):
+        with mock.patch.object(ft.FileTranscriber, "_chunks",
+                              side_effect=lambda wav, *a: [(wav, 0.0), (wav, 10.0)]):
+            done, failures, _, _ = self.run_chain(
+                fail=["first half", ValueError("bad payload")])
+        self.assertEqual(done[0][0], "first half")
+        self.assertIn("Unexpected error", failures[0])
+        self.assertIn("transcript up to there", failures[0])
+
     def test_a_second_start_while_one_is_running_is_ignored(self):
         worker = ft.FileTranscriber(self.conf)
         worker._thread = mock.Mock(is_alive=lambda: True)
