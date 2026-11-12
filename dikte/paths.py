@@ -39,6 +39,12 @@ def directories(platform=None):
     and several gigabytes of models are exactly what a roaming profile must not
     carry. Everywhere else they are separate and follow the XDG variables.
     """
+    if is_portable():
+        install_dir = get_install_dir()
+        config = install_dir / "portable_data/config"
+        local = install_dir / "portable_data/local"
+        return config, local
+
     here = platform or sys.platform
     if here == "darwin":
         support = pathlib.Path.home() / "Library/Application Support/Dikte"
@@ -60,6 +66,10 @@ def cache_dir(platform=None):
     cleanup tools may empty. Storing it with the data would ask a backup to
     carry files whose whole point is that they can be thrown away.
     """
+    if is_portable():
+        _, local = directories()
+        return local / "cache"
+
     here = platform or sys.platform
     if here == "darwin":
         return pathlib.Path.home() / "Library/Caches/Dikte"
@@ -102,5 +112,12 @@ def scratch_dir(platform=None):
             pass
     return str(work)
 
+def get_install_dir():
+    """Return the directory containing the current interpreter or packaged executable."""
+    return pathlib.Path(sys.executable).resolve().parent
+
+def is_portable():
+    """Return whether a `portable` marker file exists beside the executable."""
+    return (get_install_dir() / "portable").is_file()
 
 CONFIG_DIR, DATA_DIR = directories()

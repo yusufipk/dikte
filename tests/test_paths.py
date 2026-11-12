@@ -6,6 +6,7 @@ about macOS.
 """
 
 import os
+import pathlib
 import shutil
 import tempfile
 import time
@@ -16,6 +17,42 @@ from dikte import config as cfg
 from dikte import ggml
 from dikte import paths
 
+class TestPortableMode(unittest.TestCase):
+    def setUp(self):
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp_dir.cleanup)
+
+        self.install_dir = pathlib.Path(self.temp_dir.name)
+        self.executable = self.install_dir / "Dikte.exe"
+
+        self.executable_patch = mock.patch.object(
+            paths.sys, "executable", str(self.executable)
+        )
+        self.executable_patch.start()
+        self.addCleanup(self.executable_patch.stop)
+
+    def test_get_install_dir(self):
+        self.assertEqual(paths.get_install_dir(), self.install_dir.resolve())
+
+    def test_is_portable_false_when_marker_missing(self):
+        self.assertFalse(paths.is_portable())
+
+    def test_is_portable_true_when_marker_exists(self):
+        (self.install_dir / "portable").touch()
+        self.assertTrue(paths.is_portable())
+
+    def test_directories(self):
+        with mock.patch.object(paths, "is_portable", lambda: True):
+            with mock.patch.object(paths, "get_install_dir", lambda: pathlib.Path("dikte")):
+                config_dir, data_dir = paths.directories()
+                self.assertEqual(config_dir.as_posix(), "dikte/portable_data/config")
+                self.assertEqual(data_dir.as_posix(), "dikte/portable_data/local")
+
+    def test_cache_dir(self):
+        with mock.patch.object(paths, "is_portable", lambda: True):
+            with mock.patch.object(paths, "get_install_dir", lambda: pathlib.Path("dikte")):
+                cache_dir = paths.cache_dir()
+                self.assertEqual(cache_dir.as_posix(), "dikte/portable_data/local/cache")
 
 class Directories(unittest.TestCase):
     """Spelled with forward slashes throughout.
