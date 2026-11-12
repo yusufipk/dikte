@@ -16,8 +16,9 @@ from unittest import mock
 
 from PyQt6.QtCore import QPoint, QPointF, QRect, Qt
 from PyQt6.QtGui import QHideEvent, QShowEvent, QWheelEvent
-from PyQt6.QtWidgets import (QApplication, QComboBox, QLineEdit, QMessageBox, QScrollArea,
-                             QSpinBox, QWidget)
+from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QLineEdit, QMessageBox,
+                             QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QVBoxLayout,
+                             QWidget)
 
 from dikte import audio
 from dikte import cleanup
@@ -3245,3 +3246,35 @@ class ColumnsGrid(DikteTest):
         tops = [box.y() for box in (a, c, b, d)]
         self.assertEqual(tops, sorted(tops))
         self.assertEqual(len({box.x() for box in (a, b, c, d)}), 1)
+
+
+class SplitFitFirst(DikteTest):
+    """Stacked, a fitted first pane grows with what is shown in it later."""
+
+    def test_rows_shown_later_get_room_instead_of_squeezing_the_rest(self):
+        first = QWidget()
+        column = QVBoxLayout(first)
+        zone = widgets.DropZone("Kendi Animemi Yaptım - 1.1 v2.mov", QPushButton("Choose"))
+        column.addWidget(zone)
+        late = [QCheckBox(f"Option {index}") for index in range(3)]
+        for box in late:
+            box.hide()
+            column.addWidget(box)
+        column.addStretch(1)
+        split = widgets.Split(first, QPlainTextEdit(), side=330, threshold=820,
+                              fit_first=True)
+        self.addCleanup(split.deleteLater)
+        split.resize(760, 700)
+        split.show()
+        self.addCleanup(split.hide)
+        for _ in range(5):
+            QApplication.processEvents()
+        self.assertFalse(split.wide)
+        wanted = zone.sizeHint().height()
+        self.assertEqual(zone.height(), wanted)
+        for box in late:
+            box.show()
+        for _ in range(5):
+            QApplication.processEvents()
+        self.assertEqual(zone.height(), wanted)
+        self.assertGreaterEqual(first.height(), first.sizeHint().height())
