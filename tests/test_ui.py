@@ -16,9 +16,9 @@ from unittest import mock
 
 from PyQt6.QtCore import QPoint, QPointF, QRect, Qt
 from PyQt6.QtGui import QHideEvent, QShowEvent, QWheelEvent
-from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QLineEdit, QMessageBox,
-                             QPlainTextEdit, QPushButton, QScrollArea, QSpinBox, QVBoxLayout,
-                             QWidget)
+from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFormLayout, QLabel,
+                             QLineEdit, QMessageBox, QPlainTextEdit, QPushButton, QScrollArea,
+                             QSpinBox, QVBoxLayout, QWidget)
 
 from dikte import audio
 from dikte import cleanup
@@ -3246,6 +3246,40 @@ class ColumnsGrid(DikteTest):
         tops = [box.y() for box in (a, c, b, d)]
         self.assertEqual(tops, sorted(tops))
         self.assertEqual(len({box.x() for box in (a, b, c, d)}), 1)
+
+
+class SpanUnlabelled(DikteTest):
+    """A row moved to span the form is measured again when it grows."""
+
+    def test_moved_row_is_remeasured_when_it_grows(self):
+        window = QWidget()
+        self.addCleanup(window.deleteLater)
+        form = QFormLayout(window)
+        holder = QWidget()
+        column = QVBoxLayout(holder)
+        column.setContentsMargins(0, 0, 0, 0)
+        note = QLabel("Using the built-in instructions.")
+        note.setWordWrap(True)
+        column.addWidget(note)
+        editor = QWidget()
+        editor.setMinimumHeight(200)
+        editor.hide()
+        column.addWidget(editor)
+        form.addRow("", holder)
+        widgets.align_form([form])
+        window.resize(400, 100)
+        window.show()
+        self.addCleanup(window.hide)
+        for _ in range(5):
+            QApplication.processEvents()
+        # Measured once while closed, the way a page is laid out before anyone
+        # opens an "Edit instructions" disclosure in it.
+        before = form.heightForWidth(holder.width())
+        editor.show()
+        for _ in range(5):
+            QApplication.processEvents()
+        self.assertGreaterEqual(holder.height(), 200)
+        self.assertGreater(form.heightForWidth(holder.width()), before)
 
 
 class SplitFitFirst(DikteTest):
