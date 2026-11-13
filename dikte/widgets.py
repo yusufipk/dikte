@@ -8,6 +8,7 @@ Nord, Dracula, Classic dark and Classic light.
 
 import datetime
 
+from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QPointF, QRect, QRectF, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import (QColor, QFont, QFontMetrics, QIcon, QPainter, QPainterPath, QPen,
                          QPixmap, QTextOption)
@@ -2062,7 +2063,13 @@ def _span_unlabelled(form):
                 # the row instead would pin it hidden, and a widget that later
                 # shows itself (a status line with something to say) would then
                 # float outside the layout at a stale position.
-                form.insertRow(row, item.widget())
+                widget = item.widget()
+                # The taken item has to go first. While it lives, Qt still
+                # counts it as the widget's own, and the new one never hears
+                # that the widget grew: an "Edit instructions" disclosure
+                # opened later stays squeezed into the closed row's height.
+                sip.delete(item)
+                form.insertRow(row, widget)
             elif item.layout() is not None:
                 form.insertRow(row, item.layout())
                 form.setRowVisible(row, visible)
