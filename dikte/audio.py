@@ -800,8 +800,8 @@ def _pulse_meeting(mic_target, system_target):
     """One process for both devices: PulseAudio keeps them aligned itself."""
     return [[
         "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error",
-        "-f", "pulse", "-thread_queue_size", "4096", "-i", mic_target or "default",
-        "-f", "pulse", "-thread_queue_size", "4096", "-i", system_target,
+        "-f", "pulse", "-i", mic_target or "default",
+        "-f", "pulse", "-i", system_target,
         "-filter_complex", MERGE_FILTER, "-map", "[out]",
         "-f", "s16le", "-ar", str(RATE), "-",
     ]]
@@ -892,7 +892,6 @@ def _avfoundation_meeting_capture(target, inputs=None):
     target = _resolve_avfoundation_target(target, inputs)
     return [
         "ffmpeg", "-hide_banner", "-nostdin", "-loglevel", "error",
-        "-thread_queue_size", "4096",
         "-f", "avfoundation", "-i", f":{target or 'default'}",
         "-af", (f"aresample={RATE}:async=1:first_pts=0,"
                 "aformat=sample_fmts=s16:channel_layouts=mono"),

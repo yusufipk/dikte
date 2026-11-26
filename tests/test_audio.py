@@ -776,6 +776,14 @@ class MeetingCommands(unittest.TestCase):
                 for command in self.commands(platform):
                     self.assertIn("-nostdin", command)
 
+    def test_no_option_ffmpeg_9_1_turned_away_from_an_input(self):
+        """FFmpeg 9.1 made -thread_queue_size a muxer option. Given before an
+        -i it refuses the whole command, so the meeting records nothing."""
+        for platform in ("linux", "darwin"):
+            with self.subTest(platform=platform):
+                for command in self.commands(platform):
+                    self.assertNotIn("-thread_queue_size", command)
+
     def test_both_mac_devices_are_read_off_one_listing(self):
         """Asking twice costs an ffmpeg run, and the second answer could have
         renumbered between the two."""
